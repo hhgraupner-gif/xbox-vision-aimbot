@@ -7,7 +7,7 @@ import os
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import uuid
 from datetime import datetime, timezone
 import asyncio
@@ -19,6 +19,9 @@ from PIL import Image
 import io
 import mss
 import mss.tools
+
+# Import controller module
+from controller import controller, get_scuf_config, DEFAULT_BINDINGS, SCUF_VALOR_PRO_CONFIG
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -152,6 +155,29 @@ class GameProfile(BaseModel):
     box_color: str
     priority_targeting: str
 
+class ControllerBindings(BaseModel):
+    aim_assist_toggle: str = "LEFT_SHOULDER"
+    aim_hold: str = "LEFT_TRIGGER"
+    fire: str = "RIGHT_TRIGGER"
+    snap_to_target: str = "RIGHT_THUMB"
+    cycle_target: str = "RIGHT_SHOULDER"
+    toggle_overlay: str = "BACK"
+
+class ControllerConfig(BaseModel):
+    enabled: bool = True
+    bindings: Dict[str, str] = Field(default_factory=lambda: DEFAULT_BINDINGS.copy())
+    trigger_threshold: float = 0.3
+    vibration_enabled: bool = True
+
+# Controller settings (global)
+controller_config = {
+    "enabled": True,
+    "bindings": DEFAULT_BINDINGS.copy(),
+    "trigger_threshold": 0.3,
+    "vibration_enabled": True,
+    "scuf_mode": True  # Enable Scuf Valor Pro optimizations
+}
+
 class Detection(BaseModel):
     class_name: str
     confidence: float
@@ -256,6 +282,88 @@ async def activate_profile(profile_id: str):
         "message": f"Profile '{profile['name']}' activated",
         "settings": detection_settings
     }
+
+
+# Controller Endpoints
+@api_router.get("/controller/status")
+async def get_controller_status():
+    """Get current controller status and state"""
+    return {
+        "available": controller.is_available(),
+        "connected": controller.is_connected(),
+        "state": controller.to_dict(),
+        "config": controller_config,
+        "scuf_config": SCUF_VALOR_PRO_CONFIG
+    }
+
+@api_router.get("/controller/bindings")
+async def get_controller_bindings():
+    """Get current controller button bindings"""
+    return {
+        "bindings": controller_config["bindings"],
+        "default_bindings": DEFAULT_BINDINGS,
+        "scuf_recommended": SCUF_VALOR_PRO_CONFIG["recommended_bindings"]
+    }
+
+@api_router.put("/controller/bindings")
+async def update_controller_bindings(bindings: ControllerBindings):
+    """Update controller button bindings"""
+    global controller_config
+    
+    new_bindings = bindings.model_dump()
+    controller_config["bindings"].update(new_bindings)
+    
+    # Update controller manager
+    for action, button in new_bindings.items():
+        controller.set_binding(action, button)
+    
+    # Save to MongoDB
+    await db.controller_config.update_one(
+        {"type": "bindings"},
+        {"$set": {"bindings": controller_config["bindings"], "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True
+    )
+    
+    return {"message": "Bindings updated", "bindings": controller_config["bindings"]}
+
+@api_router.put("/controller/config")
+async def update_controller_config(config: ControllerConfig):
+    """Update controller configuration"""
+    global controller_config
+    controller_config.update(config.model_dump())
+    
+    controller.trigger_threshold = config.trigger_threshold
+    
+    await db.controller_config.update_one(
+        {"type": "config"},
+        {"$set": {**config.model_dump(), "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True
+    )
+    
+    return {"message": "Controller config updated", "config": controller_config}
+
+@api_router.post("/controller/vibrate")
+async def vibrate_controller(left: float = 0.5, right: float = 0.5, duration: int = 200):
+    """Test controller vibration"""
+    if not controller.is_connected():
+        raise HTTPException(status_code=400, detail="Controller not connected")
+    
+    controller.vibrate(left, right, duration)
+    return {"message": "Vibration sent"}
+
+@api_router.get("/controller/input")
+async def get_controller_input():
+    """Get current controller input state and processed actions"""
+    actions = controller.process_input()
+    return {
+        "actions": actions,
+        "raw_state": controller.to_dict()
+    }
+
+@api_router.get("/controller/scuf-config")
+async def get_scuf_configuration():
+    """Get Scuf Valor Pro specific configuration and tips"""
+    return get_scuf_config()
 
 
 # Screen Capture

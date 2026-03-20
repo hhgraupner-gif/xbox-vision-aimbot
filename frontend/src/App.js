@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
 import Dashboard from "@/pages/Dashboard";
 import Settings from "@/pages/Settings";
+import ControllerSettings from "@/pages/ControllerSettings";
 
 function App() {
   return (
@@ -11,6 +12,7 @@ function App() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/controller" element={<ControllerSettings />} />
         </Routes>
       </BrowserRouter>
       <Toaster 

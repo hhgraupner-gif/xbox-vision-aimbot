@@ -11,7 +11,9 @@ import {
   Eye,
   Crosshair,
   Layers,
-  Info
+  Info,
+  Gamepad2,
+  ChevronRight
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -409,6 +411,28 @@ export default function Settings() {
               </span>
             </div>
           </div>
+        </section>
+
+        {/* Controller Settings Link */}
+        <section className="bg-[#0A0A0A] border border-[#FF2A6D]/30 rounded-sm p-6 lg:col-span-2" data-testid="controller-link-section">
+          <Link to="/controller" className="block">
+            <div className="flex items-center justify-between hover:bg-white/5 p-4 -m-4 rounded-sm transition-colors">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-[#FF2A6D]/20 rounded-sm flex items-center justify-center">
+                  <Gamepad2 className="w-6 h-6 text-[#FF2A6D]" />
+                </div>
+                <div>
+                  <h2 className="text-lg uppercase tracking-wider text-[#FF2A6D]">
+                    Controller Setup
+                  </h2>
+                  <p className="text-sm text-zinc-400">
+                    Configure Scuf Valor Pro button bindings and aim assist triggers
+                  </p>
+                </div>
+              </div>
+              <ChevronRight className="w-6 h-6 text-zinc-500" />
+            </div>
+          </Link>
         </section>
       </div>
     </div>
