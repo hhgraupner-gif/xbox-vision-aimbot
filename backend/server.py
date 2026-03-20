@@ -243,7 +243,9 @@ def move_mouse_smoothed(target_x, target_y, frame_width, frame_height):
         logger.error(f"Mouse aimbot error: {e}")
         return False
 
-# YOLO Model (lazy load with failure cache + ONNX/DirectML support)
+# YOLO Model - ONNX Runtime (no PyTorch needed!)
+from yolo_onnx import YOLODetector
+
 yolo_model = None
 _yolo_load_failed = False
 
@@ -253,39 +255,17 @@ def get_yolo_model():
         return None
     if yolo_model is None:
         try:
-            from ultralytics import YOLO
-            import importlib
-            # Try ONNX + DirectML first (AMD GPU acceleration)
             onnx_path = str(ROOT_DIR / 'yolov8n.onnx')
-            pt_path = str(ROOT_DIR / 'yolov8n.pt')
-
-            has_directml = importlib.util.find_spec("onnxruntime") is not None
-            if has_directml and os.path.exists(onnx_path):
-                yolo_model = YOLO(onnx_path, task='detect')
-                logger.info("YOLO loaded with ONNX (DirectML GPU acceleration)")
+            if os.path.exists(onnx_path):
+                yolo_model = YOLODetector(onnx_path)
+                logger.info(f"YOLO ONNX model loaded from {onnx_path}")
             else:
-                # Export to ONNX if pt exists but onnx doesn't
-                if os.path.exists(pt_path) and not os.path.exists(onnx_path):
-                    try:
-                        logger.info("Exporting YOLOv8n to ONNX format...")
-                        temp_model = YOLO(pt_path)
-                        temp_model.export(format='onnx', imgsz=640, simplify=True)
-                        if os.path.exists(onnx_path):
-                            yolo_model = YOLO(onnx_path, task='detect')
-                            logger.info("YOLO exported + loaded as ONNX")
-                        else:
-                            yolo_model = temp_model
-                            logger.info("YOLO loaded with PyTorch (CPU)")
-                    except Exception as export_err:
-                        logger.warning(f"ONNX export failed, using PyTorch: {export_err}")
-                        yolo_model = YOLO(pt_path)
-                        logger.info("YOLO loaded with PyTorch (CPU)")
-                else:
-                    yolo_model = YOLO(pt_path)
-                    logger.info("YOLO loaded with PyTorch (CPU)")
+                _yolo_load_failed = True
+                logger.error(f"yolov8n.onnx not found at {onnx_path}")
+                return None
         except Exception as e:
             _yolo_load_failed = True
-            logger.error(f"YOLO model failed to load (will not retry): {e}")
+            logger.error(f"YOLO model failed to load: {e}")
             return None
     return yolo_model
 
@@ -734,12 +714,16 @@ def run_detection(frame: np.ndarray) -> tuple:
     """Run YOLO detection on frame with stabilized targeting."""
     start_time = _time.monotonic()
 
-    model = get_yolo_model()
+    detector = get_yolo_model()
     frame_height, frame_width = frame.shape[:2]
 
     # If YOLO not available, return empty results immediately
-    if model is None:
+    if detector is None:
         return [], None, 0.0, frame_width, frame_height
+
+    conf = detection_settings["confidence_threshold"]
+    aim_offset = detection_settings.get("aim_point_offset", 0.15)
+    min_size = detection_settings.get("min_target_size", 4000)
 
     # Crop to center 50% when aimbot is active (reduces false positives)
     if detection_settings.get("aimbot_enabled", False):
@@ -748,65 +732,59 @@ def run_detection(frame: np.ndarray) -> tuple:
         crop_w = frame_width // 2
         crop_h = frame_height // 2
         cropped = frame[crop_y:crop_y + crop_h, crop_x:crop_x + crop_w]
-        results = model(cropped, verbose=False, conf=detection_settings["confidence_threshold"])
+        raw_dets = detector.detect(cropped, conf_threshold=conf)
         offset_x, offset_y = crop_x, crop_y
     else:
-        results = model(frame, verbose=False, conf=detection_settings["confidence_threshold"])
+        raw_dets = detector.detect(frame, conf_threshold=conf)
         offset_x, offset_y = 0, 0
 
     detections = []
     center_x = frame_width / 2.0
     center_y = frame_height / 2.0
-    aim_offset = detection_settings.get("aim_point_offset", 0.15)
-    min_size = detection_settings.get("min_target_size", 4000)
 
     best_target = None
     min_distance = float('inf')
 
-    for result in results:
-        for box in result.boxes:
-            cls_id = int(box.cls[0])
-            cls_name = model.names[cls_id]
-            conf = float(box.conf[0])
+    for det in raw_dets:
+        cls_name = det["class_name"]
+        if cls_name not in detection_settings["target_classes"]:
+            continue
 
-            if cls_name not in detection_settings["target_classes"]:
-                continue
+        x1, y1, x2, y2 = det["bbox"]
+        x1 += offset_x
+        x2 += offset_x
+        y1 += offset_y
+        y2 += offset_y
 
-            x1, y1, x2, y2 = map(int, box.xyxy[0])
-            x1 += offset_x
-            x2 += offset_x
-            y1 += offset_y
-            y2 += offset_y
+        w_box = x2 - x1
+        h_box = y2 - y1
 
-            w_box = x2 - x1
-            h_box = y2 - y1
+        # Filter: minimum area
+        if w_box * h_box < min_size:
+            continue
 
-            # Filter: minimum area
-            if w_box * h_box < min_size:
-                continue
+        # Filter: humans are taller than wide (ratio 1.2 - 4.0)
+        ratio = h_box / max(1, w_box)
+        if ratio < 1.2 or ratio > 4.0:
+            continue
 
-            # Filter: humans are taller than wide (ratio 1.2 - 4.0)
-            ratio = h_box / max(1, w_box)
-            if ratio < 1.2 or ratio > 4.0:
-                continue
+        cx = (x1 + x2) // 2
+        cy = (y1 + y2) // 2
 
-            cx = (x1 + x2) // 2
-            cy = (y1 + y2) // 2
+        detections.append({
+            "class_name": cls_name,
+            "confidence": round(det["confidence"], 3),
+            "bbox": [x1, y1, x2, y2],
+            "center": [cx, cy]
+        })
 
-            detections.append({
-                "class_name": cls_name,
-                "confidence": round(conf, 3),
-                "bbox": [x1, y1, x2, y2],
-                "center": [cx, cy]
-            })
-
-            # Pick target closest to crosshair
-            if detection_settings.get("aimbot_enabled", False):
-                target_y = y1 + int(h_box * aim_offset)
-                dist = ((cx - center_x) ** 2 + (target_y - center_y) ** 2) ** 0.5
-                if dist < min_distance:
-                    min_distance = dist
-                    best_target = [cx, target_y]
+        # Pick target closest to crosshair
+        if detection_settings.get("aimbot_enabled", False):
+            target_y = y1 + int(h_box * aim_offset)
+            dist = ((cx - center_x) ** 2 + (target_y - center_y) ** 2) ** 0.5
+            if dist < min_distance:
+                min_distance = dist
+                best_target = [cx, target_y]
 
     processing_time = (_time.monotonic() - start_time) * 1000
 
@@ -1028,14 +1006,14 @@ async def get_yolo_classes():
 
 @api_router.post("/yolo/reload")
 async def reload_yolo():
-    """Force reload YOLO model (after fixing torch)"""
+    """Force reload YOLO model"""
     global yolo_model, _yolo_load_failed
     yolo_model = None
     _yolo_load_failed = False
     model = get_yolo_model()
     if model is not None:
-        return {"status": "ok", "message": "YOLO model loaded successfully"}
-    return {"status": "error", "message": "YOLO model failed to load"}
+        return {"status": "ok", "message": "YOLO ONNX model loaded"}
+    return {"status": "error", "message": "YOLO model failed to load - yolov8n.onnx missing?"}
 
 @api_router.get("/system/info")
 async def system_info():
@@ -1043,22 +1021,17 @@ async def system_info():
     info = {
         "yolo_loaded": yolo_model is not None,
         "yolo_failed": _yolo_load_failed,
-        "yolo_type": "unknown",
+        "yolo_type": "ONNX DirectML" if yolo_model else "not loaded",
         "capture_card_open": _persistent_cap is not None and _persistent_cap.isOpened() if _persistent_cap else False,
         "mouse_available": MOUSE_AIMBOT_AVAILABLE,
         "platform": _platform.system(),
     }
-    if yolo_model is not None:
-        if '.onnx' in str(getattr(yolo_model, 'model_name', '')):
-            info["yolo_type"] = "ONNX (DirectML GPU)"
-        else:
-            info["yolo_type"] = "PyTorch (CPU)"
     try:
         import onnxruntime
-        info["onnxruntime"] = onnxruntime.get_version_string() if hasattr(onnxruntime, 'get_version_string') else "installed"
+        info["onnxruntime_version"] = onnxruntime.__version__
         info["onnx_providers"] = onnxruntime.get_available_providers()
     except ImportError:
-        info["onnxruntime"] = "not installed"
+        info["onnxruntime_version"] = "not installed"
     return info
 
 
