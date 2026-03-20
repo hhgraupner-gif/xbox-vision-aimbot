@@ -25,11 +25,28 @@ try:
     import pyautogui
     pyautogui.FAILSAFE = False  # Disable fail-safe for gaming
     pyautogui.PAUSE = 0  # No pause between actions
-    AIMBOT_AVAILABLE = True
-    print("✅ PyAutoGUI loaded - Aimbot enabled")
+    MOUSE_AIMBOT_AVAILABLE = True
+    print("✅ PyAutoGUI loaded - Mouse aimbot available")
 except ImportError:
-    AIMBOT_AVAILABLE = False
-    print("⚠️ PyAutoGUI not available - Install with: pip install pyautogui")
+    MOUSE_AIMBOT_AVAILABLE = False
+    print("⚠️ PyAutoGUI not available")
+
+# Import vgamepad for controller aimbot (Scuf Valor Pro)
+try:
+    import vgamepad as vg
+    virtual_gamepad = vg.VX360Gamepad()
+    CONTROLLER_AIMBOT_AVAILABLE = True
+    print("✅ VGamepad loaded - Controller aimbot enabled")
+except ImportError:
+    virtual_gamepad = None
+    CONTROLLER_AIMBOT_AVAILABLE = False
+    print("⚠️ VGamepad not available - Install with: pip install vgamepad")
+except Exception as e:
+    virtual_gamepad = None
+    CONTROLLER_AIMBOT_AVAILABLE = False
+    print(f"⚠️ VGamepad error (install ViGEmBus driver): {e}")
+
+AIMBOT_AVAILABLE = MOUSE_AIMBOT_AVAILABLE or CONTROLLER_AIMBOT_AVAILABLE
 
 # Import controller module
 from controller import controller, get_scuf_config, DEFAULT_BINDINGS, SCUF_VALOR_PRO_CONFIG
@@ -118,54 +135,95 @@ detection_settings = {
     "show_boxes": True,
     "show_crosshair": True,
     "aim_assist_enabled": False,
-    "aimbot_enabled": False,  # NEW: Actually move mouse to target
+    "aimbot_enabled": False,
+    "aimbot_mode": "controller",  # "controller" or "mouse"
     "capture_monitor": 1,
     "capture_region": None,
     "active_profile": "default",
     "aim_point_offset": 0.15,
     "priority_targeting": "closest",
-    "smoothing": 0.5  # Mouse movement smoothing (0 = instant, 1 = very slow)
+    "smoothing": 0.3
 }
 
-# Aimbot function - moves mouse to target
-def move_to_target(target_x, target_y, frame_width, frame_height, sensitivity=0.8, smoothing=0.5):
-    """Move mouse towards the target position"""
-    if not AIMBOT_AVAILABLE:
+# Controller Aimbot - moves right stick towards target
+def move_controller_to_target(target_x, target_y, frame_width, frame_height, sensitivity=0.8, smoothing=0.3):
+    """Move controller right stick towards the target"""
+    if not CONTROLLER_AIMBOT_AVAILABLE or virtual_gamepad is None:
         return False
     
     try:
-        # Get current mouse position
-        current_x, current_y = pyautogui.position()
+        # Calculate center of frame
+        center_x = frame_width // 2
+        center_y = frame_height // 2
         
-        # Get screen size
+        # Calculate offset from center (normalized -1 to 1)
+        delta_x = (target_x - center_x) / (frame_width / 2)
+        delta_y = (target_y - center_y) / (frame_height / 2)
+        
+        # Apply sensitivity
+        delta_x *= sensitivity
+        delta_y *= sensitivity
+        
+        # Clamp to -1 to 1
+        delta_x = max(-1, min(1, delta_x))
+        delta_y = max(-1, min(1, delta_y))
+        
+        # Only move if significant offset (deadzone)
+        if abs(delta_x) > 0.05 or abs(delta_y) > 0.05:
+            # Move right stick (for aiming)
+            virtual_gamepad.right_joystick_float(x_value_float=delta_x, y_value_float=-delta_y)
+            virtual_gamepad.update()
+            return True
+        else:
+            # Center stick when on target
+            virtual_gamepad.right_joystick_float(x_value_float=0, y_value_float=0)
+            virtual_gamepad.update()
+        
+        return False
+    except Exception as e:
+        logger.error(f"Controller aimbot error: {e}")
+        return False
+
+# Mouse Aimbot - moves mouse towards target (fallback)
+def move_mouse_to_target(target_x, target_y, frame_width, frame_height, sensitivity=0.8, smoothing=0.5):
+    """Move mouse towards the target position"""
+    if not MOUSE_AIMBOT_AVAILABLE:
+        return False
+    
+    try:
         screen_width, screen_height = pyautogui.size()
-        
-        # Calculate center of screen
         center_x = screen_width // 2
         center_y = screen_height // 2
         
-        # Calculate offset from center to target (normalized)
-        # The frame might be different size than screen, so normalize
         norm_target_x = (target_x / frame_width) * screen_width
         norm_target_y = (target_y / frame_height) * screen_height
         
-        # Calculate how much to move
         delta_x = (norm_target_x - center_x) * sensitivity
         delta_y = (norm_target_y - center_y) * sensitivity
         
-        # Apply smoothing (move only part of the way)
         move_x = delta_x * (1 - smoothing)
         move_y = delta_y * (1 - smoothing)
         
-        # Move mouse relative to current position
         if abs(move_x) > 1 or abs(move_y) > 1:
             pyautogui.moveRel(int(move_x), int(move_y), duration=0)
             return True
         
         return False
     except Exception as e:
-        logger.error(f"Aimbot move error: {e}")
+        logger.error(f"Mouse aimbot error: {e}")
         return False
+
+# Main aimbot function
+def move_to_target(target_x, target_y, frame_width, frame_height, sensitivity=0.8, smoothing=0.3):
+    """Move to target using configured aimbot mode"""
+    mode = detection_settings.get("aimbot_mode", "controller")
+    
+    if mode == "controller" and CONTROLLER_AIMBOT_AVAILABLE:
+        return move_controller_to_target(target_x, target_y, frame_width, frame_height, sensitivity, smoothing)
+    elif MOUSE_AIMBOT_AVAILABLE:
+        return move_mouse_to_target(target_x, target_y, frame_width, frame_height, sensitivity, smoothing)
+    
+    return False
 
 # YOLO Model (lazy load)
 yolo_model = None
@@ -329,13 +387,15 @@ async def aimbot_status():
     return {
         "aimbot_enabled": detection_settings.get("aimbot_enabled", False),
         "aim_assist_enabled": detection_settings.get("aim_assist_enabled", False),
-        "pyautogui_available": AIMBOT_AVAILABLE,
+        "aimbot_mode": detection_settings.get("aimbot_mode", "controller"),
+        "controller_available": CONTROLLER_AIMBOT_AVAILABLE,
+        "mouse_available": MOUSE_AIMBOT_AVAILABLE,
         "sensitivity": detection_settings.get("aim_sensitivity", 0.8),
-        "smoothing": detection_settings.get("smoothing", 0.5)
+        "smoothing": detection_settings.get("smoothing", 0.3)
     }
 
 @api_router.put("/aimbot/sensitivity")
-async def set_aimbot_sensitivity(sensitivity: float = 0.8, smoothing: float = 0.5):
+async def set_aimbot_sensitivity(sensitivity: float = 0.8, smoothing: float = 0.3):
     """Adjust aimbot sensitivity and smoothing"""
     global detection_settings
     detection_settings["aim_sensitivity"] = max(0.1, min(1.0, sensitivity))
@@ -344,6 +404,14 @@ async def set_aimbot_sensitivity(sensitivity: float = 0.8, smoothing: float = 0.
         "sensitivity": detection_settings["aim_sensitivity"],
         "smoothing": detection_settings["smoothing"]
     }
+
+@api_router.put("/aimbot/mode")
+async def set_aimbot_mode(mode: str = "controller"):
+    """Set aimbot mode: 'controller' or 'mouse'"""
+    global detection_settings
+    if mode in ["controller", "mouse"]:
+        detection_settings["aimbot_mode"] = mode
+    return {"mode": detection_settings["aimbot_mode"]}
 
 
 # Game Profiles
