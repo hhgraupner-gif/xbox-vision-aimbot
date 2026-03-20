@@ -106,19 +106,33 @@
         <div class="sidebar">
             <!-- AIMBOT CONTROL - WICHTIGSTE KARTE -->
             <div class="card aimbot">
-                <h3>🎯 AIMBOT CONTROL</h3>
+                <h3>AIMBOT CONTROL</h3>
                 <div class="aimbot-status off" id="aimbotStatus">AIMBOT AUS</div>
                 <button class="aimbot-btn" id="aimbotBtn" onclick="toggleAimbot()" style="width:100%;margin-top:10px">
                     AIMBOT AKTIVIEREN
                 </button>
+                <div style="margin-top:10px;font-size:11px;color:#666" id="trackerInfo">Tracker: idle</div>
                 <div style="margin-top:10px">
-                    <label style="font-size:11px;color:#666">Sensitivity: <span id="sensVal">80%</span></label>
-                    <input type="range" min="10" max="100" value="80" id="sensSlider" onchange="updateSensitivity()">
+                    <label style="font-size:11px;color:#666">Sensitivity: <span id="sensVal">25%</span></label>
+                    <input type="range" min="5" max="100" value="25" id="sensSlider" onchange="updateSensitivity()">
                 </div>
                 <div>
-                    <label style="font-size:11px;color:#666">Smoothing: <span id="smoothVal">50%</span></label>
-                    <input type="range" min="0" max="90" value="50" id="smoothSlider" onchange="updateSensitivity()">
+                    <label style="font-size:11px;color:#666">Smoothing: <span id="smoothVal">85%</span></label>
+                    <input type="range" min="0" max="95" value="85" id="smoothSlider" onchange="updateSensitivity()">
                 </div>
+                <div>
+                    <label style="font-size:11px;color:#666">Deadzone: <span id="dzVal">60px</span></label>
+                    <input type="range" min="10" max="200" value="60" id="dzSlider" onchange="updateTuning()">
+                </div>
+                <div>
+                    <label style="font-size:11px;color:#666">Max Speed: <span id="msVal">12px</span></label>
+                    <input type="range" min="2" max="50" value="12" id="msSlider" onchange="updateTuning()">
+                </div>
+                <div>
+                    <label style="font-size:11px;color:#666">Lock Frames: <span id="lfVal">3</span></label>
+                    <input type="range" min="1" max="10" value="3" id="lfSlider" onchange="updateTuning()">
+                </div>
+                <button class="secondary" onclick="resetTracker()" style="width:100%;margin-top:8px;font-size:11px;padding:8px">TRACKER RESET</button>
             </div>
 
             <div class="card yellow">
@@ -171,7 +185,40 @@
             </div>
 
             <div class="warning">
-                ⚠️ <strong>WARNUNG:</strong> Nur im Single-Player oder Private Matches nutzen!
+                WARNUNG: Nur im Single-Player oder Private Matches nutzen!
+            </div>
+
+            <!-- CAPTURE CARD CONFIG -->
+            <div class="card green">
+                <h3>CAPTURE CARD</h3>
+                <div class="toggle">
+                    <span>Capture Card aktiv</span>
+                    <div class="switch" id="togCaptureCard" onclick="toggleCaptureCard(this)"></div>
+                </div>
+                <div style="margin-top:8px">
+                    <label style="font-size:11px;color:#666">Device Index:</label>
+                    <select id="captureDeviceSelect" onchange="setCaptureDevice()" style="margin-top:4px">
+                        <option value="0">Device 0</option>
+                        <option value="1">Device 1</option>
+                        <option value="2">Device 2</option>
+                        <option value="3">Device 3</option>
+                    </select>
+                </div>
+                <button class="secondary" onclick="testCaptureCard()" style="width:100%;margin-top:8px;font-size:11px;padding:8px">CAPTURE CARD TESTEN</button>
+                <div id="captureCardResult" style="font-size:10px;margin-top:6px;color:#666"></div>
+            </div>
+
+            <!-- XIM MATRIX INFO -->
+            <div class="card yellow">
+                <h3>XIM MATRIX SETUP</h3>
+                <div style="font-size:10px;color:#aaa;line-height:1.6">
+                    <strong style="color:#FFD300">1.</strong> XIM Matrix Manager starten<br>
+                    <strong style="color:#FFD300">2.</strong> Neues Config: Mouse als Input<br>
+                    <strong style="color:#FFD300">3.</strong> Output: Controller (Xbox)<br>
+                    <strong style="color:#FFD300">4.</strong> Mouse auf Right Stick mappen<br>
+                    <strong style="color:#FFD300">5.</strong> Aimbot startet PyAutoGUI Maus<br>
+                    <strong style="color:#FFD300">6.</strong> XIM faengt Maus ab -> Xbox Stick
+                </div>
             </div>
         </div>
     </div>
@@ -200,7 +247,22 @@
                 document.getElementById('sensVal').textContent=Math.round(d.sensitivity*100)+'%';
                 document.getElementById('smoothSlider').value=d.smoothing*100;
                 document.getElementById('smoothVal').textContent=Math.round(d.smoothing*100)+'%';
+                document.getElementById('dzSlider').value=d.deadzone||60;
+                document.getElementById('dzVal').textContent=(d.deadzone||60)+'px';
+                document.getElementById('msSlider').value=d.max_move_px||12;
+                document.getElementById('msVal').textContent=(d.max_move_px||12)+'px';
+                document.getElementById('lfSlider').value=d.lock_frames_required||3;
+                document.getElementById('lfVal').textContent=d.lock_frames_required||3;
+                updateTrackerInfo(d);
             }).catch(()=>{});
+        }
+
+        function updateTrackerInfo(d){
+            const el=document.getElementById('trackerInfo');
+            if(!d){el.textContent='Tracker: idle';return;}
+            if(d.tracker_locked)el.textContent='Tracker: LOCKED ('+d.tracker_frames+' frames)';
+            else if(d.tracker_frames>0)el.textContent='Tracker: acquiring ('+d.tracker_frames+'/'+d.lock_frames_required+')';
+            else el.textContent='Tracker: idle';
         }
 
         function updateAimbotUI(){
@@ -233,6 +295,22 @@
             document.getElementById('sensVal').textContent=Math.round(sens*100)+'%';
             document.getElementById('smoothVal').textContent=Math.round(smooth*100)+'%';
             fetch(API+'/aimbot/sensitivity?sensitivity='+sens+'&smoothing='+smooth,{method:'PUT'}).catch(()=>{});
+        }
+
+        function updateTuning(){
+            const dz=parseInt(document.getElementById('dzSlider').value);
+            const ms=parseInt(document.getElementById('msSlider').value);
+            const lf=parseInt(document.getElementById('lfSlider').value);
+            document.getElementById('dzVal').textContent=dz+'px';
+            document.getElementById('msVal').textContent=ms+'px';
+            document.getElementById('lfVal').textContent=lf;
+            fetch(API+'/aimbot/tuning?deadzone='+dz+'&max_move='+ms+'&lock_frames='+lf,{method:'PUT'}).catch(()=>{});
+        }
+
+        function resetTracker(){
+            fetch(API+'/aimbot/reset-tracker',{method:'POST'}).then(()=>{
+                document.getElementById('trackerInfo').textContent='Tracker: reset';
+            }).catch(()=>{});
         }
 
         function loadSettings(){
@@ -312,7 +390,45 @@
                     document.getElementById('hudFps').textContent=fps;
                     frameCount=0;lastFpsTime=now;
                 }
+
+                // Update tracker info periodically
+                if(aimbotEnabled&&frameCount%5===0){
+                    fetch(API+'/aimbot/status').then(r=>r.json()).then(updateTrackerInfo).catch(()=>{});
+                }
             }).catch(e=>console.error(e));
+        }
+
+        // Capture Card Functions
+        function toggleCaptureCard(el){
+            const active=!el.classList.contains('active');
+            el.className='switch'+(active?' active':'');
+            const devId=parseInt(document.getElementById('captureDeviceSelect').value);
+            fetch(API+'/capture-card/config?enabled='+active+'&device_id='+devId,{method:'PUT'}).catch(()=>{});
+        }
+
+        function setCaptureDevice(){
+            const devId=parseInt(document.getElementById('captureDeviceSelect').value);
+            const active=document.getElementById('togCaptureCard').classList.contains('active');
+            fetch(API+'/capture-card/config?enabled='+active+'&device_id='+devId,{method:'PUT'}).catch(()=>{});
+        }
+
+        function testCaptureCard(){
+            const res=document.getElementById('captureCardResult');
+            res.textContent='Teste...';res.style.color='#FFD300';
+            fetch(API+'/capture-card/test').then(r=>r.json()).then(d=>{
+                if(d.success){
+                    res.textContent='OK! '+d.width+'x'+d.height+' (Device '+d.device_id+')';
+                    res.style.color='#39FF14';
+                    // Show test frame briefly
+                    let img=document.getElementById('feedImg');
+                    if(!img){img=document.createElement('img');img.id='feedImg';document.getElementById('videoFeed').appendChild(img);}
+                    img.src='data:image/jpeg;base64,'+d.frame;
+                    document.getElementById('placeholder').style.display='none';
+                }else{
+                    res.textContent='Fehler: '+d.error;
+                    res.style.color='#FF003C';
+                }
+            }).catch(e=>{res.textContent='Verbindung fehlgeschlagen';res.style.color='#FF003C';});
         }
     </script>
 </body>

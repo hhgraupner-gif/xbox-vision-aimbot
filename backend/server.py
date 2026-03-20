@@ -20,33 +20,19 @@ import io
 import mss
 import mss.tools
 
-# Import pyautogui for mouse control (aimbot)
+# Import pyautogui for mouse control (aimbot - works on Windows with display)
 try:
     import pyautogui
-    pyautogui.FAILSAFE = False  # Disable fail-safe for gaming
-    pyautogui.PAUSE = 0  # No pause between actions
+    pyautogui.FAILSAFE = False
+    pyautogui.PAUSE = 0
     MOUSE_AIMBOT_AVAILABLE = True
-    print("✅ PyAutoGUI loaded - Mouse aimbot available")
-except ImportError:
+    print("PyAutoGUI loaded - Mouse aimbot available")
+except (ImportError, KeyError, Exception):
+    pyautogui = None
     MOUSE_AIMBOT_AVAILABLE = False
-    print("⚠️ PyAutoGUI not available")
+    print("PyAutoGUI not available (normal on headless server)")
 
-# Import vgamepad for controller aimbot (Scuf Valor Pro)
-try:
-    import vgamepad as vg
-    virtual_gamepad = vg.VX360Gamepad()
-    CONTROLLER_AIMBOT_AVAILABLE = True
-    print("✅ VGamepad loaded - Controller aimbot enabled")
-except ImportError:
-    virtual_gamepad = None
-    CONTROLLER_AIMBOT_AVAILABLE = False
-    print("⚠️ VGamepad not available - Install with: pip install vgamepad")
-except Exception as e:
-    virtual_gamepad = None
-    CONTROLLER_AIMBOT_AVAILABLE = False
-    print(f"⚠️ VGamepad error (install ViGEmBus driver): {e}")
-
-AIMBOT_AVAILABLE = MOUSE_AIMBOT_AVAILABLE or CONTROLLER_AIMBOT_AVAILABLE
+AIMBOT_AVAILABLE = MOUSE_AIMBOT_AVAILABLE
 
 # Import controller module
 from controller import controller, get_scuf_config, DEFAULT_BINDINGS, SCUF_VALOR_PRO_CONFIG
@@ -129,111 +115,133 @@ GAME_PROFILES = {
 # Global settings
 detection_settings = {
     "confidence_threshold": 0.70,
-    "aim_sensitivity": 0.20,  # Noch niedriger
+    "aim_sensitivity": 0.25,
     "target_classes": ["person"],
     "enabled": True,
     "show_boxes": True,
     "show_crosshair": True,
     "aim_assist_enabled": False,
     "aimbot_enabled": False,
-    "aimbot_mode": "mouse",  # MAUS statt Controller - kein Konflikt!
+    "aimbot_mode": "mouse",
     "capture_monitor": 1,
     "capture_region": None,
     "active_profile": "default",
     "aim_point_offset": 0.15,
     "priority_targeting": "closest",
-    "smoothing": 0.85,  # Sehr smooth
-    "min_target_size": 4000,  # Größere Targets
-    "deadzone": 80  # Größere Deadzone
+    "smoothing": 0.85,
+    "min_target_size": 4000,
+    "deadzone": 60,
+    "use_capture_card": False,
+    "capture_device": 0,
+    "max_move_px": 12,
+    "lock_frames_required": 3,
 }
 
-# Controller Aimbot - moves right stick towards target
-def move_controller_to_target(target_x, target_y, frame_width, frame_height, sensitivity=0.35, smoothing=0.75):
-    """Move controller right stick towards the target"""
-    if not CONTROLLER_AIMBOT_AVAILABLE or virtual_gamepad is None:
-        return False
-    
-    try:
-        # Calculate center of frame
-        center_x = frame_width // 2
-        center_y = frame_height // 2
-        
-        # Deadzone - wenn Target nah genug am Zentrum, nicht bewegen
-        deadzone = detection_settings.get("deadzone", 50)
-        distance = ((target_x - center_x) ** 2 + (target_y - center_y) ** 2) ** 0.5
-        if distance < deadzone:
-            virtual_gamepad.right_joystick_float(x_value_float=0, y_value_float=0)
-            virtual_gamepad.update()
-            return False
-        
-        # Calculate offset from center (normalized -1 to 1)
-        delta_x = (target_x - center_x) / (frame_width / 2)
-        delta_y = (target_y - center_y) / (frame_height / 2)
-        
-        # Apply sensitivity
-        delta_x *= sensitivity
-        delta_y *= sensitivity
-        
-        # Clamp to -1 to 1
-        delta_x = max(-1, min(1, delta_x))
-        delta_y = max(-1, min(1, delta_y))
-        
-        # Only move if significant offset (deadzone)
-        if abs(delta_x) > 0.05 or abs(delta_y) > 0.05:
-            # Move right stick (for aiming)
-            virtual_gamepad.right_joystick_float(x_value_float=delta_x, y_value_float=-delta_y)
-            virtual_gamepad.update()
-            return True
-        else:
-            # Center stick when on target
-            virtual_gamepad.right_joystick_float(x_value_float=0, y_value_float=0)
-            virtual_gamepad.update()
-        
-        return False
-    except Exception as e:
-        logger.error(f"Controller aimbot error: {e}")
-        return False
+# ============================================================
+# STABILIZED AIMBOT - Target Tracker with EMA Smoothing
+# ============================================================
+import time as _time
 
-# Mouse Aimbot - moves mouse towards target (fallback)
-def move_mouse_to_target(target_x, target_y, frame_width, frame_height, sensitivity=0.8, smoothing=0.5):
-    """Move mouse towards the target position"""
+class TargetTracker:
+    """Tracks a single target across frames with smoothing."""
+    def __init__(self):
+        self.ema_x = None
+        self.ema_y = None
+        self.frames_seen = 0
+        self.last_seen = 0
+        self.locked = False
+        self.prev_move_x = 0.0
+        self.prev_move_y = 0.0
+
+    def update(self, raw_x, raw_y, alpha=0.3):
+        """Update tracker with new raw detection. alpha = EMA weight (lower=smoother)."""
+        now = _time.monotonic()
+        if self.ema_x is None or (now - self.last_seen) > 0.5:
+            # First frame or target was lost for >500ms -> reset
+            self.ema_x = float(raw_x)
+            self.ema_y = float(raw_y)
+            self.frames_seen = 1
+            self.locked = False
+        else:
+            self.ema_x = alpha * raw_x + (1 - alpha) * self.ema_x
+            self.ema_y = alpha * raw_y + (1 - alpha) * self.ema_y
+            self.frames_seen += 1
+        self.last_seen = now
+
+    def get_position(self):
+        if self.ema_x is None:
+            return None
+        return (self.ema_x, self.ema_y)
+
+    def is_stable(self, required_frames=3):
+        return self.frames_seen >= required_frames
+
+    def reset(self):
+        self.ema_x = None
+        self.ema_y = None
+        self.frames_seen = 0
+        self.locked = False
+        self.prev_move_x = 0.0
+        self.prev_move_y = 0.0
+
+target_tracker = TargetTracker()
+
+
+def move_mouse_smoothed(target_x, target_y, frame_width, frame_height):
+    """Smooth mouse movement with velocity capping. Designed for XIM Matrix interception."""
     if not MOUSE_AIMBOT_AVAILABLE:
         return False
-    
+
     try:
-        screen_width, screen_height = pyautogui.size()
-        center_x = screen_width // 2
-        center_y = screen_height // 2
-        
-        norm_target_x = (target_x / frame_width) * screen_width
-        norm_target_y = (target_y / frame_height) * screen_height
-        
-        delta_x = (norm_target_x - center_x) * sensitivity
-        delta_y = (norm_target_y - center_y) * sensitivity
-        
-        move_x = delta_x * (1 - smoothing)
-        move_y = delta_y * (1 - smoothing)
-        
-        if abs(move_x) > 1 or abs(move_y) > 1:
-            pyautogui.moveRel(int(move_x), int(move_y), duration=0)
+        sensitivity = detection_settings.get("aim_sensitivity", 0.25)
+        smoothing = detection_settings.get("smoothing", 0.85)
+        max_move = detection_settings.get("max_move_px", 12)
+        deadzone = detection_settings.get("deadzone", 60)
+
+        center_x = frame_width / 2.0
+        center_y = frame_height / 2.0
+
+        # Pixel offset from center of capture frame
+        dx = target_x - center_x
+        dy = target_y - center_y
+
+        distance = (dx * dx + dy * dy) ** 0.5
+        if distance < deadzone:
+            # Target is already near crosshair, do nothing
+            target_tracker.prev_move_x *= 0.5
+            target_tracker.prev_move_y *= 0.5
+            return False
+
+        # Scale: sensitivity controls how aggressively we correct
+        # Divide by frame dimension to normalize, then multiply by a base speed
+        move_x = (dx / frame_width) * sensitivity * 200
+        move_y = (dy / frame_height) * sensitivity * 200
+
+        # EMA on movement (additional smoothing on output)
+        move_x = smoothing * target_tracker.prev_move_x + (1 - smoothing) * move_x
+        move_y = smoothing * target_tracker.prev_move_y + (1 - smoothing) * move_y
+
+        # Velocity cap - never move more than max_move pixels per frame
+        mag = (move_x * move_x + move_y * move_y) ** 0.5
+        if mag > max_move:
+            scale = max_move / mag
+            move_x *= scale
+            move_y *= scale
+
+        target_tracker.prev_move_x = move_x
+        target_tracker.prev_move_y = move_y
+
+        ix = int(round(move_x))
+        iy = int(round(move_y))
+
+        if abs(ix) >= 1 or abs(iy) >= 1:
+            pyautogui.moveRel(ix, iy, duration=0)
             return True
-        
+
         return False
     except Exception as e:
         logger.error(f"Mouse aimbot error: {e}")
         return False
-
-# Main aimbot function
-def move_to_target(target_x, target_y, frame_width, frame_height, sensitivity=0.8, smoothing=0.3):
-    """Move to target using configured aimbot mode"""
-    mode = detection_settings.get("aimbot_mode", "controller")
-    
-    if mode == "controller" and CONTROLLER_AIMBOT_AVAILABLE:
-        return move_controller_to_target(target_x, target_y, frame_width, frame_height, sensitivity, smoothing)
-    elif MOUSE_AIMBOT_AVAILABLE:
-        return move_mouse_to_target(target_x, target_y, frame_width, frame_height, sensitivity, smoothing)
-    
-    return False
 
 # YOLO Model (lazy load)
 yolo_model = None
@@ -393,35 +401,92 @@ async def disable_aimbot():
 
 @api_router.get("/aimbot/status")
 async def aimbot_status():
-    """Get current aimbot status"""
+    """Get current aimbot status including tracker state"""
     return {
         "aimbot_enabled": detection_settings.get("aimbot_enabled", False),
         "aim_assist_enabled": detection_settings.get("aim_assist_enabled", False),
-        "aimbot_mode": detection_settings.get("aimbot_mode", "controller"),
-        "controller_available": CONTROLLER_AIMBOT_AVAILABLE,
+        "aimbot_mode": "mouse",
         "mouse_available": MOUSE_AIMBOT_AVAILABLE,
-        "sensitivity": detection_settings.get("aim_sensitivity", 0.8),
-        "smoothing": detection_settings.get("smoothing", 0.3)
+        "sensitivity": detection_settings.get("aim_sensitivity", 0.25),
+        "smoothing": detection_settings.get("smoothing", 0.85),
+        "deadzone": detection_settings.get("deadzone", 60),
+        "max_move_px": detection_settings.get("max_move_px", 12),
+        "lock_frames_required": detection_settings.get("lock_frames_required", 3),
+        "tracker_locked": target_tracker.locked,
+        "tracker_frames": target_tracker.frames_seen,
     }
 
 @api_router.put("/aimbot/sensitivity")
-async def set_aimbot_sensitivity(sensitivity: float = 0.8, smoothing: float = 0.3):
+async def set_aimbot_sensitivity(sensitivity: float = 0.25, smoothing: float = 0.85):
     """Adjust aimbot sensitivity and smoothing"""
     global detection_settings
-    detection_settings["aim_sensitivity"] = max(0.1, min(1.0, sensitivity))
-    detection_settings["smoothing"] = max(0.0, min(0.9, smoothing))
+    detection_settings["aim_sensitivity"] = max(0.05, min(1.0, sensitivity))
+    detection_settings["smoothing"] = max(0.0, min(0.95, smoothing))
+    target_tracker.reset()
     return {
         "sensitivity": detection_settings["aim_sensitivity"],
         "smoothing": detection_settings["smoothing"]
     }
 
-@api_router.put("/aimbot/mode")
-async def set_aimbot_mode(mode: str = "controller"):
-    """Set aimbot mode: 'controller' or 'mouse'"""
+@api_router.put("/aimbot/tuning")
+async def set_aimbot_tuning(deadzone: int = 60, max_move: int = 12, lock_frames: int = 3):
+    """Fine-tune aimbot parameters"""
     global detection_settings
-    if mode in ["controller", "mouse"]:
-        detection_settings["aimbot_mode"] = mode
-    return {"mode": detection_settings["aimbot_mode"]}
+    detection_settings["deadzone"] = max(10, min(200, deadzone))
+    detection_settings["max_move_px"] = max(2, min(50, max_move))
+    detection_settings["lock_frames_required"] = max(1, min(10, lock_frames))
+    target_tracker.reset()
+    return {
+        "deadzone": detection_settings["deadzone"],
+        "max_move_px": detection_settings["max_move_px"],
+        "lock_frames_required": detection_settings["lock_frames_required"]
+    }
+
+@api_router.put("/aimbot/mode")
+async def set_aimbot_mode(mode: str = "mouse"):
+    """Set aimbot mode (currently only mouse supported for XIM Matrix)"""
+    global detection_settings
+    detection_settings["aimbot_mode"] = "mouse"
+    return {"mode": "mouse"}
+
+@api_router.post("/aimbot/reset-tracker")
+async def reset_aimbot_tracker():
+    """Reset the target tracker (useful if aim gets stuck)"""
+    target_tracker.reset()
+    return {"status": "tracker_reset"}
+
+
+# Capture Card Settings
+@api_router.put("/capture-card/config")
+async def configure_capture_card(enabled: bool = False, device_id: int = 0):
+    """Enable/disable capture card and set device index"""
+    global detection_settings
+    detection_settings["use_capture_card"] = enabled
+    detection_settings["capture_device"] = device_id
+    return {
+        "use_capture_card": detection_settings["use_capture_card"],
+        "capture_device": detection_settings["capture_device"]
+    }
+
+@api_router.get("/capture-card/test")
+async def test_capture_card():
+    """Test if capture card is accessible and return a frame"""
+    device_id = detection_settings.get("capture_device", 0)
+    try:
+        cap = cv2.VideoCapture(device_id)
+        if not cap.isOpened():
+            return {"success": False, "error": f"Device {device_id} konnte nicht geoeffnet werden"}
+        ret, frame = cap.read()
+        w = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+        h = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+        cap.release()
+        if not ret:
+            return {"success": False, "error": "Frame konnte nicht gelesen werden"}
+        _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        frame_b64 = base64.b64encode(buffer).decode('utf-8')
+        return {"success": True, "frame": frame_b64, "width": int(w), "height": int(h), "device_id": device_id}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 # Game Profiles
@@ -558,20 +623,26 @@ async def get_scuf_configuration():
     return get_scuf_config()
 
 
-# Screen Capture - JETZT MIT CAPTURE CARD SUPPORT
+# Screen Capture - MIT CAPTURE CARD SUPPORT
+import platform as _platform
+
 def capture_screen(monitor_num: int = 1, region: Optional[dict] = None, use_capture_card: bool = False, capture_device: int = 0):
     """Capture screen using mss OR capture card"""
-    
+
     # CAPTURE CARD MODE
     if use_capture_card or detection_settings.get("use_capture_card", False):
         device_id = detection_settings.get("capture_device", 0)
-        cap = cv2.VideoCapture(device_id)
+        # Use DirectShow on Windows for best capture card support
+        if _platform.system() == "Windows":
+            cap = cv2.VideoCapture(device_id, cv2.CAP_DSHOW)
+        else:
+            cap = cv2.VideoCapture(device_id)
         if cap.isOpened():
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             ret, frame = cap.read()
             cap.release()
             if ret:
                 return frame
-        # Fallback to screen capture if capture card fails
         logger.warning("Capture card not available, falling back to screen capture")
     
     # SCREEN CAPTURE MODE (Original)
@@ -591,88 +662,101 @@ def capture_screen(monitor_num: int = 1, region: Optional[dict] = None, use_capt
 
 
 def run_detection(frame: np.ndarray) -> tuple:
-    """Run YOLO detection on frame"""
-    import time
-    start_time = time.time()
-    
+    """Run YOLO detection on frame with stabilized targeting."""
+    start_time = _time.monotonic()
+
     model = get_yolo_model()
     frame_height, frame_width = frame.shape[:2]
-    
-    # NUR ZENTRUM SCANNEN wenn Aimbot aktiv (weniger false positives)
+
+    # Crop to center 50% when aimbot is active (reduces false positives)
     if detection_settings.get("aimbot_enabled", False):
-        # Crop to center 50% of screen
         crop_x = frame_width // 4
         crop_y = frame_height // 4
         crop_w = frame_width // 2
         crop_h = frame_height // 2
-        cropped = frame[crop_y:crop_y+crop_h, crop_x:crop_x+crop_w]
+        cropped = frame[crop_y:crop_y + crop_h, crop_x:crop_x + crop_w]
         results = model(cropped, verbose=False, conf=detection_settings["confidence_threshold"])
         offset_x, offset_y = crop_x, crop_y
     else:
         results = model(frame, verbose=False, conf=detection_settings["confidence_threshold"])
         offset_x, offset_y = 0, 0
-    
+
     detections = []
-    center_x, center_y = frame_width // 2, frame_height // 2
-    
+    center_x = frame_width / 2.0
+    center_y = frame_height / 2.0
+    aim_offset = detection_settings.get("aim_point_offset", 0.15)
+    min_size = detection_settings.get("min_target_size", 4000)
+
     best_target = None
     min_distance = float('inf')
-    
-    aim_offset = detection_settings.get("aim_point_offset", 0.15)
-    
+
     for result in results:
-        boxes = result.boxes
-        for box in boxes:
+        for box in result.boxes:
             cls_id = int(box.cls[0])
             cls_name = model.names[cls_id]
             conf = float(box.conf[0])
-            
+
             if cls_name not in detection_settings["target_classes"]:
                 continue
-            
-            # Get bounding box (adjust for crop offset)
+
             x1, y1, x2, y2 = map(int, box.xyxy[0])
             x1 += offset_x
             x2 += offset_x
             y1 += offset_y
             y2 += offset_y
-            
-            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-            
-            # FILTER: Minimum size
-            box_area = (x2 - x1) * (y2 - y1)
-            if box_area < detection_settings.get("min_target_size", 3000):
+
+            w_box = x2 - x1
+            h_box = y2 - y1
+
+            # Filter: minimum area
+            if w_box * h_box < min_size:
                 continue
-            
-            # FILTER: Aspect ratio (humans are taller than wide)
-            aspect_ratio = (y2 - y1) / max(1, (x2 - x1))
-            if aspect_ratio < 1.2 or aspect_ratio > 3.5:
+
+            # Filter: humans are taller than wide (ratio 1.2 - 4.0)
+            ratio = h_box / max(1, w_box)
+            if ratio < 1.2 or ratio > 4.0:
                 continue
-            
+
+            cx = (x1 + x2) // 2
+            cy = (y1 + y2) // 2
+
             detections.append({
                 "class_name": cls_name,
                 "confidence": round(conf, 3),
                 "bbox": [x1, y1, x2, y2],
                 "center": [cx, cy]
             })
-            
-            # Find closest target to center
+
+            # Pick target closest to crosshair
             if detection_settings.get("aimbot_enabled", False):
-                target_y = y1 + int((y2 - y1) * aim_offset)
-                distance = ((cx - center_x) ** 2 + (target_y - center_y) ** 2) ** 0.5
-                
-                if distance < min_distance:
-                    min_distance = distance
+                target_y = y1 + int(h_box * aim_offset)
+                dist = ((cx - center_x) ** 2 + (target_y - center_y) ** 2) ** 0.5
+                if dist < min_distance:
+                    min_distance = dist
                     best_target = [cx, target_y]
-    
-    processing_time = (time.time() - start_time) * 1000
-    
-    # AIMBOT: Move to target - nur wenn genau 1 Target gefunden
-    if best_target and detection_settings.get("aimbot_enabled", False) and len(detections) == 1:
-        sensitivity = detection_settings.get("aim_sensitivity", 0.35)
-        smoothing = detection_settings.get("smoothing", 0.75)
-        move_to_target(best_target[0], best_target[1], frame_width, frame_height, sensitivity, smoothing)
-    
+
+    processing_time = (_time.monotonic() - start_time) * 1000
+
+    # ---- Stabilized Aimbot ----
+    if detection_settings.get("aimbot_enabled", False):
+        lock_frames = detection_settings.get("lock_frames_required", 3)
+        ema_alpha = max(0.1, 1.0 - detection_settings.get("smoothing", 0.85))
+
+        if best_target:
+            target_tracker.update(best_target[0], best_target[1], alpha=ema_alpha)
+            if target_tracker.is_stable(lock_frames):
+                pos = target_tracker.get_position()
+                if pos:
+                    target_tracker.locked = True
+                    move_mouse_smoothed(pos[0], pos[1], frame_width, frame_height)
+                    best_target = [int(pos[0]), int(pos[1])]
+        else:
+            # No target found this frame -> decay tracker
+            if target_tracker.frames_seen > 0:
+                target_tracker.frames_seen = max(0, target_tracker.frames_seen - 1)
+            if target_tracker.frames_seen == 0:
+                target_tracker.reset()
+
     return detections, best_target, processing_time, frame_width, frame_height
 
 
@@ -861,7 +945,7 @@ async def get_yolo_classes():
     try:
         model = get_yolo_model()
         return {"classes": list(model.names.values())}
-    except Exception as e:
+    except Exception:
         return {"classes": ["person", "car", "truck", "bus", "motorcycle", "bicycle"]}
 
 
@@ -964,5 +1048,5 @@ async def shutdown_db_client():
     if db is not None:
         try:
             client.close()
-        except:
+        except Exception:
             pass
