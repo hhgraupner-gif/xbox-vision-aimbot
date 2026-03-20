@@ -858,17 +858,23 @@ async def capture_frame():
             detection_settings["capture_monitor"],
             detection_settings["capture_region"]
         )
-        
+
+        detections, aim_target, proc_time = [], None, 0.0
+        h, w = frame.shape[:2]
+
         if detection_settings["enabled"]:
-            detections, aim_target, proc_time, w, h = run_detection(frame)
-            frame = draw_detections(frame, detections, aim_target)
-        else:
-            detections, aim_target, proc_time, w, h = [], None, 0, frame.shape[1], frame.shape[0]
-        
+            try:
+                detections, aim_target, proc_time, w, h = run_detection(frame)
+                frame = draw_detections(frame, detections, aim_target)
+            except Exception as det_err:
+                logger.warning(f"Detection failed (showing raw frame): {det_err}")
+                # Still draw crosshair even without detection
+                frame = draw_detections(frame, [], None)
+
         # Encode frame to JPEG
         _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
         frame_base64 = base64.b64encode(buffer).decode('utf-8')
-        
+
         return {
             "frame": frame_base64,
             "detections": detections,
