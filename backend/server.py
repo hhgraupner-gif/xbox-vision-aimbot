@@ -128,23 +128,23 @@ GAME_PROFILES = {
 
 # Global settings
 detection_settings = {
-    "confidence_threshold": 0.75,  # HÖHER - weniger false positives
-    "aim_sensitivity": 0.35,  # NIEDRIGER - weniger zucken
+    "confidence_threshold": 0.70,
+    "aim_sensitivity": 0.20,  # Noch niedriger
     "target_classes": ["person"],
     "enabled": True,
     "show_boxes": True,
     "show_crosshair": True,
     "aim_assist_enabled": False,
     "aimbot_enabled": False,
-    "aimbot_mode": "controller",  # "controller" or "mouse"
+    "aimbot_mode": "mouse",  # MAUS statt Controller - kein Konflikt!
     "capture_monitor": 1,
     "capture_region": None,
     "active_profile": "default",
     "aim_point_offset": 0.15,
     "priority_targeting": "closest",
-    "smoothing": 0.75,  # HÖHER - sanftere Bewegung
-    "min_target_size": 3000,  # Minimum Pixel für Target
-    "deadzone": 50  # Pixel-Deadzone um Zentrum
+    "smoothing": 0.85,  # Sehr smooth
+    "min_target_size": 4000,  # Größere Targets
+    "deadzone": 80  # Größere Deadzone
 }
 
 # Controller Aimbot - moves right stick towards target
