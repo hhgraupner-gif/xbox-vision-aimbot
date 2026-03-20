@@ -558,9 +558,23 @@ async def get_scuf_configuration():
     return get_scuf_config()
 
 
-# Screen Capture
-def capture_screen(monitor_num: int = 1, region: Optional[dict] = None):
-    """Capture screen using mss"""
+# Screen Capture - JETZT MIT CAPTURE CARD SUPPORT
+def capture_screen(monitor_num: int = 1, region: Optional[dict] = None, use_capture_card: bool = False, capture_device: int = 0):
+    """Capture screen using mss OR capture card"""
+    
+    # CAPTURE CARD MODE
+    if use_capture_card or detection_settings.get("use_capture_card", False):
+        device_id = detection_settings.get("capture_device", 0)
+        cap = cv2.VideoCapture(device_id)
+        if cap.isOpened():
+            ret, frame = cap.read()
+            cap.release()
+            if ret:
+                return frame
+        # Fallback to screen capture if capture card fails
+        logger.warning("Capture card not available, falling back to screen capture")
+    
+    # SCREEN CAPTURE MODE (Original)
     with mss.mss() as sct:
         if region:
             monitor = region
@@ -570,9 +584,7 @@ def capture_screen(monitor_num: int = 1, region: Optional[dict] = None):
             monitor = sct.monitors[1]
         
         screenshot = sct.grab(monitor)
-        # Convert to numpy array (BGR format for OpenCV)
         img = np.array(screenshot)
-        # Remove alpha channel if present
         if img.shape[2] == 4:
             img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
         return img
