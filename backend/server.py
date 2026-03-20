@@ -41,17 +41,64 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Game Profiles
+GAME_PROFILES = {
+    "default": {
+        "name": "Default",
+        "description": "Standard detection settings",
+        "confidence_threshold": 0.5,
+        "aim_sensitivity": 0.8,
+        "target_classes": ["person"],
+        "aim_point_offset": 0.15,  # 15% from top (head)
+        "box_color": "#FF003C",
+        "priority_targeting": "closest"  # closest, highest_confidence, center
+    },
+    "cod_warzone": {
+        "name": "Call of Duty: Warzone",
+        "description": "Optimized for Warzone - fast targets, high precision",
+        "confidence_threshold": 0.45,  # Slightly lower for fast movement
+        "aim_sensitivity": 0.95,  # Very responsive
+        "target_classes": ["person"],
+        "aim_point_offset": 0.12,  # Higher headshot line
+        "box_color": "#FF003C",
+        "priority_targeting": "closest"
+    },
+    "cod_bo7": {
+        "name": "Call of Duty: Black Ops 7",
+        "description": "Optimized for BO7 multiplayer - quick reflexes",
+        "confidence_threshold": 0.40,  # Lower threshold for fast-paced
+        "aim_sensitivity": 1.0,  # Maximum responsiveness
+        "target_classes": ["person"],
+        "aim_point_offset": 0.10,  # Aggressive headshot targeting
+        "box_color": "#FF2A6D",
+        "priority_targeting": "center"  # Prioritize center of screen
+    },
+    "cod_zombies": {
+        "name": "Call of Duty: Zombies",
+        "description": "Optimized for Zombies mode - multiple targets",
+        "confidence_threshold": 0.35,  # Lower for hordes
+        "aim_sensitivity": 0.85,
+        "target_classes": ["person"],
+        "aim_point_offset": 0.20,  # Center mass for zombies
+        "box_color": "#39FF14",
+        "priority_targeting": "closest"
+    }
+}
+
 # Global settings
 detection_settings = {
     "confidence_threshold": 0.5,
     "aim_sensitivity": 0.8,
-    "target_classes": ["person"],  # YOLO classes to detect
+    "target_classes": ["person"],
     "enabled": True,
     "show_boxes": True,
     "show_crosshair": True,
     "aim_assist_enabled": False,
     "capture_monitor": 1,
-    "capture_region": None  # {"left": 0, "top": 0, "width": 1920, "height": 1080}
+    "capture_region": None,
+    "active_profile": "default",
+    "aim_point_offset": 0.15,
+    "priority_targeting": "closest"
 }
 
 # YOLO Model (lazy load)
@@ -91,6 +138,19 @@ class DetectionSettings(BaseModel):
     aim_assist_enabled: bool = False
     capture_monitor: int = 1
     capture_region: Optional[dict] = None
+    active_profile: str = "default"
+    aim_point_offset: float = Field(default=0.15, ge=0.0, le=0.5)
+    priority_targeting: str = "closest"
+
+class GameProfile(BaseModel):
+    name: str
+    description: str
+    confidence_threshold: float
+    aim_sensitivity: float
+    target_classes: List[str]
+    aim_point_offset: float
+    box_color: str
+    priority_targeting: str
 
 class Detection(BaseModel):
     class_name: str
@@ -149,6 +209,55 @@ async def update_settings(settings: DetectionSettings):
     return detection_settings
 
 
+# Game Profiles
+@api_router.get("/profiles")
+async def get_profiles():
+    """Get all available game profiles"""
+    return {
+        "profiles": GAME_PROFILES,
+        "active_profile": detection_settings.get("active_profile", "default")
+    }
+
+@api_router.get("/profiles/{profile_id}")
+async def get_profile(profile_id: str):
+    """Get a specific game profile"""
+    if profile_id not in GAME_PROFILES:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return GAME_PROFILES[profile_id]
+
+@api_router.post("/profiles/{profile_id}/activate")
+async def activate_profile(profile_id: str):
+    """Activate a game profile and apply its settings"""
+    global detection_settings
+    
+    if profile_id not in GAME_PROFILES:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    
+    profile = GAME_PROFILES[profile_id]
+    
+    # Apply profile settings
+    detection_settings["confidence_threshold"] = profile["confidence_threshold"]
+    detection_settings["aim_sensitivity"] = profile["aim_sensitivity"]
+    detection_settings["target_classes"] = profile["target_classes"]
+    detection_settings["aim_point_offset"] = profile["aim_point_offset"]
+    detection_settings["priority_targeting"] = profile["priority_targeting"]
+    detection_settings["active_profile"] = profile_id
+    
+    # Save to MongoDB
+    await db.settings.update_one(
+        {"type": "detection"},
+        {"$set": {**detection_settings, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True
+    )
+    
+    logger.info(f"Activated game profile: {profile['name']}")
+    
+    return {
+        "message": f"Profile '{profile['name']}' activated",
+        "settings": detection_settings
+    }
+
+
 # Screen Capture
 def capture_screen(monitor_num: int = 1, region: Optional[dict] = None):
     """Capture screen using mss"""
@@ -185,6 +294,11 @@ def run_detection(frame: np.ndarray) -> tuple:
     
     best_target = None
     min_distance = float('inf')
+    max_confidence = 0
+    
+    # Get targeting mode from settings
+    priority_mode = detection_settings.get("priority_targeting", "closest")
+    aim_offset = detection_settings.get("aim_point_offset", 0.15)
     
     for result in results:
         boxes = result.boxes
@@ -208,14 +322,26 @@ def run_detection(frame: np.ndarray) -> tuple:
                 "center": [cx, cy]
             })
             
-            # Find closest target to center (for aim assist)
+            # Find best target based on priority mode
             if detection_settings["aim_assist_enabled"]:
-                # Aim for upper body (head area)
-                target_y = y1 + int((y2 - y1) * 0.15)  # 15% from top
+                # Calculate aim point (head area based on offset)
+                target_y = y1 + int((y2 - y1) * aim_offset)
                 distance = ((cx - center_x) ** 2 + (target_y - center_y) ** 2) ** 0.5
-                if distance < min_distance:
-                    min_distance = distance
-                    best_target = [cx, target_y]
+                
+                if priority_mode == "closest":
+                    if distance < min_distance:
+                        min_distance = distance
+                        best_target = [cx, target_y]
+                elif priority_mode == "highest_confidence":
+                    if conf > max_confidence:
+                        max_confidence = conf
+                        best_target = [cx, target_y]
+                elif priority_mode == "center":
+                    # Weight by both distance and confidence
+                    score = distance / (conf + 0.1)
+                    if score < min_distance:
+                        min_distance = score
+                        best_target = [cx, target_y]
     
     processing_time = (time.time() - start_time) * 1000
     

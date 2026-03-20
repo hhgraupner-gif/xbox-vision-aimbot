@@ -57,3 +57,17 @@ Baue mir ein Computer Vision KI für RemotePlay Xbox - mit Gegnererkennung (YOLO
 2. Implement region selection tool
 3. Add pyautogui for mouse movement (actual aimbot)
 4. Create game-specific detection profiles
+
+## Update: Game Profiles (March 2026)
+
+### Implemented Profiles
+1. **Default** - Standard detection (50% conf, 80% sens)
+2. **Call of Duty: Warzone** - Fast targets, high precision (45% conf, 95% sens, closest targeting)
+3. **Call of Duty: Black Ops 7** - Quick reflexes multiplayer (40% conf, 100% sens, center targeting)
+4. **Call of Duty: Zombies** - Multiple targets/hordes (35% conf, 85% sens)
+
+### Profile Parameters
+- `confidence_threshold` - Detection confidence
+- `aim_sensitivity` - Response speed
+- `aim_point_offset` - Head targeting offset (0.10-0.20)
+- `priority_targeting` - closest/center/highest_confidence

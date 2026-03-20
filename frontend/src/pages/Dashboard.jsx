@@ -14,7 +14,9 @@ import {
   Zap,
   AlertTriangle,
   Monitor,
-  RefreshCw
+  RefreshCw,
+  Gamepad2,
+  ChevronDown
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -26,6 +28,14 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -47,22 +57,48 @@ export default function Dashboard() {
   const [fps, setFps] = useState(0);
   const [demoMode, setDemoMode] = useState(true);
   const [connectionStatus, setConnectionStatus] = useState("disconnected");
+  const [profiles, setProfiles] = useState({});
+  const [activeProfile, setActiveProfile] = useState("default");
   
   const frameCountRef = useRef(0);
   const lastFpsTimeRef = useRef(Date.now());
   const streamIntervalRef = useRef(null);
 
-  // Load settings
+  // Load settings and profiles
   useEffect(() => {
     loadSettings();
+    loadProfiles();
   }, []);
 
   const loadSettings = async () => {
     try {
       const response = await axios.get(`${API}/settings`);
       setSettings(response.data);
+      setActiveProfile(response.data.active_profile || "default");
     } catch (error) {
       console.error("Failed to load settings:", error);
+    }
+  };
+
+  const loadProfiles = async () => {
+    try {
+      const response = await axios.get(`${API}/profiles`);
+      setProfiles(response.data.profiles || {});
+      setActiveProfile(response.data.active_profile || "default");
+    } catch (error) {
+      console.error("Failed to load profiles:", error);
+    }
+  };
+
+  const activateProfile = async (profileId) => {
+    try {
+      const response = await axios.post(`${API}/profiles/${profileId}/activate`);
+      setActiveProfile(profileId);
+      setSettings(response.data.settings);
+      toast.success(`Profil "${profiles[profileId]?.name}" aktiviert`);
+    } catch (error) {
+      console.error("Failed to activate profile:", error);
+      toast.error("Profil konnte nicht aktiviert werden");
     }
   };
 
@@ -179,6 +215,41 @@ export default function Dashboard() {
         </div>
         
         <div className="flex items-center gap-3">
+          {/* Game Profile Dropdown */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button 
+                variant="outline" 
+                className="border-[#FF2A6D]/50 hover:border-[#FF2A6D] bg-[#FF2A6D]/10"
+                data-testid="profile-dropdown"
+              >
+                <Gamepad2 className="w-4 h-4 mr-2 text-[#FF2A6D]" />
+                <span className="text-sm">{profiles[activeProfile]?.name || "Default"}</span>
+                <ChevronDown className="w-4 h-4 ml-2" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="bg-[#0A0A0A] border-white/20 w-64">
+              <DropdownMenuLabel className="text-xs uppercase text-zinc-400">Game Profiles</DropdownMenuLabel>
+              <DropdownMenuSeparator className="bg-white/10" />
+              {Object.entries(profiles).map(([id, profile]) => (
+                <DropdownMenuItem
+                  key={id}
+                  onClick={() => activateProfile(id)}
+                  className={`cursor-pointer ${activeProfile === id ? 'bg-[#FF2A6D]/20 text-[#FF2A6D]' : 'hover:bg-white/5'}`}
+                  data-testid={`profile-${id}`}
+                >
+                  <div className="flex flex-col">
+                    <span className="font-medium">{profile.name}</span>
+                    <span className="text-xs text-zinc-500">{profile.description}</span>
+                  </div>
+                  {activeProfile === id && (
+                    <Badge className="ml-auto bg-[#FF2A6D] text-white text-xs">Active</Badge>
+                  )}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+
           <Badge 
             variant={demoMode ? "secondary" : "default"}
             className="uppercase font-mono text-xs"
@@ -341,6 +412,42 @@ export default function Dashboard() {
         
         {/* Sidebar */}
         <div className="lg:col-span-3 flex flex-col gap-4" data-testid="sidebar">
+          {/* Active Game Profile */}
+          <div className="bg-[#0A0A0A] border border-[#FF2A6D]/30 rounded-sm p-4 glow-red">
+            <h2 className="text-sm uppercase tracking-wider text-[#FF2A6D] mb-3 flex items-center gap-2">
+              <Gamepad2 className="w-4 h-4" />
+              Active Profile
+            </h2>
+            <div className="space-y-2">
+              <p className="text-lg font-bold text-white">
+                {profiles[activeProfile]?.name || "Default"}
+              </p>
+              <p className="text-xs text-zinc-400">
+                {profiles[activeProfile]?.description || "Standard detection settings"}
+              </p>
+              <div className="grid grid-cols-2 gap-2 mt-3 pt-3 border-t border-white/10">
+                <div className="text-center">
+                  <p className="font-mono text-sm text-[#00F0FF]">
+                    {((profiles[activeProfile]?.confidence_threshold || 0.5) * 100).toFixed(0)}%
+                  </p>
+                  <p className="text-xs text-zinc-500">Confidence</p>
+                </div>
+                <div className="text-center">
+                  <p className="font-mono text-sm text-[#FF2A6D]">
+                    {((profiles[activeProfile]?.aim_sensitivity || 0.8) * 100).toFixed(0)}%
+                  </p>
+                  <p className="text-xs text-zinc-500">Sensitivity</p>
+                </div>
+              </div>
+              <div className="mt-2 pt-2 border-t border-white/10">
+                <p className="text-xs text-zinc-500">Targeting Mode</p>
+                <p className="text-sm text-[#39FF14] capitalize">
+                  {profiles[activeProfile]?.priority_targeting || "closest"}
+                </p>
+              </div>
+            </div>
+          </div>
+
           {/* Quick Settings */}
           <div className="bg-[#0A0A0A] border border-white/10 rounded-sm p-4">
             <h2 className="text-sm uppercase tracking-wider text-zinc-400 mb-4 flex items-center gap-2">
