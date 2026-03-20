@@ -243,7 +243,7 @@ def move_mouse_smoothed(target_x, target_y, frame_width, frame_height):
         logger.error(f"Mouse aimbot error: {e}")
         return False
 
-# YOLO Model (lazy load with failure cache)
+# YOLO Model (lazy load with failure cache + ONNX/DirectML support)
 yolo_model = None
 _yolo_load_failed = False
 
@@ -254,8 +254,35 @@ def get_yolo_model():
     if yolo_model is None:
         try:
             from ultralytics import YOLO
-            yolo_model = YOLO('yolov8n.pt')
-            logger.info("YOLO model loaded successfully")
+            import importlib
+            # Try ONNX + DirectML first (AMD GPU acceleration)
+            onnx_path = str(ROOT_DIR / 'yolov8n.onnx')
+            pt_path = str(ROOT_DIR / 'yolov8n.pt')
+
+            has_directml = importlib.util.find_spec("onnxruntime") is not None
+            if has_directml and os.path.exists(onnx_path):
+                yolo_model = YOLO(onnx_path, task='detect')
+                logger.info("YOLO loaded with ONNX (DirectML GPU acceleration)")
+            else:
+                # Export to ONNX if pt exists but onnx doesn't
+                if os.path.exists(pt_path) and not os.path.exists(onnx_path):
+                    try:
+                        logger.info("Exporting YOLOv8n to ONNX format...")
+                        temp_model = YOLO(pt_path)
+                        temp_model.export(format='onnx', imgsz=640, simplify=True)
+                        if os.path.exists(onnx_path):
+                            yolo_model = YOLO(onnx_path, task='detect')
+                            logger.info("YOLO exported + loaded as ONNX")
+                        else:
+                            yolo_model = temp_model
+                            logger.info("YOLO loaded with PyTorch (CPU)")
+                    except Exception as export_err:
+                        logger.warning(f"ONNX export failed, using PyTorch: {export_err}")
+                        yolo_model = YOLO(pt_path)
+                        logger.info("YOLO loaded with PyTorch (CPU)")
+                else:
+                    yolo_model = YOLO(pt_path)
+                    logger.info("YOLO loaded with PyTorch (CPU)")
         except Exception as e:
             _yolo_load_failed = True
             logger.error(f"YOLO model failed to load (will not retry): {e}")
@@ -1009,6 +1036,30 @@ async def reload_yolo():
     if model is not None:
         return {"status": "ok", "message": "YOLO model loaded successfully"}
     return {"status": "error", "message": "YOLO model failed to load"}
+
+@api_router.get("/system/info")
+async def system_info():
+    """Get system info for debugging performance"""
+    info = {
+        "yolo_loaded": yolo_model is not None,
+        "yolo_failed": _yolo_load_failed,
+        "yolo_type": "unknown",
+        "capture_card_open": _persistent_cap is not None and _persistent_cap.isOpened() if _persistent_cap else False,
+        "mouse_available": MOUSE_AIMBOT_AVAILABLE,
+        "platform": _platform.system(),
+    }
+    if yolo_model is not None:
+        if '.onnx' in str(getattr(yolo_model, 'model_name', '')):
+            info["yolo_type"] = "ONNX (DirectML GPU)"
+        else:
+            info["yolo_type"] = "PyTorch (CPU)"
+    try:
+        import onnxruntime
+        info["onnxruntime"] = onnxruntime.get_version_string() if hasattr(onnxruntime, 'get_version_string') else "installed"
+        info["onnx_providers"] = onnxruntime.get_available_providers()
+    except ImportError:
+        info["onnxruntime"] = "not installed"
+    return info
 
 
 # Demo mode - generate fake detections for testing
