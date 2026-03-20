@@ -461,8 +461,12 @@ async def reset_aimbot_tracker():
 async def configure_capture_card(enabled: bool = False, device_id: int = 0):
     """Enable/disable capture card and set device index"""
     global detection_settings
+    old_device = detection_settings.get("capture_device", -1)
     detection_settings["use_capture_card"] = enabled
     detection_settings["capture_device"] = device_id
+    # Reset persistent connection if device changed or disabled
+    if not enabled or device_id != old_device:
+        release_capture_card()
     return {
         "use_capture_card": detection_settings["use_capture_card"],
         "capture_device": detection_settings["capture_device"]
@@ -470,21 +474,27 @@ async def configure_capture_card(enabled: bool = False, device_id: int = 0):
 
 @api_router.get("/capture-card/test")
 async def test_capture_card():
-    """Test if capture card is accessible and return a frame"""
+    """Test capture card with high resolution"""
     device_id = detection_settings.get("capture_device", 0)
     try:
-        cap = cv2.VideoCapture(device_id)
+        if _platform.system() == "Windows":
+            cap = cv2.VideoCapture(device_id, cv2.CAP_DSHOW)
+        else:
+            cap = cv2.VideoCapture(device_id)
         if not cap.isOpened():
             return {"success": False, "error": f"Device {device_id} konnte nicht geoeffnet werden"}
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         ret, frame = cap.read()
-        w = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
-        h = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         cap.release()
         if not ret:
             return {"success": False, "error": "Frame konnte nicht gelesen werden"}
         _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
         frame_b64 = base64.b64encode(buffer).decode('utf-8')
-        return {"success": True, "frame": frame_b64, "width": int(w), "height": int(h), "device_id": device_id}
+        return {"success": True, "frame": frame_b64, "width": w, "height": h, "device_id": device_id}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -623,27 +633,56 @@ async def get_scuf_configuration():
     return get_scuf_config()
 
 
-# Screen Capture - MIT CAPTURE CARD SUPPORT
+# Screen Capture - MIT CAPTURE CARD SUPPORT (PERSISTENT CONNECTION)
 import platform as _platform
 
+# Persistent capture card connection (stays open for speed)
+_persistent_cap = None
+_persistent_cap_device = -1
+
+def get_capture_card():
+    """Get or create persistent capture card connection."""
+    global _persistent_cap, _persistent_cap_device
+    device_id = detection_settings.get("capture_device", 0)
+
+    # If device changed or not open, reconnect
+    if _persistent_cap is None or _persistent_cap_device != device_id or not _persistent_cap.isOpened():
+        if _persistent_cap is not None:
+            _persistent_cap.release()
+        if _platform.system() == "Windows":
+            _persistent_cap = cv2.VideoCapture(device_id, cv2.CAP_DSHOW)
+        else:
+            _persistent_cap = cv2.VideoCapture(device_id)
+        if _persistent_cap.isOpened():
+            _persistent_cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+            _persistent_cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+            _persistent_cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            _persistent_cap_device = device_id
+            logger.info(f"Capture card opened: Device {device_id}")
+        else:
+            _persistent_cap = None
+            _persistent_cap_device = -1
+    return _persistent_cap
+
+def release_capture_card():
+    """Release persistent capture card."""
+    global _persistent_cap, _persistent_cap_device
+    if _persistent_cap is not None:
+        _persistent_cap.release()
+        _persistent_cap = None
+        _persistent_cap_device = -1
+
 def capture_screen(monitor_num: int = 1, region: Optional[dict] = None, use_capture_card: bool = False, capture_device: int = 0):
-    """Capture screen using mss OR capture card"""
+    """Capture screen using persistent capture card OR mss"""
 
     # CAPTURE CARD MODE
     if use_capture_card or detection_settings.get("use_capture_card", False):
-        device_id = detection_settings.get("capture_device", 0)
-        # Use DirectShow on Windows for best capture card support
-        if _platform.system() == "Windows":
-            cap = cv2.VideoCapture(device_id, cv2.CAP_DSHOW)
-        else:
-            cap = cv2.VideoCapture(device_id)
-        if cap.isOpened():
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        cap = get_capture_card()
+        if cap is not None and cap.isOpened():
             ret, frame = cap.read()
-            cap.release()
             if ret:
                 return frame
-        logger.warning("Capture card not available, falling back to screen capture")
+        logger.warning("Capture card frame failed, falling back to screen capture")
     
     # SCREEN CAPTURE MODE (Original)
     with mss.mss() as sct:
@@ -1045,6 +1084,7 @@ async def startup_event():
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
+    release_capture_card()
     if db is not None:
         try:
             client.close()
