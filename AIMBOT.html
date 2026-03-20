@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Xbox Vision AI - Aimbot</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #050505;
+            color: #fff;
+            font-family: 'Segoe UI', sans-serif;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        h1 {
+            color: #00F0FF;
+            text-transform: uppercase;
+            letter-spacing: 4px;
+            margin-bottom: 10px;
+            text-shadow: 0 0 10px rgba(0, 240, 255, 0.5);
+        }
+        .subtitle {
+            color: #666;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 20px;
+        }
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 300px;
+            gap: 20px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .video-feed {
+            background: #0A0A0A;
+            border: 1px solid #222;
+            aspect-ratio: 16/9;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+        }
+        .video-feed img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+        .video-feed .placeholder {
+            color: #444;
+            text-align: center;
+        }
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        .card {
+            background: #0A0A0A;
+            border: 1px solid #222;
+            border-left: 3px solid #00F0FF;
+            padding: 15px;
+        }
+        .card h3 {
+            color: #00F0FF;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 10px;
+        }
+        .stat {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+        .stat-label { color: #666; font-size: 12px; }
+        .stat-value { color: #00F0FF; font-family: monospace; font-size: 18px; }
+        .stat-value.red { color: #FF003C; }
+        .stat-value.green { color: #39FF14; }
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        button {
+            background: #00F0FF;
+            color: #000;
+            border: none;
+            padding: 12px 24px;
+            font-weight: bold;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        button:hover {
+            background: #00D4E0;
+            box-shadow: 0 0 20px rgba(0, 240, 255, 0.4);
+        }
+        button.stop {
+            background: #FF003C;
+            color: #fff;
+        }
+        button.stop:hover {
+            background: #CC0030;
+        }
+        button:disabled {
+            background: #333;
+            color: #666;
+            cursor: not-allowed;
+        }
+        .toggle {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #222;
+        }
+        .toggle:last-child { border-bottom: none; }
+        .switch {
+            width: 50px;
+            height: 26px;
+            background: #333;
+            border-radius: 13px;
+            position: relative;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        .switch.active { background: #00F0FF; }
+        .switch::after {
+            content: '';
+            position: absolute;
+            width: 22px;
+            height: 22px;
+            background: #fff;
+            border-radius: 50%;
+            top: 2px;
+            left: 2px;
+            transition: left 0.3s;
+        }
+        .switch.active::after { left: 26px; }
+        .detection-list {
+            max-height: 150px;
+            overflow-y: auto;
+        }
+        .detection-item {
+            background: rgba(255, 0, 60, 0.1);
+            border-left: 2px solid #FF003C;
+            padding: 8px;
+            margin-bottom: 5px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+        }
+        .detection-item .class { color: #FF003C; text-transform: uppercase; }
+        .detection-item .conf { color: #666; font-family: monospace; }
+        .warning {
+            background: rgba(255, 0, 60, 0.1);
+            border: 1px solid rgba(255, 0, 60, 0.3);
+            padding: 12px;
+            font-size: 11px;
+            color: #FF003C;
+        }
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 20px;
+        }
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #666;
+        }
+        .status-dot.connected { background: #39FF14; animation: pulse 2s infinite; }
+        .status-dot.error { background: #FF003C; }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .hud-overlay {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            right: 10px;
+            display: flex;
+            justify-content: space-between;
+            pointer-events: none;
+        }
+        .hud-stat {
+            background: rgba(0,0,0,0.7);
+            padding: 5px 10px;
+            border-left: 2px solid #00F0FF;
+        }
+        .hud-stat span { font-family: monospace; color: #00F0FF; }
+        .profile-select {
+            width: 100%;
+            background: #111;
+            border: 1px solid #333;
+            color: #fff;
+            padding: 10px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        .profile-select:focus { outline: none; border-color: #00F0FF; }
+    </style>
+</head>
+<body>
+    <h1>Xbox Vision AI</h1>
+    <p class="subtitle">Computer Vision Aimbot System - Scuf Valor Pro</p>
+    
+    <div class="status">
+        <div class="status-dot" id="statusDot"></div>
+        <span id="statusText">Disconnected</span>
+    </div>
+
+    <div class="container">
+        <div>
+            <div class="video-feed" id="videoFeed">
+                <div class="placeholder">
+                    <p>📺 No Feed</p>
+                    <p style="font-size: 12px; margin-top: 10px;">Press START to begin</p>
+                </div>
+                <div class="hud-overlay" id="hudOverlay" style="display: none;">
+                    <div class="hud-stat">Detections: <span id="hudDetections">0</span></div>
+                    <div class="hud-stat">FPS: <span id="hudFps">0</span></div>
+                </div>
+            </div>
+            <div class="controls">
+                <button id="startBtn" onclick="toggleStream()">▶ START</button>
+                <button onclick="captureFrame()">📷 CAPTURE</button>
+                <button onclick="window.location.reload()">🔄 REFRESH</button>
+            </div>
+        </div>
+        
+        <div class="sidebar">
+            <div class="card">
+                <h3>🎮 Game Profile</h3>
+                <select class="profile-select" id="profileSelect" onchange="activateProfile(this.value)">
+                    <option value="default">Default</option>
+                    <option value="cod_warzone">Call of Duty: Warzone</option>
+                    <option value="cod_bo7">Call of Duty: Black Ops 7</option>
+                    <option value="cod_zombies">Call of Duty: Zombies</option>
+                </select>
+            </div>
+
+            <div class="card">
+                <h3>📊 Stats</h3>
+                <div class="stat">
+                    <span class="stat-label">Detections</span>
+                    <span class="stat-value red" id="detectionCount">0</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Processing</span>
+                    <span class="stat-value" id="procTime">0 ms</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">FPS</span>
+                    <span class="stat-value green" id="fpsCount">0</span>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>⚙️ Settings</h3>
+                <div class="toggle">
+                    <span>Detection</span>
+                    <div class="switch active" id="toggleDetection" onclick="toggleSetting('enabled')"></div>
+                </div>
+                <div class="toggle">
+                    <span>Show Boxes</span>
+                    <div class="switch active" id="toggleBoxes" onclick="toggleSetting('show_boxes')"></div>
+                </div>
+                <div class="toggle">
+                    <span>Crosshair</span>
+                    <div class="switch active" id="toggleCrosshair" onclick="toggleSetting('show_crosshair')"></div>
+                </div>
+                <div class="toggle">
+                    <span>Aim Assist</span>
+                    <div class="switch" id="toggleAimAssist" onclick="toggleSetting('aim_assist_enabled')"></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>🎯 Detections</h3>
+                <div class="detection-list" id="detectionList">
+                    <p style="color: #444; font-size: 12px;">No detections yet</p>
+                </div>
+            </div>
+
+            <div class="warning">
+                ⚠️ <strong>WARNING:</strong> Only use in single-player or private matches. Online use may result in bans.
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API = 'http://localhost:8001/api';
+        let isStreaming = false;
+        let streamInterval = null;
+        let frameCount = 0;
+        let lastFpsTime = Date.now();
+        let fps = 0;
+        let settings = {
+            enabled: true,
+            show_boxes: true,
+            show_crosshair: true,
+            aim_assist_enabled: false
+        };
+
+        // Check connection on load
+        checkConnection();
+
+        async function checkConnection() {
+            try {
+                const response = await fetch(`${API}/`);
+                const data = await response.json();
+                document.getElementById('statusDot').className = 'status-dot connected';
+                document.getElementById('statusText').textContent = 'Connected to Backend';
+                loadSettings();
+                loadProfiles();
+            } catch (error) {
+                document.getElementById('statusDot').className = 'status-dot error';
+                document.getElementById('statusText').textContent = 'Backend not running - Start it first!';
+            }
+        }
+
+        async function loadSettings() {
+            try {
+                const response = await fetch(`${API}/settings`);
+                settings = await response.json();
+                updateToggleUI();
+            } catch (error) {
+                console.error('Failed to load settings:', error);
+            }
+        }
+
+        async function loadProfiles() {
+            try {
+                const response = await fetch(`${API}/profiles`);
+                const data = await response.json();
+                document.getElementById('profileSelect').value = data.active_profile || 'default';
+            } catch (error) {
+                console.error('Failed to load profiles:', error);
+            }
+        }
+
+        function updateToggleUI() {
+            document.getElementById('toggleDetection').className = 'switch' + (settings.enabled ? ' active' : '');
+            document.getElementById('toggleBoxes').className = 'switch' + (settings.show_boxes ? ' active' : '');
+            document.getElementById('toggleCrosshair').className = 'switch' + (settings.show_crosshair ? ' active' : '');
+            document.getElementById('toggleAimAssist').className = 'switch' + (settings.aim_assist_enabled ? ' active' : '');
+        }
+
+        async function toggleSetting(key) {
+            settings[key] = !settings[key];
+            updateToggleUI();
+            try {
+                await fetch(`${API}/settings`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(settings)
+                });
+            } catch (error) {
+                console.error('Failed to update settings:', error);
+            }
+        }
+
+        async function activateProfile(profileId) {
+            try {
+                const response = await fetch(`${API}/profiles/${profileId}/activate`, { method: 'POST' });
+                const data = await response.json();
+                settings = data.settings;
+                updateToggleUI();
+            } catch (error) {
+                console.error('Failed to activate profile:', error);
+            }
+        }
+
+        function toggleStream() {
+            if (isStreaming) {
+                stopStream();
+            } else {
+                startStream();
+            }
+        }
+
+        function startStream() {
+            isStreaming = true;
+            document.getElementById('startBtn').textContent = '⏹ STOP';
+            document.getElementById('startBtn').className = 'stop';
+            document.getElementById('hudOverlay').style.display = 'flex';
+            streamInterval = setInterval(fetchFrame, 100); // 10 FPS
+            fetchFrame();
+        }
+
+        function stopStream() {
+            isStreaming = false;
+            document.getElementById('startBtn').textContent = '▶ START';
+            document.getElementById('startBtn').className = '';
+            if (streamInterval) {
+                clearInterval(streamInterval);
+                streamInterval = null;
+            }
+        }
+
+        async function fetchFrame() {
+            try {
+                const response = await fetch(`${API}/demo/frame`);
+                const data = await response.json();
+                
+                // Update frame
+                const videoFeed = document.getElementById('videoFeed');
+                videoFeed.innerHTML = `
+                    <img src="data:image/jpeg;base64,${data.frame}" alt="Feed">
+                    <div class="hud-overlay">
+                        <div class="hud-stat">Detections: <span>${data.detections.length}</span></div>
+                        <div class="hud-stat" style="border-color: #39FF14;"><span style="color: #39FF14;">FPS: ${fps}</span></div>
+                    </div>
+                `;
+                
+                // Update stats
+                document.getElementById('detectionCount').textContent = data.detections.length;
+                document.getElementById('procTime').textContent = data.processing_time_ms.toFixed(1) + ' ms';
+                
+                // Update detection list
+                const detectionList = document.getElementById('detectionList');
+                if (data.detections.length > 0) {
+                    detectionList.innerHTML = data.detections.map(d => `
+                        <div class="detection-item">
+                            <span class="class">${d.class_name}</span>
+                            <span class="conf">${(d.confidence * 100).toFixed(0)}%</span>
+                        </div>
+                    `).join('');
+                } else {
+                    detectionList.innerHTML = '<p style="color: #444; font-size: 12px;">No detections</p>';
+                }
+                
+                // Calculate FPS
+                frameCount++;
+                const now = Date.now();
+                if (now - lastFpsTime >= 1000) {
+                    fps = Math.round((frameCount * 1000) / (now - lastFpsTime));
+                    document.getElementById('fpsCount').textContent = fps;
+                    frameCount = 0;
+                    lastFpsTime = now;
+                }
+                
+            } catch (error) {
+                console.error('Failed to fetch frame:', error);
+            }
+        }
+
+        async function captureFrame() {
+            await fetchFrame();
+        }
+    </script>
+</body>
+</html>
