@@ -26,10 +26,20 @@ from controller import controller, get_scuf_config, DEFAULT_BINDINGS, SCUF_VALOR
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# MongoDB connection
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+# MongoDB connection (optional - app works without it)
+mongo_url = os.environ.get('MONGO_URL', '')
+db = None
+
+if mongo_url:
+    try:
+        client = AsyncIOMotorClient(mongo_url)
+        db = client[os.environ.get('DB_NAME', 'xbox_vision')]
+        print("✅ MongoDB connected")
+    except Exception as e:
+        print(f"⚠️ MongoDB not available: {e}")
+        db = None
+else:
+    print("⚠️ Running without MongoDB (settings won't persist)")
 
 # Create the main app
 app = FastAPI()
@@ -202,13 +212,19 @@ async def root():
 async def create_status_check(input: StatusCheckCreate):
     status_dict = input.model_dump()
     status_obj = StatusCheck(**status_dict)
-    doc = status_obj.model_dump()
-    doc['timestamp'] = doc['timestamp'].isoformat()
-    _ = await db.status_checks.insert_one(doc)
+    
+    if db is not None:
+        doc = status_obj.model_dump()
+        doc['timestamp'] = doc['timestamp'].isoformat()
+        _ = await db.status_checks.insert_one(doc)
+    
     return status_obj
 
 @api_router.get("/status", response_model=List[StatusCheck])
 async def get_status_checks():
+    if db is None:
+        return []
+    
     status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
     for check in status_checks:
         if isinstance(check['timestamp'], str):
@@ -226,12 +242,13 @@ async def update_settings(settings: DetectionSettings):
     global detection_settings
     detection_settings.update(settings.model_dump())
     
-    # Save to MongoDB
-    await db.settings.update_one(
-        {"type": "detection"},
-        {"$set": {**settings.model_dump(), "updated_at": datetime.now(timezone.utc).isoformat()}},
-        upsert=True
-    )
+    # Save to MongoDB (if available)
+    if db is not None:
+        await db.settings.update_one(
+            {"type": "detection"},
+            {"$set": {**settings.model_dump(), "updated_at": datetime.now(timezone.utc).isoformat()}},
+            upsert=True
+        )
     return detection_settings
 
 
@@ -269,12 +286,13 @@ async def activate_profile(profile_id: str):
     detection_settings["priority_targeting"] = profile["priority_targeting"]
     detection_settings["active_profile"] = profile_id
     
-    # Save to MongoDB
-    await db.settings.update_one(
-        {"type": "detection"},
-        {"$set": {**detection_settings, "updated_at": datetime.now(timezone.utc).isoformat()}},
-        upsert=True
-    )
+    # Save to MongoDB (if available)
+    if db is not None:
+        await db.settings.update_one(
+            {"type": "detection"},
+            {"$set": {**detection_settings, "updated_at": datetime.now(timezone.utc).isoformat()}},
+            upsert=True
+        )
     
     logger.info(f"Activated game profile: {profile['name']}")
     
@@ -317,12 +335,13 @@ async def update_controller_bindings(bindings: ControllerBindings):
     for action, button in new_bindings.items():
         controller.set_binding(action, button)
     
-    # Save to MongoDB
-    await db.controller_config.update_one(
-        {"type": "bindings"},
-        {"$set": {"bindings": controller_config["bindings"], "updated_at": datetime.now(timezone.utc).isoformat()}},
-        upsert=True
-    )
+    # Save to MongoDB (if available)
+    if db is not None:
+        await db.controller_config.update_one(
+            {"type": "bindings"},
+            {"$set": {"bindings": controller_config["bindings"], "updated_at": datetime.now(timezone.utc).isoformat()}},
+            upsert=True
+        )
     
     return {"message": "Bindings updated", "bindings": controller_config["bindings"]}
 
@@ -334,11 +353,12 @@ async def update_controller_config(config: ControllerConfig):
     
     controller.trigger_threshold = config.trigger_threshold
     
-    await db.controller_config.update_one(
-        {"type": "config"},
-        {"$set": {**config.model_dump(), "updated_at": datetime.now(timezone.utc).isoformat()}},
-        upsert=True
-    )
+    if db is not None:
+        await db.controller_config.update_one(
+            {"type": "config"},
+            {"$set": {**config.model_dump(), "updated_at": datetime.now(timezone.utc).isoformat()}},
+            upsert=True
+        )
     
     return {"message": "Controller config updated", "config": controller_config}
 
@@ -729,12 +749,20 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     logger.info("Starting Xbox Vision AI Server...")
-    # Load settings from MongoDB
-    saved_settings = await db.settings.find_one({"type": "detection"}, {"_id": 0})
-    if saved_settings:
-        detection_settings.update({k: v for k, v in saved_settings.items() if k != "type" and k != "updated_at"})
-        logger.info("Loaded settings from database")
+    # Load settings from MongoDB (if available)
+    if db is not None:
+        try:
+            saved_settings = await db.settings.find_one({"type": "detection"}, {"_id": 0})
+            if saved_settings:
+                detection_settings.update({k: v for k, v in saved_settings.items() if k != "type" and k != "updated_at"})
+                logger.info("Loaded settings from database")
+        except Exception as e:
+            logger.warning(f"Could not load settings from database: {e}")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
-    client.close()
+    if db is not None:
+        try:
+            client.close()
+        except:
+            pass
