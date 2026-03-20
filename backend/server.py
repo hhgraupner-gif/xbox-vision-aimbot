@@ -87,40 +87,40 @@ GAME_PROFILES = {
     "default": {
         "name": "Default",
         "description": "Standard detection settings",
-        "confidence_threshold": 0.5,
-        "aim_sensitivity": 0.8,
+        "confidence_threshold": 0.7,
+        "aim_sensitivity": 0.3,
         "target_classes": ["person"],
-        "aim_point_offset": 0.15,  # 15% from top (head)
+        "aim_point_offset": 0.15,
         "box_color": "#FF003C",
-        "priority_targeting": "closest"  # closest, highest_confidence, center
+        "priority_targeting": "closest"
     },
     "cod_warzone": {
         "name": "Call of Duty: Warzone",
-        "description": "Optimized for Warzone - fast targets, high precision",
-        "confidence_threshold": 0.45,  # Slightly lower for fast movement
-        "aim_sensitivity": 0.95,  # Very responsive
+        "description": "Optimized for Warzone - stable aim",
+        "confidence_threshold": 0.75,
+        "aim_sensitivity": 0.35,
         "target_classes": ["person"],
-        "aim_point_offset": 0.12,  # Higher headshot line
+        "aim_point_offset": 0.12,
         "box_color": "#FF003C",
         "priority_targeting": "closest"
     },
     "cod_bo7": {
         "name": "Call of Duty: Black Ops 7",
-        "description": "Optimized for BO7 multiplayer - quick reflexes",
-        "confidence_threshold": 0.40,  # Lower threshold for fast-paced
-        "aim_sensitivity": 1.0,  # Maximum responsiveness
+        "description": "Optimized for BO7 multiplayer",
+        "confidence_threshold": 0.70,
+        "aim_sensitivity": 0.4,
         "target_classes": ["person"],
-        "aim_point_offset": 0.10,  # Aggressive headshot targeting
+        "aim_point_offset": 0.10,
         "box_color": "#FF2A6D",
-        "priority_targeting": "center"  # Prioritize center of screen
+        "priority_targeting": "center"
     },
     "cod_zombies": {
         "name": "Call of Duty: Zombies",
-        "description": "Optimized for Zombies mode - multiple targets",
-        "confidence_threshold": 0.35,  # Lower for hordes
-        "aim_sensitivity": 0.85,
+        "description": "Optimized for Zombies mode",
+        "confidence_threshold": 0.65,
+        "aim_sensitivity": 0.45,
         "target_classes": ["person"],
-        "aim_point_offset": 0.20,  # Center mass for zombies
+        "aim_point_offset": 0.20,
         "box_color": "#39FF14",
         "priority_targeting": "closest"
     }
@@ -128,8 +128,8 @@ GAME_PROFILES = {
 
 # Global settings
 detection_settings = {
-    "confidence_threshold": 0.5,
-    "aim_sensitivity": 0.8,
+    "confidence_threshold": 0.75,  # HÖHER - weniger false positives
+    "aim_sensitivity": 0.35,  # NIEDRIGER - weniger zucken
     "target_classes": ["person"],
     "enabled": True,
     "show_boxes": True,
@@ -142,11 +142,13 @@ detection_settings = {
     "active_profile": "default",
     "aim_point_offset": 0.15,
     "priority_targeting": "closest",
-    "smoothing": 0.3
+    "smoothing": 0.75,  # HÖHER - sanftere Bewegung
+    "min_target_size": 3000,  # Minimum Pixel für Target
+    "deadzone": 50  # Pixel-Deadzone um Zentrum
 }
 
 # Controller Aimbot - moves right stick towards target
-def move_controller_to_target(target_x, target_y, frame_width, frame_height, sensitivity=0.8, smoothing=0.3):
+def move_controller_to_target(target_x, target_y, frame_width, frame_height, sensitivity=0.35, smoothing=0.75):
     """Move controller right stick towards the target"""
     if not CONTROLLER_AIMBOT_AVAILABLE or virtual_gamepad is None:
         return False
@@ -155,6 +157,14 @@ def move_controller_to_target(target_x, target_y, frame_width, frame_height, sen
         # Calculate center of frame
         center_x = frame_width // 2
         center_y = frame_height // 2
+        
+        # Deadzone - wenn Target nah genug am Zentrum, nicht bewegen
+        deadzone = detection_settings.get("deadzone", 50)
+        distance = ((target_x - center_x) ** 2 + (target_y - center_y) ** 2) ** 0.5
+        if distance < deadzone:
+            virtual_gamepad.right_joystick_float(x_value_float=0, y_value_float=0)
+            virtual_gamepad.update()
+            return False
         
         # Calculate offset from center (normalized -1 to 1)
         delta_x = (target_x - center_x) / (frame_width / 2)
@@ -605,15 +615,27 @@ def run_detection(frame: np.ndarray) -> tuple:
             x1, y1, x2, y2 = map(int, box.xyxy[0])
             cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
             
+            # FILTER: Minimum target size (ignore small detections)
+            box_area = (x2 - x1) * (y2 - y1)
+            min_size = detection_settings.get("min_target_size", 3000)
+            if box_area < min_size:
+                continue
+            
+            # FILTER: Aspect ratio check (humans are taller than wide)
+            aspect_ratio = (y2 - y1) / max(1, (x2 - x1))
+            if aspect_ratio < 1.0 or aspect_ratio > 4.0:  # Skip non-human shapes
+                continue
+            
             detections.append({
                 "class_name": cls_name,
                 "confidence": round(conf, 3),
                 "bbox": [x1, y1, x2, y2],
-                "center": [cx, cy]
+                "center": [cx, cy],
+                "area": box_area
             })
             
             # Find best target based on priority mode
-            if detection_settings["aim_assist_enabled"]:
+            if detection_settings.get("aimbot_enabled", False):
                 # Calculate aim point (head area based on offset)
                 target_y = y1 + int((y2 - y1) * aim_offset)
                 distance = ((cx - center_x) ** 2 + (target_y - center_y) ** 2) ** 0.5
