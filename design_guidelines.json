@@ -1,0 +1,132 @@
+{
+  "identity": {
+    "name": "E1: The Anti-AI Designer",
+    "persona": "A rogue UI architect who blends tactical military interfaces with cyberpunk aesthetics. You despise 'clean' corporate SaaS designs. You believe every pixel should feel like it belongs in a fighter jet cockpit or a hacker's terminal.",
+    "mission": "Build a high-performance, low-latency Computer Vision dashboard that feels illegal to own.",
+    "vibe": "Aggressive, High-Contrast, Data-Dense, Neon-Soaked."
+  },
+  "design_principles": [
+    "Fusion over Imitation: Mix 'Call of Duty' HUDs with 'Bloomberg Terminal' data density.",
+    "Darkness is the Canvas: Never use white backgrounds. Use #050505 or #000000. Light exists only to highlight data.",
+    "Data is Art: The bounding boxes, the confidence percentages, the FPS counters—these ARE the aesthetic. Don't hide them.",
+    "The 'Glitch' Aesthetic: Use subtle chromatic aberration or scanlines for that 'live feed' feeling.",
+    "Corner Priority: Use corner accents (brackets) on cards instead of full borders to reduce visual noise."
+  ],
+  "color_palette": {
+    "archetype": "ARCHETYPE 7: ELECTRIC & NEON (Future, Speed, Disruption)",
+    "backgrounds": {
+      "page_bg": "#050505",
+      "card_bg": "#0A0A0A",
+      "overlay_bg": "rgba(5, 5, 5, 0.85)"
+    },
+    "accents": {
+      "primary": "#00F0FF",
+      "secondary": "#FF2A6D",
+      "success": "#39FF14",
+      "warning": "#FFD300",
+      "danger": "#FF003C"
+    },
+    "text": {
+      "primary": "#EDEDED",
+      "secondary": "#A1A1AA",
+      "muted": "#52525B"
+    },
+    "special": {
+      "enemy_box": "#FF003C",
+      "aim_assist_lock": "#39FF14",
+      "crosshair": "#00F0FF"
+    }
+  },
+  "typography": {
+    "font_strategy": "The Anti-Default Rule: No Inter for Headings.",
+    "headings": {
+      "font_family": "Rajdhani, sans-serif",
+      "weight": "700",
+      "style": "Uppercase, tracking-widest"
+    },
+    "body": {
+      "font_family": "Exo 2, sans-serif",
+      "weight": "400",
+      "style": "Clean, legible"
+    },
+    "code_data": {
+      "font_family": "JetBrains Mono, monospace",
+      "usage": "FPS counters, confidence scores, coordinates"
+    },
+    "installation_command": "yarn add @fontsource/rajdhani @fontsource/exo-2 @fontsource/jetbrains-mono"
+  },
+  "spacing_layout": {
+    "strategy": "The 'Bento' Grid Protocol (MODE B: High Density)",
+    "base_grid": "grid-cols-1 md:grid-cols-12 gap-4",
+    "padding_scale": "p-4 for density, p-8 for breathing room (Settings page)",
+    "containers": {
+      "video_feed": "col-span-full lg:col-span-9 aspect-video relative overflow-hidden border border-white/10 rounded-sm",
+      "sidebar": "col-span-full lg:col-span-3 flex flex-col gap-4 h-full",
+      "stats_card": "bg-white/5 border-l-2 border-primary p-4"
+    }
+  },
+  "components": {
+    "cards": {
+      "style": "Flat, dark, no shadow. Use 'corner brackets' (SVG or CSS) to frame content.",
+      "border": "1px solid rgba(255, 255, 255, 0.1)",
+      "hover": "border-primary/50 transition-colors duration-200"
+    },
+    "buttons": {
+      "primary": "bg-primary text-black font-bold uppercase tracking-wider clip-path-polygon-[0_0,100%_0,100%_70%,90%_100%,0_100%] hover:bg-primary/90",
+      "secondary": "border border-white/20 text-primary hover:bg-white/5",
+      "destructive": "bg-danger text-white hover:bg-danger/80"
+    },
+    "inputs": {
+      "style": "bg-black border border-white/20 text-white focus:border-primary rounded-none",
+      "label": "text-xs uppercase tracking-widest text-muted-foreground"
+    },
+    "overlays": {
+      "aimbot_hud": "absolute inset-0 pointer-events-none z-50",
+      "bounding_box": "border-2 border-danger text-xs text-white bg-black/50 px-1 absolute"
+    }
+  },
+  "visual_enhancers": {
+    "textures": [
+      "Scanlines: repeating-linear-gradient(0deg, transparent, transparent 2px, #000 3px)",
+      "Vignette: radial-gradient(circle, transparent 50%, black 100%)"
+    ],
+    "micro_interactions": [
+      "Hovering a target adds a 'locking' animation (corners converging).",
+      "Toggling a setting plays a subtle 'tech' sound (optional) or visual flash."
+    ]
+  },
+  "assets": {
+    "mood_images": [
+      {
+        "url": "https://images.pexels.com/photos/7688764/pexels-photo-7688764.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Cyberpunk hand with joystick - use for 'About' or 'Welcome' modal background."
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1771014846919-3a1cf73aeea1?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODF8MHwxfHNlYXJjaHwzfHxjeWJlcnB1bmslMjBnYW1pbmclMjBzZXR1cCUyMG5lb24lMjBsaWdodHN8ZW58MHx8fHwxNzczOTc2MzY4fDA&ixlib=rb-4.1.0&q=85",
+        "description": "Dark gaming setup - use for Settings page background (dimmed 80%)."
+      }
+    ],
+    "icons": {
+      "library": "lucide-react",
+      "style": "Stroke width 1.5px, crisp edges."
+    }
+  },
+  "instructions_to_main_agent": [
+    "CRITICAL: Override the default Shadcn 'zinc' theme. Force dark mode in `index.css` by setting default variables to dark values.",
+    "Do NOT use standard rounded corners (rounded-lg). Use `rounded-sm` or `rounded-none` for a sharper, tactical look.",
+    "For the 'Video Feed', ensure the container aspect ratio matches the Xbox stream (usually 16:9).",
+    "The 'Aim Assist' overlay must be perfectly centered. Use CSS `left: 50%; top: 50%; transform: translate(-50%, -50%);`.",
+    "Use 'Rajdhani' font for all headings (h1-h6) and 'JetBrains Mono' for all numerical data (FPS, Confidence).",
+    "Implement a 'Performance Mode' toggle that disables fancy blurs for lower latency if needed.",
+    "When displaying bounding boxes, strictly use the colors defined in `color_palette.special`."
+  ],
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "You tend to converge toward generic, 'on distribution' outputs. Avoid this.",
+    "Dark colors look good when used independently without gradients. DO NOT use dark colors as gradients.",
+    "Create depth through layered design elements with z-index hierarchy.",
+    "Use glass-morphism effects with backdrop filters (12-24px blur) ONLY on static UI elements (sidebar), NOT on the video feed overlay (performance cost).",
+    "Every interaction needs micro-animations - hover states, transitions.",
+    "Use `sonner` for toasts.",
+    "Components MUST use named exports."
+  ]
+}
