@@ -20,6 +20,17 @@ import io
 import mss
 import mss.tools
 
+# Import pyautogui for mouse control (aimbot)
+try:
+    import pyautogui
+    pyautogui.FAILSAFE = False  # Disable fail-safe for gaming
+    pyautogui.PAUSE = 0  # No pause between actions
+    AIMBOT_AVAILABLE = True
+    print("✅ PyAutoGUI loaded - Aimbot enabled")
+except ImportError:
+    AIMBOT_AVAILABLE = False
+    print("⚠️ PyAutoGUI not available - Install with: pip install pyautogui")
+
 # Import controller module
 from controller import controller, get_scuf_config, DEFAULT_BINDINGS, SCUF_VALOR_PRO_CONFIG
 
@@ -107,12 +118,54 @@ detection_settings = {
     "show_boxes": True,
     "show_crosshair": True,
     "aim_assist_enabled": False,
+    "aimbot_enabled": False,  # NEW: Actually move mouse to target
     "capture_monitor": 1,
     "capture_region": None,
     "active_profile": "default",
     "aim_point_offset": 0.15,
-    "priority_targeting": "closest"
+    "priority_targeting": "closest",
+    "smoothing": 0.5  # Mouse movement smoothing (0 = instant, 1 = very slow)
 }
+
+# Aimbot function - moves mouse to target
+def move_to_target(target_x, target_y, frame_width, frame_height, sensitivity=0.8, smoothing=0.5):
+    """Move mouse towards the target position"""
+    if not AIMBOT_AVAILABLE:
+        return False
+    
+    try:
+        # Get current mouse position
+        current_x, current_y = pyautogui.position()
+        
+        # Get screen size
+        screen_width, screen_height = pyautogui.size()
+        
+        # Calculate center of screen
+        center_x = screen_width // 2
+        center_y = screen_height // 2
+        
+        # Calculate offset from center to target (normalized)
+        # The frame might be different size than screen, so normalize
+        norm_target_x = (target_x / frame_width) * screen_width
+        norm_target_y = (target_y / frame_height) * screen_height
+        
+        # Calculate how much to move
+        delta_x = (norm_target_x - center_x) * sensitivity
+        delta_y = (norm_target_y - center_y) * sensitivity
+        
+        # Apply smoothing (move only part of the way)
+        move_x = delta_x * (1 - smoothing)
+        move_y = delta_y * (1 - smoothing)
+        
+        # Move mouse relative to current position
+        if abs(move_x) > 1 or abs(move_y) > 1:
+            pyautogui.moveRel(int(move_x), int(move_y), duration=0)
+            return True
+        
+        return False
+    except Exception as e:
+        logger.error(f"Aimbot move error: {e}")
+        return False
 
 # YOLO Model (lazy load)
 yolo_model = None
@@ -250,6 +303,47 @@ async def update_settings(settings: DetectionSettings):
             upsert=True
         )
     return detection_settings
+
+
+# Aimbot Control
+@api_router.post("/aimbot/enable")
+async def enable_aimbot():
+    """Enable the aimbot - mouse will move to targets"""
+    global detection_settings
+    detection_settings["aimbot_enabled"] = True
+    detection_settings["aim_assist_enabled"] = True
+    logger.info("🎯 AIMBOT ENABLED")
+    return {"status": "enabled", "message": "Aimbot is now ACTIVE - mouse will move to targets"}
+
+@api_router.post("/aimbot/disable")
+async def disable_aimbot():
+    """Disable the aimbot"""
+    global detection_settings
+    detection_settings["aimbot_enabled"] = False
+    logger.info("🛑 AIMBOT DISABLED")
+    return {"status": "disabled", "message": "Aimbot disabled"}
+
+@api_router.get("/aimbot/status")
+async def aimbot_status():
+    """Get current aimbot status"""
+    return {
+        "aimbot_enabled": detection_settings.get("aimbot_enabled", False),
+        "aim_assist_enabled": detection_settings.get("aim_assist_enabled", False),
+        "pyautogui_available": AIMBOT_AVAILABLE,
+        "sensitivity": detection_settings.get("aim_sensitivity", 0.8),
+        "smoothing": detection_settings.get("smoothing", 0.5)
+    }
+
+@api_router.put("/aimbot/sensitivity")
+async def set_aimbot_sensitivity(sensitivity: float = 0.8, smoothing: float = 0.5):
+    """Adjust aimbot sensitivity and smoothing"""
+    global detection_settings
+    detection_settings["aim_sensitivity"] = max(0.1, min(1.0, sensitivity))
+    detection_settings["smoothing"] = max(0.0, min(0.9, smoothing))
+    return {
+        "sensitivity": detection_settings["aim_sensitivity"],
+        "smoothing": detection_settings["smoothing"]
+    }
 
 
 # Game Profiles
@@ -472,6 +566,12 @@ def run_detection(frame: np.ndarray) -> tuple:
                         best_target = [cx, target_y]
     
     processing_time = (time.time() - start_time) * 1000
+    
+    # AIMBOT: Move mouse to target if enabled
+    if best_target and detection_settings.get("aimbot_enabled", False):
+        sensitivity = detection_settings.get("aim_sensitivity", 0.8)
+        smoothing = detection_settings.get("smoothing", 0.5)
+        move_to_target(best_target[0], best_target[1], frame_width, frame_height, sensitivity, smoothing)
     
     return detections, best_target, processing_time, frame_width, frame_height
 
