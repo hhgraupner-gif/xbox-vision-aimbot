@@ -584,20 +584,28 @@ def run_detection(frame: np.ndarray) -> tuple:
     start_time = time.time()
     
     model = get_yolo_model()
+    frame_height, frame_width = frame.shape[:2]
     
-    # Run inference
-    results = model(frame, verbose=False, conf=detection_settings["confidence_threshold"])
+    # NUR ZENTRUM SCANNEN wenn Aimbot aktiv (weniger false positives)
+    if detection_settings.get("aimbot_enabled", False):
+        # Crop to center 50% of screen
+        crop_x = frame_width // 4
+        crop_y = frame_height // 4
+        crop_w = frame_width // 2
+        crop_h = frame_height // 2
+        cropped = frame[crop_y:crop_y+crop_h, crop_x:crop_x+crop_w]
+        results = model(cropped, verbose=False, conf=detection_settings["confidence_threshold"])
+        offset_x, offset_y = crop_x, crop_y
+    else:
+        results = model(frame, verbose=False, conf=detection_settings["confidence_threshold"])
+        offset_x, offset_y = 0, 0
     
     detections = []
-    frame_height, frame_width = frame.shape[:2]
     center_x, center_y = frame_width // 2, frame_height // 2
     
     best_target = None
     min_distance = float('inf')
-    max_confidence = 0
     
-    # Get targeting mode from settings
-    priority_mode = detection_settings.get("priority_targeting", "closest")
     aim_offset = detection_settings.get("aim_point_offset", 0.15)
     
     for result in results:
@@ -607,60 +615,50 @@ def run_detection(frame: np.ndarray) -> tuple:
             cls_name = model.names[cls_id]
             conf = float(box.conf[0])
             
-            # Filter by target classes
             if cls_name not in detection_settings["target_classes"]:
                 continue
             
-            # Get bounding box
+            # Get bounding box (adjust for crop offset)
             x1, y1, x2, y2 = map(int, box.xyxy[0])
+            x1 += offset_x
+            x2 += offset_x
+            y1 += offset_y
+            y2 += offset_y
+            
             cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
             
-            # FILTER: Minimum target size (ignore small detections)
+            # FILTER: Minimum size
             box_area = (x2 - x1) * (y2 - y1)
-            min_size = detection_settings.get("min_target_size", 3000)
-            if box_area < min_size:
+            if box_area < detection_settings.get("min_target_size", 3000):
                 continue
             
-            # FILTER: Aspect ratio check (humans are taller than wide)
+            # FILTER: Aspect ratio (humans are taller than wide)
             aspect_ratio = (y2 - y1) / max(1, (x2 - x1))
-            if aspect_ratio < 1.0 or aspect_ratio > 4.0:  # Skip non-human shapes
+            if aspect_ratio < 1.2 or aspect_ratio > 3.5:
                 continue
             
             detections.append({
                 "class_name": cls_name,
                 "confidence": round(conf, 3),
                 "bbox": [x1, y1, x2, y2],
-                "center": [cx, cy],
-                "area": box_area
+                "center": [cx, cy]
             })
             
-            # Find best target based on priority mode
+            # Find closest target to center
             if detection_settings.get("aimbot_enabled", False):
-                # Calculate aim point (head area based on offset)
                 target_y = y1 + int((y2 - y1) * aim_offset)
                 distance = ((cx - center_x) ** 2 + (target_y - center_y) ** 2) ** 0.5
                 
-                if priority_mode == "closest":
-                    if distance < min_distance:
-                        min_distance = distance
-                        best_target = [cx, target_y]
-                elif priority_mode == "highest_confidence":
-                    if conf > max_confidence:
-                        max_confidence = conf
-                        best_target = [cx, target_y]
-                elif priority_mode == "center":
-                    # Weight by both distance and confidence
-                    score = distance / (conf + 0.1)
-                    if score < min_distance:
-                        min_distance = score
-                        best_target = [cx, target_y]
+                if distance < min_distance:
+                    min_distance = distance
+                    best_target = [cx, target_y]
     
     processing_time = (time.time() - start_time) * 1000
     
-    # AIMBOT: Move mouse to target if enabled
-    if best_target and detection_settings.get("aimbot_enabled", False):
-        sensitivity = detection_settings.get("aim_sensitivity", 0.8)
-        smoothing = detection_settings.get("smoothing", 0.5)
+    # AIMBOT: Move to target - nur wenn genau 1 Target gefunden
+    if best_target and detection_settings.get("aimbot_enabled", False) and len(detections) == 1:
+        sensitivity = detection_settings.get("aim_sensitivity", 0.35)
+        smoothing = detection_settings.get("smoothing", 0.75)
         move_to_target(best_target[0], best_target[1], frame_width, frame_height, sensitivity, smoothing)
     
     return detections, best_target, processing_time, frame_width, frame_height
