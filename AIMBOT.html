@@ -225,7 +225,7 @@
 
     <script>
         const API='http://localhost:8001/api';
-        let running=false,interval,demo=true,fps=0,frameCount=0,lastFpsTime=Date.now();
+        let running=false,demo=true,fps=0,frameCount=0,lastFpsTime=Date.now();
         let settings={enabled:true,show_boxes:true,show_crosshair:true,aim_assist_enabled:false};
         let aimbotEnabled=false;
 
@@ -344,7 +344,7 @@
 
         function toggleStream(){
             if(running){
-                running=false;clearInterval(interval);
+                running=false;
                 document.getElementById('startBtn').textContent='▶ START';
                 document.getElementById('startBtn').className='';
             }else{
@@ -353,16 +353,19 @@
                 document.getElementById('startBtn').className='stop';
                 document.getElementById('placeholder').style.display='none';
                 document.getElementById('hud').style.display='flex';
-                interval=setInterval(getFrame,100);
                 getFrame();
             }
         }
 
         function captureOnce(){getFrame();}
 
+        let fetching=false;
         function getFrame(){
+            if(fetching||!running)return;
+            fetching=true;
             const url=demo?API+'/demo/frame':API+'/capture';
             fetch(url).then(r=>r.json()).then(d=>{
+                fetching=false;
                 let img=document.getElementById('feedImg');
                 if(!img){
                     img=document.createElement('img');
@@ -391,11 +394,17 @@
                     frameCount=0;lastFpsTime=now;
                 }
 
-                // Update tracker info periodically
                 if(aimbotEnabled&&frameCount%5===0){
                     fetch(API+'/aimbot/status').then(r=>r.json()).then(updateTrackerInfo).catch(()=>{});
                 }
-            }).catch(e=>console.error(e));
+
+                // Sofort naechsten Frame holen (maximale FPS)
+                if(running) requestAnimationFrame(getFrame);
+            }).catch(e=>{
+                fetching=false;
+                console.error(e);
+                if(running) setTimeout(getFrame,200);
+            });
         }
 
         // Capture Card Functions

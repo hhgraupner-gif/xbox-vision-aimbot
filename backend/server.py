@@ -243,20 +243,23 @@ def move_mouse_smoothed(target_x, target_y, frame_width, frame_height):
         logger.error(f"Mouse aimbot error: {e}")
         return False
 
-# YOLO Model (lazy load)
+# YOLO Model (lazy load with failure cache)
 yolo_model = None
+_yolo_load_failed = False
 
 def get_yolo_model():
-    global yolo_model
+    global yolo_model, _yolo_load_failed
+    if _yolo_load_failed:
+        return None
     if yolo_model is None:
         try:
             from ultralytics import YOLO
-            # Use YOLOv8n (nano) for fastest inference
             yolo_model = YOLO('yolov8n.pt')
             logger.info("YOLO model loaded successfully")
         except Exception as e:
-            logger.error(f"Failed to load YOLO model: {e}")
-            raise HTTPException(status_code=500, detail=f"YOLO model failed to load: {str(e)}")
+            _yolo_load_failed = True
+            logger.error(f"YOLO model failed to load (will not retry): {e}")
+            return None
     return yolo_model
 
 
@@ -707,6 +710,10 @@ def run_detection(frame: np.ndarray) -> tuple:
     model = get_yolo_model()
     frame_height, frame_width = frame.shape[:2]
 
+    # If YOLO not available, return empty results immediately
+    if model is None:
+        return [], None, 0.0, frame_width, frame_height
+
     # Crop to center 50% when aimbot is active (reduces false positives)
     if detection_settings.get("aimbot_enabled", False):
         crop_x = frame_width // 4
@@ -987,11 +994,21 @@ async def websocket_detections(websocket: WebSocket):
 @api_router.get("/yolo/classes")
 async def get_yolo_classes():
     """Get available YOLO classes"""
-    try:
-        model = get_yolo_model()
+    model = get_yolo_model()
+    if model is not None:
         return {"classes": list(model.names.values())}
-    except Exception:
-        return {"classes": ["person", "car", "truck", "bus", "motorcycle", "bicycle"]}
+    return {"classes": ["person", "car", "truck", "bus", "motorcycle", "bicycle"]}
+
+@api_router.post("/yolo/reload")
+async def reload_yolo():
+    """Force reload YOLO model (after fixing torch)"""
+    global yolo_model, _yolo_load_failed
+    yolo_model = None
+    _yolo_load_failed = False
+    model = get_yolo_model()
+    if model is not None:
+        return {"status": "ok", "message": "YOLO model loaded successfully"}
+    return {"status": "error", "message": "YOLO model failed to load"}
 
 
 # Demo mode - generate fake detections for testing
