@@ -114,7 +114,7 @@ GAME_PROFILES = {
 
 # Global settings
 detection_settings = {
-    "confidence_threshold": 0.70,
+    "confidence_threshold": 0.45,
     "aim_sensitivity": 0.25,
     "target_classes": ["person"],
     "enabled": True,
@@ -129,7 +129,7 @@ detection_settings = {
     "aim_point_offset": 0.15,
     "priority_targeting": "closest",
     "smoothing": 0.85,
-    "min_target_size": 4000,
+    "min_target_size": 800,
     "deadzone": 60,
     "use_capture_card": False,
     "capture_device": 0,
@@ -763,9 +763,9 @@ def run_detection(frame: np.ndarray) -> tuple:
         if w_box * h_box < min_size:
             continue
 
-        # Filter: humans are taller than wide (ratio 1.2 - 4.0)
+        # Filter: humans are taller than wide (ratio 0.8 - 5.0)
         ratio = h_box / max(1, w_box)
-        if ratio < 1.2 or ratio > 4.0:
+        if ratio < 0.8 or ratio > 5.0:
             continue
 
         cx = (x1 + x2) // 2
