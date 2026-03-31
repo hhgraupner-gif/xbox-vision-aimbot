@@ -41,12 +41,39 @@ MIN_TARGET_SIZE = 200       # Kleiner: FPS-Modell erkennt besser
 AIM_POINT_BODY = 0.35       # Zielpunkt am Koerper (0=oben, 1=unten)
 PREFER_HEADSHOTS = True     # Kopf-Erkennungen bevorzugen
 
-# Aimbot - NUR wenn ADS aktiv
-AIM_SENSITIVITY = 0.50
-SMOOTHING = 0.55
-MAX_MOVE = 30
-DEADZONE = 40
-LOCK_FRAMES = 1
+# ============================================================
+# AIMBOT PROFILE: Taste 1 = Aim-Assist, Taste 2 = Aimbot
+# ============================================================
+PROFILES = {
+    "assist": {
+        "name": "AIM-ASSIST",
+        "sensitivity": 0.50,
+        "smoothing": 0.55,
+        "max_move": 30,
+        "deadzone": 40,
+        "lock_frames": 1,
+        "ema_alpha": 0.45,
+        "lookahead": 0.03,
+    },
+    "aimbot": {
+        "name": "AIMBOT",
+        "sensitivity": 0.85,
+        "smoothing": 0.25,
+        "max_move": 70,
+        "deadzone": 15,
+        "lock_frames": 1,
+        "ema_alpha": 0.70,
+        "lookahead": 0.05,
+    },
+}
+ACTIVE_PROFILE = "aimbot"  # Standard: Aimbot (aggressiv)
+
+# Aktive Werte (werden vom Profil gesetzt)
+AIM_SENSITIVITY = PROFILES[ACTIVE_PROFILE]["sensitivity"]
+SMOOTHING = PROFILES[ACTIVE_PROFILE]["smoothing"]
+MAX_MOVE = PROFILES[ACTIVE_PROFILE]["max_move"]
+DEADZONE = PROFILES[ACTIVE_PROFILE]["deadzone"]
+LOCK_FRAMES = PROFILES[ACTIVE_PROFILE]["lock_frames"]
 
 # ADS Erkennung
 ADS_DETECTION = True
@@ -191,27 +218,33 @@ class TargetTracker:
         self.locked = False
 
 
-def move_aim(tracker, tx, ty, fw, fh):
+def move_aim(tracker, tx, ty, fw, fh, profile):
+    """Bewegt das Fadenkreuz zum Ziel. Nutzt Profil-Werte."""
     cx = fw / 2.0
     cy = fh / 2.0
     dx = tx - cx
     dy = ty - cy
     dist = (dx*dx + dy*dy) ** 0.5
 
-    if dist < DEADZONE:
+    sens = profile["sensitivity"]
+    smooth = profile["smoothing"]
+    max_mv = profile["max_move"]
+    dz = profile["deadzone"]
+
+    if dist < dz:
         tracker.prev_mx *= 0.3
         tracker.prev_my *= 0.3
         return False
 
-    mx = (dx / fw) * AIM_SENSITIVITY * 250
-    my = (dy / fh) * AIM_SENSITIVITY * 250
+    mx = (dx / fw) * sens * 250
+    my = (dy / fh) * sens * 250
 
-    mx = SMOOTHING * tracker.prev_mx + (1 - SMOOTHING) * mx
-    my = SMOOTHING * tracker.prev_my + (1 - SMOOTHING) * my
+    mx = smooth * tracker.prev_mx + (1 - smooth) * mx
+    my = smooth * tracker.prev_my + (1 - smooth) * my
 
     mag = (mx*mx + my*my) ** 0.5
-    if mag > MAX_MOVE:
-        s = MAX_MOVE / mag
+    if mag > max_mv:
+        s = max_mv / mag
         mx *= s
         my *= s
 
@@ -291,7 +324,7 @@ CLASS_COLORS = {
 }
 
 
-def draw_status_bar(frame, model_mode, collecting, screenshot_count, fps, ads_active, tracker):
+def draw_status_bar(frame, model_mode, collecting, screenshot_count, fps, ads_active, tracker, profile_name):
     """Zeichnet eine gut sichtbare Statusleiste oben im Bild."""
     h, w = frame.shape[:2]
     bar_h = 38
@@ -312,32 +345,39 @@ def draw_status_bar(frame, model_mode, collecting, screenshot_count, fps, ads_ac
         tag = "STANDARD 640"
         tag_color = (255, 180, 0)   # Blau-Cyan
 
-    # Farbiger Block fuer Modell
     (tw, th), _ = cv2.getTextSize(tag, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
     cv2.rectangle(frame, (x-4, 6), (x + tw + 8, 33), tag_color, -1)
     cv2.putText(frame, tag, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
-    x += tw + 20
+    x += tw + 16
+
+    # --- PROFIL ---
+    if profile_name == "AIMBOT":
+        prof_color = (0, 0, 255)    # Rot
+    else:
+        prof_color = (0, 180, 0)    # Gruen
+
+    (tw_p, _), _ = cv2.getTextSize(profile_name, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+    cv2.rectangle(frame, (x-4, 6), (x + tw_p + 8, 33), prof_color, -1)
+    cv2.putText(frame, profile_name, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    x += tw_p + 16
 
     # --- SCREENSHOTS ---
     if collecting:
-        scr_text = f"SCREENSHOTS: AN ({screenshot_count})"
+        scr_text = f"REC ({screenshot_count})"
         scr_color = (0, 0, 255)     # Rot = Aufnahme laeuft
-        # Roter Punkt (Aufnahme-Indikator)
         cv2.circle(frame, (x + 6, y - 6), 6, (0, 0, 255), -1)
         x += 18
     else:
-        scr_text = "SCREENSHOTS: AUS"
+        scr_text = "REC: AUS"
         scr_color = (120, 120, 120) # Grau = inaktiv
 
     cv2.putText(frame, scr_text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, scr_color, 2)
     (tw2, _), _ = cv2.getTextSize(scr_text, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
-    x += tw2 + 20
+    x += tw2 + 16
 
     # --- FPS ---
     fps_color = (0, 255, 0) if fps >= 30 else (0, 200, 255) if fps >= 15 else (0, 0, 255)
     cv2.putText(frame, f"FPS: {fps}", (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, fps_color, 2)
-    (tw3, _), _ = cv2.getTextSize(f"FPS: {fps}", cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
-    x += tw3 + 20
 
     # --- ADS / AIMBOT Status (rechte Seite) ---
     if ads_active:
@@ -357,11 +397,11 @@ def draw_status_bar(frame, model_mode, collecting, screenshot_count, fps, ads_ac
         cv2.putText(frame, lock_text, (ads_x - tw_lock - 15, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2)
 
 
-def draw_overlay(frame, all_detections, target_dets, target_pos, fps, ads_active, collecting, tracker, model_mode, screenshot_count):
+def draw_overlay(frame, all_detections, target_dets, target_pos, fps, ads_active, collecting, tracker, model_mode, screenshot_count, profile_name):
     h, w = frame.shape[:2]
 
     # === STATUSLEISTE OBEN (gut sichtbar) ===
-    draw_status_bar(frame, model_mode, collecting, screenshot_count, fps, ads_active, tracker)
+    draw_status_bar(frame, model_mode, collecting, screenshot_count, fps, ads_active, tracker, profile_name)
 
     # Fadenkreuz
     color = (0, 255, 255) if ads_active else (0, 255, 0)
@@ -396,7 +436,7 @@ def draw_overlay(frame, all_detections, target_dets, target_pos, fps, ads_active
     cv2.putText(frame, f'Ziele: {len(target_dets)}', (10, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
     # Tastenbelegung unten
-    cv2.putText(frame, 'S=Screenshots | M=Modell | Q=Beenden', (10, h-12), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (160, 160, 160), 1)
+    cv2.putText(frame, '1=Assist | 2=Aimbot | S=Screenshots | M=Modell | Q=Beenden', (10, h-12), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (160, 160, 160), 1)
 
     return frame
 
@@ -458,6 +498,8 @@ def main():
     else:
         print("COCO-Modell geladen (Fallback)")
     print()
+    print("1 = Aim-Assist (sanft)")
+    print("2 = Aimbot (aggressiv)")
     print("S = Screenshot-Sammlung an/aus")
     print("M = Modell wechseln (nano/standard)")
     print("Q = Beenden")
@@ -469,6 +511,9 @@ def main():
     collecting = COLLECT_SCREENSHOTS
     last_screenshot = 0
     screenshot_count = len([f for f in os.listdir(screenshot_dir) if f.endswith('.jpg')])
+    active_profile_key = ACTIVE_PROFILE
+    profile = PROFILES[active_profile_key]
+    print(f"Aktives Profil: {profile['name']}")
 
     fps = 0
     frame_count = 0
@@ -505,13 +550,12 @@ def main():
 
         # Aimbot - NUR wenn ADS aktiv
         if best_target and ads_active:
-            ema_alpha = max(0.15, 1.0 - SMOOTHING)
-            tracker.update(best_target[0], best_target[1], alpha=ema_alpha)
-            if tracker.stable(LOCK_FRAMES):
-                pos = tracker.get_predicted(lookahead=0.03)
+            tracker.update(best_target[0], best_target[1], alpha=profile["ema_alpha"])
+            if tracker.stable(profile["lock_frames"]):
+                pos = tracker.get_predicted(lookahead=profile["lookahead"])
                 if pos:
                     tracker.locked = True
-                    move_aim(tracker, pos[0], pos[1], fw, fh)
+                    move_aim(tracker, pos[0], pos[1], fw, fh, profile)
         else:
             if not ads_active:
                 tracker.reset()
@@ -539,7 +583,8 @@ def main():
         if SHOW_WINDOW:
             display = draw_overlay(
                 frame.copy(), all_dets, target_dets, best_target,
-                fps, ads_active, collecting, tracker, current_mode, screenshot_count
+                fps, ads_active, collecting, tracker, current_mode, screenshot_count,
+                profile["name"]
             )
             if WINDOW_SCALE != 1.0:
                 display = cv2.resize(display, None, fx=WINDOW_SCALE, fy=WINDOW_SCALE)
@@ -551,6 +596,16 @@ def main():
                 collecting = not collecting
                 status = "AN" if collecting else "AUS"
                 print(f"Screenshot-Sammlung: {status} ({screenshot_count} gespeichert)")
+            elif key == ord('1'):
+                active_profile_key = "assist"
+                profile = PROFILES[active_profile_key]
+                tracker.reset()
+                print(f"Profil: {profile['name']} (sanft)")
+            elif key == ord('2'):
+                active_profile_key = "aimbot"
+                profile = PROFILES[active_profile_key]
+                tracker.reset()
+                print(f"Profil: {profile['name']} (aggressiv)")
             elif key == ord('m'):
                 # Modell wechseln
                 if current_mode == "nano":
@@ -562,9 +617,8 @@ def main():
                     print(f"Lade Modell: {new_mode}...")
                     detector = YOLODetector(new_path, conf_threshold=CONFIDENCE)
                     current_mode = new_mode
-                    model_info = f"{current_mode} {'FPS' if detector.is_fps_model else 'COCO'}"
                     tracker.reset()
-                    print(f"Modell gewechselt: {model_info}")
+                    print(f"Modell gewechselt: {current_mode}")
                 else:
                     print(f"Modell '{new_mode}' nicht gefunden!")
 
