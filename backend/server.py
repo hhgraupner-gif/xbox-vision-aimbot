@@ -140,7 +140,7 @@ detection_settings = {
     "priority_targeting": "closest",
     "smoothing": 0.85,
     "min_target_size": 800,
-    "deadzone": 60,
+    "deadzone": 150,
     "use_capture_card": False,
     "capture_device": 0,
     "max_move_px": 12,
@@ -149,7 +149,7 @@ detection_settings = {
     "kmbox_port": "",
     "kmbox_uuid": "",
     "kmbox_connected": False,
-    "trigger_mode": "mouse_right",
+    "trigger_mode": "always",
 }
 
 # ============================================================
