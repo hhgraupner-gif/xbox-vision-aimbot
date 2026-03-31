@@ -1,153 +1,210 @@
 <analysis>**original_problem_statement:** 
-Build a computer vision AI for Xbox remote play (aimbot) that recognizes enemies and provides aim assist. 
-*Updated Requirements based on conversation:* The setup relies on a local Windows PC. Video input is transitioning to an AVerMedia GC571 Capture Card (instead of remote play monitor capture). Input handling must route through a XIM Matrix hardware device, allowing the user to play with a Scuf Valor Pro controller while the AI injects aiming movements.
+Build a computer vision AI for Xbox (aimbot) that recognizes enemies and provides aim assist. 
+*Updated Requirements based on conversation:* The setup relies entirely on the user's local Windows PC. Video input is via an AVerMedia GC571 Capture Card. Input handling routes through a newly acquired **KMBox Net** hardware device via UDP, which sends mouse signals into a **XIM Matrix**, allowing the user to play with an Xbox controller while the AI injects aiming movements. The user has an AMD RX 7800 XT GPU and requires high performance.
 
-**User's preferred language:** German. (INSTRUCTION: Next agent MUST respond in German).
+**User's preferred language:** German (You MUST automatically detect the user's primary language from their messages inside the <trajectory> tag and INSTRUCT next agent to respond in the user's preferred language only)
 
 **what currently exists?** 
-A FastAPI Python backend running locally on the user's Windows PC that processes video via OpenCV and runs object detection via Ultralytics YOLOv8. The frontend is a standalone, locally executed  file (React/Node was abandoned due to local environment installation failures). The application relies entirely on the user's local hardware to function.
+A pure Python script () that captures the Xbox video feed via OpenCV, processes it through ONNX Runtime (using DirectML for AMD GPU acceleration), and sends direct UDP mouse movement commands to a KMBox Net hardware device. The previous FastAPI + HTML setup is mostly abandoned for active gameplay due to HTTP latency, replacing it with a 0-latency direct OpenCV loop. 
 
 **Last working item:**
-- **Last item agent was working:** Investigating how to route PC-generated aimbot movements (mouse inputs) through the user's XIM Matrix hardware so that it translates into right-stick controller movements on the Xbox. Agent was reading web search results about XIM Matrix PC configuration.
+- **Last item agent was working:** Finding and integrating a pre-trained FPS/Call of Duty specific YOLOv8 ONNX model. The agent was crawling GitHub repositories (e.g., Weser87/yolov8_aimbot) to find a better model because the generic COCO person model is recognizing random objects as enemies and ruining the aimbot.
 - **Status:** IN PROGRESS
-- **Agent Testing Done:** N (Cannot test physical hardware routing in the cloud container).
-- **Which testing method agent to use?** NA (Testing must be done manually by the user via physical hardware).
+- **Agent Testing Done:** N (Needs to be tested locally by the user with the new model).
+- **Which testing method agent to use?** NA (Testing must be done manually by the user via physical hardware and real gameplay).
 - **User Testing Done:** N
 
 **All Pending/In progress Issue list:**
-  - **Issue 1: Input Routing via XIM Matrix (P0)** 
-     - **Attempted fixes:** Tried  (collided with the physical controller). Tried sending  mouse movements over Xbox Remote Play (failed because Remote Play didn't pass the PC mouse to the Xbox while in controller mode). 
-     - **Next debug checklist:** Review XIM Matrix documentation on PC Output or Link cable features. Determine if  (mouse emulation) running on the PC can be natively intercepted by the XIM Matrix Manager software to send to the console.
-     - **Why fix this issue and what will be achieved with the fix?** Without this, the Aimbot cannot physically move the player's crosshair in the game.
+  - **Issue 1: Generic YOLO Model Inaccuracy (P0)** 
+     - **Attempted fixes:** Tweaked confidence thresholds, aspect ratios, and bounding box sizes. Failed; the model still detects guns, dead bodies, or random objects as people, and struggles to lock onto moving players in Call of Duty.
+     - **Next debug checklist:** Download a pre-trained FPS YOLOv8 model (e.g., from Roboflow Universe or GitHub), convert to ONNX, and instruct the user to replace the generic  file with it.
+     - **Why fix this issue and what will be achieved with the fix?** The aimbot is currently super bad and unusable in actual gameplay. A custom/FPS model will ensure the crosshair only locks onto real enemy players.
      - **Status:** IN PROGRESS
      - **Is recurring issue?** Y
-     - **Should Test frontend/backend/both after fix?** Backend (via user testing).
+     - **Should Test frontend/backend/both after fix?** Backend (User side).
      - **Blocked on other issue:** None.
 
-  - **Issue 2: Severe Aimbot Twitching and False Positives (P0)** 
-     - **Attempted fixes:** Increased confidence threshold to 0.75, added aspect ratio filters (human shapes), restricted scanning area to the center of the screen, added basic smoothing. Failed; user reports the crosshair just twitches wildly and doesn't lock on.
-     - **Next debug checklist:** Review  targeting logic. Implement better stabilization (e.g., SORT tracking, or stricter bounding box center-mass interpolation). 
-     - **Why fix this issue and what will be achieved with the fix?** Aimbot is currently unusable and actively ruins the user's aim.
+  - **Issue 2: ADS (Aim Down Sights) Detection Reliability (P1)** 
+     - **Attempted fixes:** Implemented a visual ADS detection algorithm in  to only trigger the aimbot when the user zooms in, because the PC cannot read the physical controller triggers (controller is plugged into XIM).
+     - **Next debug checklist:**  (Lines ~150-200). Verify with the user if the visual ADS detection reliably turns the aimbot ON and OFF. If not, refine the visual center-zoom logic.
+     - **Why fix this issue and what will be achieved with the fix?** Prevents the aimbot from snapping to enemies while the user is just running around hip-firing.
      - **Status:** USER VERIFICATION PENDING
-     - **Is recurring issue?** Y
-     - **Should Test frontend/backend/both after fix?** Backend.
-
-  - **Issue 3: Capture Card Video Feed Verification (P1)** 
-     - **Attempted fixes:** Replaced  (monitor capture) with  to read from the AVerMedia Capture Card to solve the Inception/Mirror effect of capturing the PC monitor.
-     - **Next debug checklist:** Verify with the user if  is grabbing the correct capture card index on their local PC.
-     - **Why fix this issue and what will be achieved with the fix?** Ensures the AI is actually looking at the Xbox gameplay with low latency.
-     - **Status:** TESTING PENDING (User must test).
      - **Is recurring issue?** N
-     - **Should Test frontend/backend/both after fix?** Backend.
+     - **Should Test frontend/backend/both after fix?** Backend (User side).
 
 **In progress Task List:**
-  - **Task 1: Hardware Integration Protocol**
-     - **Where to resume:** Instruct the user on how to set up their XIM Matrix Manager software to accept the Python script's mouse inputs, and ask them to test the new Capture Card video feed in the  UI.
-     - **What will be achieved with this?** Core functionality completion.
+  - **Task 1: FPS YOLO Model Integration**
+     - **Where to resume:** Download or scrape a pre-trained YOLOv8 ONNX model specifically for Call of Duty / FPS games, place it in the codebase, and guide the user to  and use it.
+     - **What will be achieved with this?** Dramatically improved aimbot accuracy.
      - **Status:** IN PROGRESS
-     - **Should Test frontend/backend/both after fix?** Backend (User side).
-     - **Blocked on something:** User feedback on the recent code pull.
+     - **Should Test frontend/backend/both after fix?** Backend.
 
 **Upcoming and Future Tasks**
     Upcoming Tasks:
-    - Verify Capture Card video feed works locally (P0).
-    - Fix YOLO targeting jitter/twitching (P0).
-    - Implement direct Mouse-to-XIM communication protocol (P1).
+    - Tune DirectML ONNX inference performance if FPS drops with the new model (P1).
     Future Tasks:
-    - Train or implement a custom YOLO model specifically for Call of Duty, as the generic COCO dataset recognizes too many non-player objects as persons (P2).
+    - Train a fully custom YOLO model on the user's specific gameplay footage using Roboflow if pre-trained internet models fail (P2). The screenshot collection mechanism is already built into  (Key ).
 
 **Completed work in this session**
-- FastAPI backend setup with Ultralytics YOLOv8 integration.
--  standalone UI dashboard with settings and stats.
-- Removed MongoDB dependency (changed to in-memory/file storage) due to local user setup issues.
-- Migrated code from Monitor Capture () to Capture Card input ().
+- Hardware input successfully routed via KMBox Net UDP protocol ().
+- Eliminated PyTorch/Ultralytics dependency; migrated fully to ONNX Runtime with DirectML to support user's AMD RX 7800 XT GPU.
+- Created  to bypass FastAPI/HTML overhead and run a high-performance, single-file game loop.
+- Built visual ADS (Aim Down Sights) detection so the user doesn't need to hold a PC mouse to activate the aimbot.
 
 **Earlier issues found/mentioned but not fixed**
-   - **Issue 1: Generic YOLO Model Inaccuracy**
-     - **Debug checklist:** User noted the AI detects other things while running around the map, not just enemies.
-     - **Why to solve this issue and what will be achieved with this?** The generic YOLO model is not tailored to Call of Duty graphics. It causes erratic aimbot behavior.
-     - **Should Test frontend/backend/both after fix:** Backend.
-     - **Is recurring issue?** Y
+   - **Issue 1: AVerMedia Capture Card FPS Drop without proprietary software**
+     - **Debug checklist:** User gets lower FPS in OpenCV when AVerMedia Streaming Center is closed. Agent instructed user to keep it open on Device 0. This works for now, but might cause frame tearing/conflict.
+     - **Why to solve this issue and what will be achieved with this?** Could provide a cleaner, higher FPS video feed.
+     - **Should Test frontend/backend/both after fix:** Backend (User side).
+     - **Is recurring issue?** N
 
 **Known issue recurrence from previous fork**
-  - Issue recurrence in previous fork: N/A (First fork)
-  - Recurrence count: 0
-  - Status: N/A
+  - Issue recurrence in previous fork: Generic YOLO model inaccuracy.
+  - Recurrence count: 2
+  - Status: IN PROGRESS
+  Note: Do not attempt to fix the generic model with math/logic tuning. The model weights themselves are the bottleneck.
 
 **Code Architecture**
 
 
 **Key Technical Concepts**
-- Backend: Python, FastAPI, OpenCV (), Ultralytics YOLOv8.
-- Frontend: Single standalone HTML file with vanilla JS and Fetch API.
-- Hardware/Architecture: App runs LOCALLY on user's Windows PC. Video via AVerMedia Capture Card. Output targeted at XIM Matrix hardware.
+- Backend/Core: Python, OpenCV (), ONNX Runtime ().
+- Hardware Input: KMBox Net (Network-based USB HID emulator).
+- Target OS: Windows 11 (User's local machine).
 
 **key DB schema**
-- Database was removed. Settings are managed in-memory via Python dictionaries in  to prevent local environment issues for the user.
+- None. Fully in-memory and script-variable based.
 
 **changes in tech stack**
-- **CRITICAL:** The React () stack was entirely abandoned because the user's local Windows PC failed to resolve npm/yarn dependency conflicts. Replaced with a single  file.
-- **CRITICAL:** MongoDB was abandoned. Code modified to run purely in-memory.
-- Screen capture changed from  to OpenCV .
+- **CRITICAL**: Removed PyTorch and 
+    Arguments received: ['yolo']. Ultralytics 'yolo' commands use the following syntax:
 
-**All files of reference**
-- : Core logic, endpoints, YOLO processing, and aiming math.
-- : The UI. The user double-clicks this locally to open the dashboard.
-- : Ignore these files.
+        yolo TASK MODE ARGS
 
-**Areas that need refactoring**
-- The targeting logic in  ( method). The math for finding the closest target, applying offset, and moving the mouse is highly unstable and causing extreme jitter in-game.
+        Where   TASK (optional) is one of ['obb', 'pose', 'segment', 'classify', 'detect']
+                MODE (required) is one of ['track', 'val', 'benchmark', 'export', 'predict', 'train']
+                ARGS (optional) are any number of custom 'arg=value' pairs like 'imgsz=320' that override defaults.
+                    See all ARGS at https://docs.ultralytics.com/usage/cfg or with 'yolo cfg'
+
+    1. Train a detection model for 10 epochs with an initial learning_rate of 0.01
+        yolo train data=coco8.yaml model=yolo26n.pt epochs=10 lr0=0.01
+
+    2. Predict a YouTube video using a pretrained segmentation model at image size 320:
+        yolo predict model=yolo26n-seg.pt source='https://youtu.be/LNwODJXcvt4' imgsz=320
+
+    3. Validate a pretrained detection model at batch-size 1 and image size 640:
+        yolo val model=yolo26n.pt data=coco8.yaml batch=1 imgsz=640
+
+    4. Export a YOLO26n classification model to ONNX format at image size 224 by 128 (no TASK required)
+        yolo export model=yolo26n-cls.pt format=onnx imgsz=224,128
+
+    5. Ultralytics solutions usage
+        yolo solutions count or any of ['crop', 'blur', 'workout', 'heatmap', 'isegment', 'visioneye', 'speed', 'queue', 'analytics', 'inference', 'trackzone'] source="path/to/video.mp4"
+
+    6. Run special commands:
+        yolo help
+        yolo checks
+        yolo version
+        yolo settings
+        yolo copy-cfg
+        yolo cfg
+        yolo solutions help
+
+    Docs: https://docs.ultralytics.com
+    Solutions: https://docs.ultralytics.com/solutions/
+    Community: https://community.ultralytics.com
+    GitHub: https://github.com/ultralytics/ultralytics
+    . The user is on Python 3.14, which breaks , and has an AMD GPU. You MUST only use  for inference.
+- **CRITICAL**: Shifted from FastAPI/Browser UI to a direct terminal/OpenCV window script () for raw speed.
+- **CRITICAL**: Replaced PyAutoGUI/Arduino input plans with  (UDP communication to KMBox Net hardware).
+
+**All files of reference** 
+- : The new primary entry point. Contains the capture loop, tracking logic, visual ADS detection, and KMBox calls.
+- : Handles the exact UDP protocol to move the crosshair via the KMBox hardware.
+- : Handles bounding box extraction purely via ONNX.
+
+**Areas that need refactoring**: 
+-  is currently a monolithic script. It works well for latency, but the visual ADS detection () might need refinement if it falsely triggers.
 
 **key api endpoints**
--  - Health check
--  - Returns base64 encoded frame from Capture Card with bounding boxes.
--  - Activates the aiming logic.
--  - Adjusts smoothing/sensitivity.
+- N/A - Execution is now primarily CLI based via .
 
 **Critical Info for New Agent**
-1. **ENVIRONMENT:** This code is running on the **USER'S LOCAL WINDOWS PC**, not in the cloud container. Any code changes you make in  must be pushed to GitHub (, , ), and you MUST instruct the user to run  locally to test them.
-2. **USER FRUSTRATION:** The user has spent hours debugging local environment issues (Node.js, Git, Python) and is highly frustrated (Einfach Müll). Do not give long explanations. Give precise, copy-paste PowerShell commands.
-3. **HARDWARE:** The user is using a **XIM Matrix**. The current plan is for the Python script to move the PC's virtual mouse, which the XIM Matrix Manager software will intercept and convert into Xbox controller inputs. Do not try to use  again.
+1. **ENVIRONMENT:** The code runs locally on the user's Windows PC. Every change must be committed (, , ), and the user must be instructed to run  locally.
+2. **HARDWARE IDS:** The KMBox Net is actively connected with these details: **IP:** , **Port:** , **UUID:** . Do not ask the user for these again; they are hardcoded/configured to work.
+3. **NO PYTORCH:** Do not attempt to install  or 
+    Arguments received: ['yolo']. Ultralytics 'yolo' commands use the following syntax:
+
+        yolo TASK MODE ARGS
+
+        Where   TASK (optional) is one of ['detect', 'segment', 'pose', 'obb', 'classify']
+                MODE (required) is one of ['benchmark', 'track', 'train', 'val', 'export', 'predict']
+                ARGS (optional) are any number of custom 'arg=value' pairs like 'imgsz=320' that override defaults.
+                    See all ARGS at https://docs.ultralytics.com/usage/cfg or with 'yolo cfg'
+
+    1. Train a detection model for 10 epochs with an initial learning_rate of 0.01
+        yolo train data=coco8.yaml model=yolo26n.pt epochs=10 lr0=0.01
+
+    2. Predict a YouTube video using a pretrained segmentation model at image size 320:
+        yolo predict model=yolo26n-seg.pt source='https://youtu.be/LNwODJXcvt4' imgsz=320
+
+    3. Validate a pretrained detection model at batch-size 1 and image size 640:
+        yolo val model=yolo26n.pt data=coco8.yaml batch=1 imgsz=640
+
+    4. Export a YOLO26n classification model to ONNX format at image size 224 by 128 (no TASK required)
+        yolo export model=yolo26n-cls.pt format=onnx imgsz=224,128
+
+    5. Ultralytics solutions usage
+        yolo solutions count or any of ['crop', 'blur', 'workout', 'heatmap', 'isegment', 'visioneye', 'speed', 'queue', 'analytics', 'inference', 'trackzone'] source="path/to/video.mp4"
+
+    6. Run special commands:
+        yolo help
+        yolo checks
+        yolo version
+        yolo settings
+        yolo copy-cfg
+        yolo cfg
+        yolo solutions help
+
+    Docs: https://docs.ultralytics.com
+    Solutions: https://docs.ultralytics.com/solutions/
+    Community: https://community.ultralytics.com
+    GitHub: https://github.com/ultralytics/ultralytics
+    . It will break the user's environment. Use ONLY ONNX models and .
+4. **Current Focus:** Find a  or  model tailored for FPS games/Warzone, convert it to ONNX if necessary (using a cloud/sandbox environment, NOT the user's PC), and provide it to the user.
 
 **documents and test reports created in this job**
-- 
+- PRD updated (though focus shifted dramatically to ).
 
-**Last 10 User Messages and any pending HUMAN messages**
-1. *User:* Asked if XIM Matrix's Configs feature (which converts M&K to controller) can solve our input problem.
-2. *User:* Refused to play with a standard mouse, insists on using the Scuf Controller via the XIM Matrix.
-3. *User:* Agreed to use their AVerMedia 571 Capture card to fix the video feed issues.
-4. *User:* Reported that changing Call of Duty to Mouse input disabled their controller, and the PC mouse over Remote Play didn't move the crosshair.
-5. *User:* Clarified their hardware setup: Scuf controller is plugged into the XIM Matrix. XIM Matrix is plugged into the PC.
-6. *User:* Noted that a XIM Matrix is connected between their controller and PC, wondering if that's causing the conflict.
-7. *User:* Refused to use the mouse mode, insisting on using the Scuf Controller.
-8. *User:* Complained of severe twitching/zapping. Said the app detects random objects as enemies and ruins aim. Expressed extreme frustration over wasted time/credits.
-9. *User:* Successfully cloned the repo into a new folder and got the backend running, but previous UI was showing.
-10. *User:* Clicked Aimbot aktivieren in the HTML file but nothing happened (endpoint was missing).
+**Last 10 User Messages and any pending HUMAN messages** 
+1. *User:* Provided the KMBox Net display credentials (IP, Port, UUID).
+2. *User:* Confirmed green VERBUNDEN (Connected) in the UI.
+3. *User:* Confirmed TEST BEWEGUNG successfully moved the crosshair on the Xbox.
+4. *User:* Reported that the aimbot aims automatically without pressing the aim button (ADS), aims too high (hitting green circles/text), and begged for Warzone-specific models.
+5. *User:* Clarified they DO NOT want to use a PC mouse to trigger the aimbot; it must trigger from the Xbox controller.
+6. *User:* Stated the Aim Assist style large deadzone approach feels terrible. Asked if we can improve performance or try a different app entirely (like Axiom).
+7. *User:* Asked how to run the new  script.
+8. *User:* Stated the script runs but the generic model makes it completely unusable. Characters aren't tracked, guns block tracking, and it locks randomly.
+9. *User:* Agreed to build a custom model, but reiterated that the Aimbot MUST only activate when pressing the ADS (Aim Down Sights) button on the controller.
+10. *User:* Stated the new visual ADS detection and tracking in  is super, super bad and zucks/twitches randomly. Concluded the models are the root cause. (Pending response to provide a new model).
 
 **Project Health Check:**
-- Broken (Logic/Hardware setup). Code runs locally, but core functionality (Aimbot aiming accurately via XIM Matrix) fails in practice.
+- Broken (Gameplay Logic). The infrastructure (Video Capture -> AI processing -> Hardware Input Injection) is robust and working with 0 latency, but the AI brain (generic YOLO model) makes the output unusable for gaming.
 
 **3rd Party Integrations**
-- Ultralytics YOLOv8 (Local implementation)
+- KMBox Net (Hardware integration via UDP)
+- ONNX Runtime (DirectML)
 
 **Testing status**
-- Testing agent used after significant changes: NO (Cannot test physical user hardware).
+- Testing agent used after significant changes: NO (Testing requires physical hardware, controller, and active console gameplay).
 - Troubleshoot agent used after agent stuck in loop: NO
 - Test files created: None
-- Known regressions: React frontend abandoned; Aimbot smoothing logic is actively breaking the game camera.
+- Known regressions: None, but generic model tracking is terrible.
 
-**Credentials to test flow:** N/A (Local user environment).
+**Credentials to test flow:**
+- KMBox Net IP: 
+- KMBox Net Port: 
+- KMBox Net UUID: 
 
 **What agent forgot to execute**
-- The agent successfully performed a web search on XIM Matrix PC configuration but failed to provide the user with the actual instructions or Python modifications needed to utilize this knowledge before the context window ended.
-
-**Debugging checklist for current issue**
-    Issue: Input Routing via XIM Matrix & Targeting Twitch
-    
-    Backend files to check: 
-    -  (Lines ~650-750): Check the  logic. The  or absolute positioning math combined with game camera sensitivity is causing a feedback loop (twitching). 
-
-    Action items:
-    1. Confirm if  successfully shows the Xbox feed.
-    2. Guide the user to configure XIM Matrix Manager to accept PC Mouse Input.
-    3. Refactor the aim-smoothing logic in Python.</analysis>
+- The agent was mid-search for a pre-trained FPS YOLO model (Weser87/yolov8_aimbot). The next agent MUST pick up from here, acquire an FPS-specific ONNX model, place it in the codebase, and update  to use it.</analysis>
