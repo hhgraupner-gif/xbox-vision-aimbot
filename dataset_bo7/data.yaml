@@ -1,0 +1,12 @@
+# Black Ops 7 / Warzone Custom Dataset
+# Auto-labeled mit SunOner FPS-Modell
+# 1166 Bilder, 641 Labels
+
+path: .
+train: train/images
+val: val/images
+
+nc: 2
+names:
+  0: player
+  1: head
