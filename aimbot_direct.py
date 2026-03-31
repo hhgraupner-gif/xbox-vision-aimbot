@@ -32,8 +32,8 @@ KMBOX_IP = "192.168.2.188"
 KMBOX_PORT = "32778"
 KMBOX_UUID = "C14AE466"
 
-# Modell-Auswahl: "nano" (schnell, 320px) oder "standard" (genauer, 640px)
-MODEL_MODE = "nano"
+# Modell-Auswahl: "bo7" (custom), "nano" (schnell, 320px) oder "standard" (genauer, 640px)
+MODEL_MODE = "bo7"
 
 # Erkennung
 CONFIDENCE = 0.40           # Hoeher als vorher: FPS-Modell ist praeziser
@@ -93,7 +93,11 @@ WINDOW_SCALE = 0.5
 def get_model_path(mode):
     """Gibt den Modell-Pfad zurueck."""
     base = os.path.join(os.path.dirname(__file__), 'backend')
-    if mode == "nano":
+    if mode == "bo7":
+        path = os.path.join(base, 'bo7_custom_320.onnx')
+        if os.path.exists(path):
+            return path
+    if mode == "nano" or mode == "bo7":
         path = os.path.join(base, 'sunxds_nano_320.onnx')
         if os.path.exists(path):
             return path
@@ -338,7 +342,10 @@ def draw_status_bar(frame, model_mode, collecting, screenshot_count, fps, ads_ac
     y = 27
 
     # --- MODELL ---
-    if model_mode == "nano":
+    if model_mode == "bo7":
+        tag = "BO7 CUSTOM"
+        tag_color = (0, 255, 0)     # Gruen
+    elif model_mode == "nano":
         tag = "NANO 320"
         tag_color = (0, 200, 255)   # Gelb-Orange
     else:
@@ -607,11 +614,9 @@ def main():
                 tracker.reset()
                 print(f"Profil: {profile['name']} (aggressiv)")
             elif key == ord('m'):
-                # Modell wechseln
-                if current_mode == "nano":
-                    new_mode = "standard"
-                else:
-                    new_mode = "nano"
+                # Modell wechseln: bo7 -> nano -> standard -> bo7
+                cycle = {"bo7": "nano", "nano": "standard", "standard": "bo7"}
+                new_mode = cycle.get(current_mode, "bo7")
                 new_path = get_model_path(new_mode)
                 if new_path:
                     print(f"Lade Modell: {new_mode}...")
@@ -620,7 +625,16 @@ def main():
                     tracker.reset()
                     print(f"Modell gewechselt: {current_mode}")
                 else:
-                    print(f"Modell '{new_mode}' nicht gefunden!")
+                    # Skip missing model
+                    new_mode2 = cycle.get(new_mode, "bo7")
+                    new_path2 = get_model_path(new_mode2)
+                    if new_path2:
+                        detector = YOLODetector(new_path2, conf_threshold=CONFIDENCE)
+                        current_mode = new_mode2
+                        tracker.reset()
+                        print(f"Modell '{new_mode}' nicht gefunden, nutze: {current_mode}")
+                    else:
+                        print(f"Kein alternatives Modell gefunden!")
 
     cap.release()
     kmbox_net.close()

@@ -12,6 +12,12 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# BO7 Custom model class names (2 classes)
+BO7_NAMES = {
+    0: "player",
+    1: "head",
+}
+
 # SunOner FPS-Aimbot class names (sunxds_0.2.1)
 FPS_NAMES = {
     0: "player",
@@ -98,7 +104,11 @@ class YOLODetector:
             dim1 = out_shape[1]
             if isinstance(dim1, int):
                 num_classes = dim1 - 4
-                if num_classes == 10:
+                if num_classes == 2:
+                    self.is_fps_model = True
+                    self.names = BO7_NAMES
+                    logger.info(f"BO7 custom model detected ({num_classes} classes)")
+                elif num_classes == 10:
                     self.is_fps_model = True
                     self.names = FPS_NAMES
                     logger.info(f"FPS aimbot model detected ({num_classes} classes)")

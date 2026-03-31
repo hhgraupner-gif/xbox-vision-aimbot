@@ -1,0 +1,8 @@
+path: /app/dataset_bo7
+train: train/images
+val: val/images
+
+nc: 2
+names:
+  0: player
+  1: head
