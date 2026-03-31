@@ -210,15 +210,23 @@
 
             <!-- XIM MATRIX INFO -->
             <div class="card yellow">
-                <h3>XIM MATRIX SETUP</h3>
-                <div style="font-size:10px;color:#aaa;line-height:1.6">
-                    <strong style="color:#FFD300">1.</strong> XIM Matrix Manager starten<br>
-                    <strong style="color:#FFD300">2.</strong> Neues Config: Mouse als Input<br>
-                    <strong style="color:#FFD300">3.</strong> Output: Controller (Xbox)<br>
-                    <strong style="color:#FFD300">4.</strong> Mouse auf Right Stick mappen<br>
-                    <strong style="color:#FFD300">5.</strong> Aimbot startet PyAutoGUI Maus<br>
-                    <strong style="color:#FFD300">6.</strong> XIM faengt Maus ab -> Xbox Stick
+                <h3>KMBOX NET + XIM MATRIX</h3>
+                <div id="kmboxStatus" style="font-size:10px;color:#FF003C;margin-bottom:8px">KMBox: nicht verbunden</div>
+                <div style="margin-bottom:6px">
+                    <label style="font-size:10px;color:#666">IP:</label>
+                    <input type="text" id="kmboxIp" value="192.168.2.188" style="width:100%;font-size:11px;padding:4px;background:#1a1a1a;border:1px solid #333;color:#fff">
                 </div>
+                <div style="margin-bottom:6px">
+                    <label style="font-size:10px;color:#666">Port (vom Display):</label>
+                    <input type="text" id="kmboxPort" placeholder="z.B. 8338" style="width:100%;font-size:11px;padding:4px;background:#1a1a1a;border:1px solid #333;color:#fff">
+                </div>
+                <div style="margin-bottom:6px">
+                    <label style="font-size:10px;color:#666">UUID (vom Display):</label>
+                    <input type="text" id="kmboxUuid" placeholder="z.B. C14AE486" style="width:100%;font-size:11px;padding:4px;background:#1a1a1a;border:1px solid #333;color:#fff">
+                </div>
+                <button class="secondary" onclick="connectKmbox()" style="width:100%;margin-top:4px;font-size:11px;padding:8px;background:#FFD300;color:#000;font-weight:bold">KMBOX VERBINDEN</button>
+                <button class="secondary" onclick="testKmbox()" style="width:100%;margin-top:4px;font-size:11px;padding:8px">TEST BEWEGUNG</button>
+                <div id="kmboxResult" style="font-size:10px;margin-top:6px;color:#666"></div>
             </div>
         </div>
     </div>
@@ -233,7 +241,7 @@
         fetch(API+'/').then(r=>r.json()).then(()=>{
             document.getElementById('statusDot').className='status-dot ok';
             document.getElementById('statusText').textContent='Backend OK';
-            loadSettings();loadProfiles();checkAimbotStatus();
+            loadSettings();loadProfiles();checkAimbotStatus();checkKmboxStatus();
         }).catch(()=>{
             document.getElementById('statusDot').className='status-dot err';
             document.getElementById('statusText').textContent='Backend nicht gestartet!';
@@ -310,6 +318,48 @@
         function resetTracker(){
             fetch(API+'/aimbot/reset-tracker',{method:'POST'}).then(()=>{
                 document.getElementById('trackerInfo').textContent='Tracker: reset';
+            }).catch(()=>{});
+        }
+
+        // KMBox Net Functions
+        function connectKmbox(){
+            const ip=document.getElementById('kmboxIp').value.trim();
+            const port=document.getElementById('kmboxPort').value.trim();
+            const uuid=document.getElementById('kmboxUuid').value.trim();
+            const res=document.getElementById('kmboxResult');
+            if(!port||!uuid){res.textContent='Port und UUID eingeben!';res.style.color='#FF003C';return;}
+            res.textContent='Verbinde...';res.style.color='#FFD300';
+            fetch(API+'/kmbox/connect?ip='+ip+'&port='+port+'&uuid='+uuid,{method:'POST'}).then(r=>r.json()).then(d=>{
+                if(d.success){
+                    res.textContent='VERBUNDEN!';res.style.color='#39FF14';
+                    document.getElementById('kmboxStatus').textContent='KMBox: VERBUNDEN';
+                    document.getElementById('kmboxStatus').style.color='#39FF14';
+                }else{
+                    res.textContent='Fehler: '+d.error;res.style.color='#FF003C';
+                }
+            }).catch(e=>{res.textContent='Verbindung fehlgeschlagen';res.style.color='#FF003C';});
+        }
+
+        function testKmbox(){
+            const res=document.getElementById('kmboxResult');
+            res.textContent='Teste...';res.style.color='#FFD300';
+            fetch(API+'/kmbox/test-move?x=10&y=0',{method:'POST'}).then(r=>r.json()).then(d=>{
+                if(d.success){
+                    res.textContent='Bewegung gesendet! Schau ob sich der Cursor am XIM bewegt.';res.style.color='#39FF14';
+                }else{
+                    res.textContent='Fehler: '+d.error;res.style.color='#FF003C';
+                }
+            }).catch(e=>{res.textContent='Fehler';res.style.color='#FF003C';});
+        }
+
+        function checkKmboxStatus(){
+            fetch(API+'/kmbox/status').then(r=>r.json()).then(d=>{
+                const el=document.getElementById('kmboxStatus');
+                if(d.connected){
+                    el.textContent='KMBox: VERBUNDEN';el.style.color='#39FF14';
+                }else{
+                    el.textContent='KMBox: nicht verbunden';el.style.color='#FF003C';
+                }
             }).catch(()=>{});
         }
 

@@ -32,7 +32,17 @@ except (ImportError, KeyError, Exception):
     MOUSE_AIMBOT_AVAILABLE = False
     print("PyAutoGUI not available (normal on headless server)")
 
-AIMBOT_AVAILABLE = MOUSE_AIMBOT_AVAILABLE
+# Import KMBox Net for hardware mouse control (XIM Matrix integration)
+try:
+    import kmbox_net
+    KMBOX_AVAILABLE = True
+    print("KMBox Net module loaded")
+except ImportError:
+    kmbox_net = None
+    KMBOX_AVAILABLE = False
+    print("KMBox Net not available")
+
+AIMBOT_AVAILABLE = MOUSE_AIMBOT_AVAILABLE or KMBOX_AVAILABLE
 
 # Import controller module
 from controller import controller, get_scuf_config, DEFAULT_BINDINGS, SCUF_VALOR_PRO_CONFIG
@@ -122,7 +132,7 @@ detection_settings = {
     "show_crosshair": True,
     "aim_assist_enabled": False,
     "aimbot_enabled": False,
-    "aimbot_mode": "mouse",
+    "aimbot_mode": "kmbox",
     "capture_monitor": 1,
     "capture_region": None,
     "active_profile": "default",
@@ -135,6 +145,10 @@ detection_settings = {
     "capture_device": 0,
     "max_move_px": 12,
     "lock_frames_required": 3,
+    "kmbox_ip": "192.168.2.188",
+    "kmbox_port": "",
+    "kmbox_uuid": "",
+    "kmbox_connected": False,
 }
 
 # ============================================================
@@ -188,10 +202,7 @@ target_tracker = TargetTracker()
 
 
 def move_mouse_smoothed(target_x, target_y, frame_width, frame_height):
-    """Smooth mouse movement with velocity capping. Designed for XIM Matrix interception."""
-    if not MOUSE_AIMBOT_AVAILABLE:
-        return False
-
+    """Smooth mouse movement via KMBox Net (primary) or PyAutoGUI (fallback)."""
     try:
         sensitivity = detection_settings.get("aim_sensitivity", 0.25)
         smoothing = detection_settings.get("smoothing", 0.85)
@@ -201,27 +212,21 @@ def move_mouse_smoothed(target_x, target_y, frame_width, frame_height):
         center_x = frame_width / 2.0
         center_y = frame_height / 2.0
 
-        # Pixel offset from center of capture frame
         dx = target_x - center_x
         dy = target_y - center_y
 
         distance = (dx * dx + dy * dy) ** 0.5
         if distance < deadzone:
-            # Target is already near crosshair, do nothing
             target_tracker.prev_move_x *= 0.5
             target_tracker.prev_move_y *= 0.5
             return False
 
-        # Scale: sensitivity controls how aggressively we correct
-        # Divide by frame dimension to normalize, then multiply by a base speed
         move_x = (dx / frame_width) * sensitivity * 200
         move_y = (dy / frame_height) * sensitivity * 200
 
-        # EMA on movement (additional smoothing on output)
         move_x = smoothing * target_tracker.prev_move_x + (1 - smoothing) * move_x
         move_y = smoothing * target_tracker.prev_move_y + (1 - smoothing) * move_y
 
-        # Velocity cap - never move more than max_move pixels per frame
         mag = (move_x * move_x + move_y * move_y) ** 0.5
         if mag > max_move:
             scale = max_move / mag
@@ -235,12 +240,18 @@ def move_mouse_smoothed(target_x, target_y, frame_width, frame_height):
         iy = int(round(move_y))
 
         if abs(ix) >= 1 or abs(iy) >= 1:
-            pyautogui.moveRel(ix, iy, duration=0)
-            return True
+            # Try KMBox Net first (for XIM Matrix), fallback to PyAutoGUI
+            mode = detection_settings.get("aimbot_mode", "kmbox")
+            if mode == "kmbox" and KMBOX_AVAILABLE and kmbox_net.is_connected():
+                kmbox_net.move(ix, iy)
+                return True
+            elif MOUSE_AIMBOT_AVAILABLE and pyautogui:
+                pyautogui.moveRel(ix, iy, duration=0)
+                return True
 
         return False
     except Exception as e:
-        logger.error(f"Mouse aimbot error: {e}")
+        logger.error(f"Aimbot move error: {e}")
         return False
 
 # YOLO Model - ONNX Runtime (no PyTorch needed!)
@@ -415,8 +426,10 @@ async def aimbot_status():
     return {
         "aimbot_enabled": detection_settings.get("aimbot_enabled", False),
         "aim_assist_enabled": detection_settings.get("aim_assist_enabled", False),
-        "aimbot_mode": "mouse",
+        "aimbot_mode": detection_settings.get("aimbot_mode", "kmbox"),
         "mouse_available": MOUSE_AIMBOT_AVAILABLE,
+        "kmbox_available": KMBOX_AVAILABLE,
+        "kmbox_connected": kmbox_net.is_connected() if KMBOX_AVAILABLE else False,
         "sensitivity": detection_settings.get("aim_sensitivity", 0.25),
         "smoothing": detection_settings.get("smoothing", 0.85),
         "deadzone": detection_settings.get("deadzone", 60),
@@ -453,17 +466,61 @@ async def set_aimbot_tuning(deadzone: int = 60, max_move: int = 12, lock_frames:
     }
 
 @api_router.put("/aimbot/mode")
-async def set_aimbot_mode(mode: str = "mouse"):
-    """Set aimbot mode (currently only mouse supported for XIM Matrix)"""
+async def set_aimbot_mode(mode: str = "kmbox"):
+    """Set aimbot mode: 'kmbox' (KMBox Net → XIM Matrix) or 'mouse' (PyAutoGUI)"""
     global detection_settings
-    detection_settings["aimbot_mode"] = "mouse"
-    return {"mode": "mouse"}
+    if mode in ["kmbox", "mouse"]:
+        detection_settings["aimbot_mode"] = mode
+    return {"mode": detection_settings["aimbot_mode"]}
 
 @api_router.post("/aimbot/reset-tracker")
 async def reset_aimbot_tracker():
     """Reset the target tracker (useful if aim gets stuck)"""
     target_tracker.reset()
     return {"status": "tracker_reset"}
+
+
+# KMBox Net Configuration
+@api_router.post("/kmbox/connect")
+async def kmbox_connect(ip: str = "192.168.2.188", port: str = "", uuid: str = ""):
+    """Connect to KMBox Net device"""
+    global detection_settings
+    if not KMBOX_AVAILABLE:
+        return {"success": False, "error": "KMBox module not available"}
+    if not port or not uuid:
+        return {"success": False, "error": "Port und UUID werden benoetigt (vom KMBox Display)"}
+
+    detection_settings["kmbox_ip"] = ip
+    detection_settings["kmbox_port"] = port
+    detection_settings["kmbox_uuid"] = uuid
+
+    ret = kmbox_net.init(ip, port, uuid)
+    if ret == 0:
+        detection_settings["kmbox_connected"] = True
+        detection_settings["aimbot_mode"] = "kmbox"
+        return {"success": True, "message": f"KMBox Net verbunden: {ip}:{port}"}
+    else:
+        detection_settings["kmbox_connected"] = False
+        return {"success": False, "error": "Verbindung fehlgeschlagen"}
+
+@api_router.get("/kmbox/status")
+async def kmbox_status():
+    """Get KMBox Net connection status"""
+    return {
+        "available": KMBOX_AVAILABLE,
+        "connected": kmbox_net.is_connected() if KMBOX_AVAILABLE else False,
+        "ip": detection_settings.get("kmbox_ip", ""),
+        "port": detection_settings.get("kmbox_port", ""),
+        "uuid": detection_settings.get("kmbox_uuid", ""),
+    }
+
+@api_router.post("/kmbox/test-move")
+async def kmbox_test_move(x: int = 10, y: int = 0):
+    """Test KMBox Net mouse movement"""
+    if not KMBOX_AVAILABLE or not kmbox_net.is_connected():
+        return {"success": False, "error": "KMBox nicht verbunden"}
+    ret = kmbox_net.move(x, y)
+    return {"success": ret == 0, "moved": [x, y]}
 
 
 # Capture Card Settings
