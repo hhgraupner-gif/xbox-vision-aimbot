@@ -291,8 +291,77 @@ CLASS_COLORS = {
 }
 
 
-def draw_overlay(frame, all_detections, target_dets, target_pos, fps, ads_active, collecting, tracker, model_info):
+def draw_status_bar(frame, model_mode, collecting, screenshot_count, fps, ads_active, tracker):
+    """Zeichnet eine gut sichtbare Statusleiste oben im Bild."""
     h, w = frame.shape[:2]
+    bar_h = 38
+
+    # Hintergrund: halbtransparenter schwarzer Balken oben
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (0, 0), (w, bar_h), (0, 0, 0), -1)
+    cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+
+    x = 10
+    y = 27
+
+    # --- MODELL ---
+    if model_mode == "nano":
+        tag = "NANO 320"
+        tag_color = (0, 200, 255)   # Gelb-Orange
+    else:
+        tag = "STANDARD 640"
+        tag_color = (255, 180, 0)   # Blau-Cyan
+
+    # Farbiger Block fuer Modell
+    (tw, th), _ = cv2.getTextSize(tag, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+    cv2.rectangle(frame, (x-4, 6), (x + tw + 8, 33), tag_color, -1)
+    cv2.putText(frame, tag, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+    x += tw + 20
+
+    # --- SCREENSHOTS ---
+    if collecting:
+        scr_text = f"SCREENSHOTS: AN ({screenshot_count})"
+        scr_color = (0, 0, 255)     # Rot = Aufnahme laeuft
+        # Roter Punkt (Aufnahme-Indikator)
+        cv2.circle(frame, (x + 6, y - 6), 6, (0, 0, 255), -1)
+        x += 18
+    else:
+        scr_text = "SCREENSHOTS: AUS"
+        scr_color = (120, 120, 120) # Grau = inaktiv
+
+    cv2.putText(frame, scr_text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, scr_color, 2)
+    (tw2, _), _ = cv2.getTextSize(scr_text, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
+    x += tw2 + 20
+
+    # --- FPS ---
+    fps_color = (0, 255, 0) if fps >= 30 else (0, 200, 255) if fps >= 15 else (0, 0, 255)
+    cv2.putText(frame, f"FPS: {fps}", (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, fps_color, 2)
+    (tw3, _), _ = cv2.getTextSize(f"FPS: {fps}", cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
+    x += tw3 + 20
+
+    # --- ADS / AIMBOT Status (rechte Seite) ---
+    if ads_active:
+        ads_text = "ADS: AN"
+        ads_color = (0, 255, 255)
+    else:
+        ads_text = "ADS: AUS"
+        ads_color = (100, 100, 100)
+
+    (tw_ads, _), _ = cv2.getTextSize(ads_text, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
+    ads_x = w - tw_ads - 15
+    cv2.putText(frame, ads_text, (ads_x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, ads_color, 2)
+
+    if tracker.locked:
+        lock_text = "LOCKED"
+        (tw_lock, _), _ = cv2.getTextSize(lock_text, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
+        cv2.putText(frame, lock_text, (ads_x - tw_lock - 15, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2)
+
+
+def draw_overlay(frame, all_detections, target_dets, target_pos, fps, ads_active, collecting, tracker, model_mode, screenshot_count):
+    h, w = frame.shape[:2]
+
+    # === STATUSLEISTE OBEN (gut sichtbar) ===
+    draw_status_bar(frame, model_mode, collecting, screenshot_count, fps, ads_active, tracker)
 
     # Fadenkreuz
     color = (0, 255, 255) if ads_active else (0, 255, 0)
@@ -300,7 +369,7 @@ def draw_overlay(frame, all_detections, target_dets, target_pos, fps, ads_active
     cv2.line(frame, (w//2, h//2-25), (w//2, h//2+25), color, 2)
     cv2.circle(frame, (w//2, h//2), DEADZONE, (50, 50, 50), 1)
 
-    # Alle Erkennungen zeichnen (auch nicht-Ziele, fuer Debug)
+    # Alle Erkennungen zeichnen
     for det in all_detections:
         x1, y1, x2, y2 = det["bbox"]
         conf = det["confidence"]
@@ -313,7 +382,6 @@ def draw_overlay(frame, all_detections, target_dets, target_pos, fps, ads_active
             cv2.putText(frame, f'{cls} {conf:.0%}', (x1, y1-8),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, box_color, 2)
         else:
-            # Nicht-Ziele duenn zeichnen
             cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 1)
             cv2.putText(frame, f'{cls}', (x1, y1-5),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, box_color, 1)
@@ -324,25 +392,11 @@ def draw_overlay(frame, all_detections, target_dets, target_pos, fps, ads_active
         cv2.circle(frame, (tx, ty), 12, (0, 255, 255), 3)
         cv2.line(frame, (w//2, h//2), (tx, ty), (0, 255, 255), 2)
 
-    # Status-Leiste
-    cv2.putText(frame, f'FPS: {fps}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-    cv2.putText(frame, f'Ziele: {len(target_dets)}', (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+    # Ziel-Anzahl links unter Statusleiste
+    cv2.putText(frame, f'Ziele: {len(target_dets)}', (10, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
-    # ADS Status
-    if ads_active:
-        cv2.putText(frame, 'ADS AKTIV - AIMBOT AN', (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-    else:
-        cv2.putText(frame, 'Hip-Fire - Aimbot aus', (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (100, 100, 100), 2)
-
-    if tracker.locked:
-        cv2.putText(frame, 'TARGET LOCKED', (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-
-    if collecting:
-        cv2.putText(frame, 'SAMMELT SCREENSHOTS', (w-350, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-
-    # Modell-Info
-    cv2.putText(frame, f'Modell: {model_info}', (w-400, h-15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (128, 128, 128), 1)
-    cv2.putText(frame, 'S=Screenshots | M=Modell | Q=Beenden', (10, h-15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (128, 128, 128), 1)
+    # Tastenbelegung unten
+    cv2.putText(frame, 'S=Screenshots | M=Modell | Q=Beenden', (10, h-12), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (160, 160, 160), 1)
 
     return frame
 
@@ -485,7 +539,7 @@ def main():
         if SHOW_WINDOW:
             display = draw_overlay(
                 frame.copy(), all_dets, target_dets, best_target,
-                fps, ads_active, collecting, tracker, model_info
+                fps, ads_active, collecting, tracker, current_mode, screenshot_count
             )
             if WINDOW_SCALE != 1.0:
                 display = cv2.resize(display, None, fx=WINDOW_SCALE, fy=WINDOW_SCALE)
