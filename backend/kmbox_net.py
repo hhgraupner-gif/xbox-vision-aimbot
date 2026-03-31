@@ -100,6 +100,56 @@ class KMBoxNet:
         """Move mouse relative by (x, y) pixels."""
         return self._send_mouse_cmd(CMD_MOUSE_MOVE, x=int(x), y=int(y))
 
+    def monitor(self, port=10000):
+        """Enable physical mouse/keyboard monitoring on given port."""
+        if self.sock is None:
+            return -1
+        header = struct.pack('<IIII', self.mac, port, self.indexpts, CMD_MONITOR)
+        self.indexpts += 1
+        mouse = b'\x00' * 48
+        try:
+            self.sock.sendto(header + mouse, self.addr)
+            # Set up monitor receive socket
+            if not hasattr(self, '_mon_sock') or self._mon_sock is None:
+                self._mon_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                self._mon_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                self._mon_sock.bind(('0.0.0.0', port))
+                self._mon_sock.settimeout(0.001)
+            self._mon_port = port
+            self._mouse_state = 0
+            logger.info(f"KMBox monitor enabled on port {port}")
+            return 0
+        except Exception as e:
+            logger.error(f"KMBox monitor error: {e}")
+            return -1
+
+    def poll_monitor(self):
+        """Poll for monitor data (non-blocking). Returns mouse button state."""
+        if not hasattr(self, '_mon_sock') or self._mon_sock is None:
+            return 0
+        try:
+            while True:
+                data, _ = self._mon_sock.recvfrom(256)
+                if len(data) >= 20:
+                    # Parse: head(16) + button(4) + x(4) + y(4) + ...
+                    btn = struct.unpack_from('<i', data, 16)[0]
+                    self._mouse_state = btn
+        except (socket.timeout, BlockingIOError):
+            pass
+        except Exception:
+            pass
+        return getattr(self, '_mouse_state', 0)
+
+    def is_mouse_right_pressed(self):
+        """Check if physical right mouse button is pressed."""
+        state = self.poll_monitor()
+        return (state & 0x02) != 0
+
+    def is_mouse_left_pressed(self):
+        """Check if physical left mouse button is pressed."""
+        state = self.poll_monitor()
+        return (state & 0x01) != 0
+
     def move_auto(self, x, y, ms=100):
         """Move mouse with simulated human movement over ms milliseconds."""
         if self.sock is None:
@@ -174,6 +224,15 @@ def wheel(delta):
 
 def mouse_all(button, x, y, wheel):
     return _kmbox.mouse_all(button, x, y, wheel)
+
+def monitor(port=10000):
+    return _kmbox.monitor(port)
+
+def is_mouse_right_pressed():
+    return _kmbox.is_mouse_right_pressed()
+
+def is_mouse_left_pressed():
+    return _kmbox.is_mouse_left_pressed()
 
 def is_connected():
     return _kmbox.connected

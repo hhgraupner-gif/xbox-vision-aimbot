@@ -136,7 +136,7 @@ detection_settings = {
     "capture_monitor": 1,
     "capture_region": None,
     "active_profile": "default",
-    "aim_point_offset": 0.15,
+    "aim_point_offset": 0.45,
     "priority_targeting": "closest",
     "smoothing": 0.85,
     "min_target_size": 800,
@@ -149,6 +149,7 @@ detection_settings = {
     "kmbox_port": "",
     "kmbox_uuid": "",
     "kmbox_connected": False,
+    "trigger_mode": "mouse_right",
 }
 
 # ============================================================
@@ -498,6 +499,8 @@ async def kmbox_connect(ip: str = "192.168.2.188", port: str = "", uuid: str = "
     if ret == 0:
         detection_settings["kmbox_connected"] = True
         detection_settings["aimbot_mode"] = "kmbox"
+        # Start monitor to detect physical mouse button presses (ADS trigger)
+        kmbox_net.monitor(10000)
         return {"success": True, "message": f"KMBox Net verbunden: {ip}:{port}"}
     else:
         detection_settings["kmbox_connected"] = False
@@ -521,6 +524,14 @@ async def kmbox_test_move(x: int = 10, y: int = 0):
         return {"success": False, "error": "KMBox nicht verbunden"}
     ret = kmbox_net.move(x, y)
     return {"success": ret == 0, "moved": [x, y]}
+
+@api_router.put("/aimbot/trigger-mode")
+async def set_trigger_mode(mode: str = "mouse_right"):
+    """Set trigger mode: 'always', 'mouse_right', 'mouse_left'"""
+    global detection_settings
+    if mode in ["always", "mouse_right", "mouse_left"]:
+        detection_settings["trigger_mode"] = mode
+    return {"trigger_mode": detection_settings["trigger_mode"]}
 
 
 # Capture Card Settings
@@ -847,10 +858,19 @@ def run_detection(frame: np.ndarray) -> tuple:
 
     # ---- Stabilized Aimbot ----
     if detection_settings.get("aimbot_enabled", False):
+        # Check trigger mode - only aim when trigger is active
+        trigger_mode = detection_settings.get("trigger_mode", "always")
+        trigger_active = True
+
+        if trigger_mode == "mouse_right" and KMBOX_AVAILABLE and kmbox_net.is_connected():
+            trigger_active = kmbox_net.is_mouse_right_pressed()
+        elif trigger_mode == "mouse_left" and KMBOX_AVAILABLE and kmbox_net.is_connected():
+            trigger_active = kmbox_net.is_mouse_left_pressed()
+
         lock_frames = detection_settings.get("lock_frames_required", 3)
         ema_alpha = max(0.1, 1.0 - detection_settings.get("smoothing", 0.85))
 
-        if best_target:
+        if best_target and trigger_active:
             target_tracker.update(best_target[0], best_target[1], alpha=ema_alpha)
             if target_tracker.is_stable(lock_frames):
                 pos = target_tracker.get_position()
@@ -859,7 +879,6 @@ def run_detection(frame: np.ndarray) -> tuple:
                     move_mouse_smoothed(pos[0], pos[1], frame_width, frame_height)
                     best_target = [int(pos[0]), int(pos[1])]
         else:
-            # No target found this frame -> decay tracker
             if target_tracker.frames_seen > 0:
                 target_tracker.frames_seen = max(0, target_tracker.frames_seen - 1)
             if target_tracker.frames_seen == 0:

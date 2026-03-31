@@ -133,6 +133,15 @@
                     <input type="range" min="1" max="10" value="3" id="lfSlider" onchange="updateTuning()">
                 </div>
                 <button class="secondary" onclick="resetTracker()" style="width:100%;margin-top:8px;font-size:11px;padding:8px">TRACKER RESET</button>
+                <div style="margin-top:10px">
+                    <label style="font-size:11px;color:#666">Trigger-Modus:</label>
+                    <select id="triggerMode" onchange="setTriggerMode()" style="width:100%;margin-top:4px;font-size:11px;padding:4px;background:#1a1a1a;border:1px solid #333;color:#fff">
+                        <option value="mouse_right">Rechte Maustaste (ADS)</option>
+                        <option value="mouse_left">Linke Maustaste</option>
+                        <option value="always">Immer aktiv</option>
+                    </select>
+                    <div style="font-size:9px;color:#555;margin-top:4px">Aimbot bewegt nur wenn Trigger gedrueckt</div>
+                </div>
             </div>
 
             <div class="card yellow">
@@ -361,6 +370,11 @@
                     el.textContent='KMBox: nicht verbunden';el.style.color='#FF003C';
                 }
             }).catch(()=>{});
+        }
+
+        function setTriggerMode(){
+            const mode=document.getElementById('triggerMode').value;
+            fetch(API+'/aimbot/trigger-mode?mode='+mode,{method:'PUT'}).catch(()=>{});
         }
 
         function loadSettings(){
