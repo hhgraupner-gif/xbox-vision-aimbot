@@ -1,12 +1,33 @@
 """
 YOLOv8 ONNX Inference - DirectML GPU (no PyTorch needed)
 Works with AMD GPUs via onnxruntime-directml
+
+Supports both:
+  - Generic COCO models (80 classes, fp32, 640x640)
+  - SunOner FPS models (10 classes, fp16, 320x320 or 640x640)
 """
 import numpy as np
 import cv2
 import logging
 
 logger = logging.getLogger(__name__)
+
+# SunOner FPS-Aimbot class names (sunxds_0.2.1)
+FPS_NAMES = {
+    0: "player",
+    1: "bot",
+    2: "weapon",
+    3: "outline",
+    4: "dead_body",
+    5: "hideout_target_human",
+    6: "hideout_target_balls",
+    7: "head",
+    8: "smoke",
+    9: "fire",
+}
+
+# Target classes for aimbot (only aim at these)
+TARGET_CLASSES = {"player", "bot", "head"}
 
 # COCO class names (YOLOv8 default)
 COCO_NAMES = [
@@ -26,13 +47,17 @@ COCO_NAMES = [
 
 
 class YOLODetector:
-    """YOLOv8 detector using ONNX Runtime (no PyTorch needed)."""
+    """YOLOv8 detector using ONNX Runtime (no PyTorch needed).
+    Auto-detects model type (FPS vs COCO) based on output dimensions.
+    """
 
     def __init__(self, onnx_path, conf_threshold=0.5, iou_threshold=0.45):
         self.conf_threshold = conf_threshold
         self.iou_threshold = iou_threshold
-        self.input_size = 640
         self.session = None
+        self.is_fps_model = False
+        self.use_fp16 = False
+        self.input_size = 640
         self.names = {i: name for i, name in enumerate(COCO_NAMES)}
         self._load_model(onnx_path)
 
@@ -41,7 +66,6 @@ class YOLODetector:
         providers = ort.get_available_providers()
         logger.info(f"ONNX Runtime providers: {providers}")
 
-        # Prefer DirectML (AMD GPU) > CPU
         selected = []
         if 'DmlExecutionProvider' in providers:
             selected.append('DmlExecutionProvider')
@@ -54,26 +78,58 @@ class YOLODetector:
         self.session = ort.InferenceSession(onnx_path, sess_options=opts, providers=selected)
         inp = self.session.get_inputs()[0]
         self.input_name = inp.name
-        self.input_shape = inp.shape  # e.g. [1, 3, 640, 640]
-        logger.info(f"ONNX model loaded: input={inp.name} shape={inp.shape}")
+        self.input_shape = inp.shape
+
+        # Detect input size from model shape
+        if len(self.input_shape) == 4:
+            self.input_size = self.input_shape[2]
+
+        # Detect fp16
+        self.use_fp16 = 'float16' in inp.type
+        dtype_str = "fp16" if self.use_fp16 else "fp32"
+
+        # Detect model type by running dummy inference
+        out = self.session.get_outputs()[0]
+        out_shape = out.shape
+        # YOLOv8 output: [1, 4+num_classes, num_detections]
+        # For FPS model: [1, 14, N] -> 14-4 = 10 classes
+        # For COCO: [1, 84, N] -> 84-4 = 80 classes
+        if out_shape and len(out_shape) == 3:
+            dim1 = out_shape[1]
+            if isinstance(dim1, int):
+                num_classes = dim1 - 4
+                if num_classes == 10:
+                    self.is_fps_model = True
+                    self.names = FPS_NAMES
+                    logger.info(f"FPS aimbot model detected ({num_classes} classes)")
+                elif num_classes == 80:
+                    self.is_fps_model = False
+                    self.names = {i: name for i, name in enumerate(COCO_NAMES)}
+                    logger.info(f"COCO model detected ({num_classes} classes)")
+                else:
+                    logger.info(f"Unknown model with {num_classes} classes")
+
+        model_type = "FPS" if self.is_fps_model else "COCO"
+        logger.info(f"Model loaded: {model_type} {dtype_str} {self.input_size}x{self.input_size}")
+        print(f"      Modell: {model_type} | {dtype_str} | {self.input_size}x{self.input_size}")
 
     def preprocess(self, frame):
         """Resize + normalize frame for YOLOv8 input."""
         h, w = frame.shape[:2]
-        # Letterbox resize to 640x640 keeping aspect ratio
         scale = min(self.input_size / h, self.input_size / w)
         new_w = int(w * scale)
         new_h = int(h * scale)
         resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
 
-        # Pad to 640x640
         padded = np.full((self.input_size, self.input_size, 3), 114, dtype=np.uint8)
         pad_x = (self.input_size - new_w) // 2
         pad_y = (self.input_size - new_h) // 2
         padded[pad_y:pad_y + new_h, pad_x:pad_x + new_w] = resized
 
-        # HWC -> CHW, BGR -> RGB, normalize to 0-1, add batch dim
+        # HWC -> CHW, BGR -> RGB, normalize to 0-1
         blob = padded[:, :, ::-1].transpose(2, 0, 1).astype(np.float32) / 255.0
+        if self.use_fp16:
+            blob = blob.astype(np.float16)
         blob = np.expand_dims(blob, axis=0)
 
         return blob, scale, pad_x, pad_y
@@ -83,22 +139,22 @@ class YOLODetector:
         if conf_threshold is None:
             conf_threshold = self.conf_threshold
 
-        # YOLOv8 output shape: [1, 84, 8400] -> transpose to [8400, 84]
         predictions = output[0]
+        # Convert fp16 to fp32 for post-processing
+        if predictions.dtype == np.float16:
+            predictions = predictions.astype(np.float32)
+
         if predictions.shape[0] == 1:
             predictions = predictions[0]
-        if predictions.shape[0] == 84:
-            predictions = predictions.T  # [8400, 84]
+        if predictions.shape[0] < predictions.shape[1]:
+            predictions = predictions.T
 
-        # Split into boxes and class scores
         boxes_xywh = predictions[:, :4]
         class_scores = predictions[:, 4:]
 
-        # Get best class per detection
         max_scores = np.max(class_scores, axis=1)
         class_ids = np.argmax(class_scores, axis=1)
 
-        # Filter by confidence
         mask = max_scores > conf_threshold
         boxes_xywh = boxes_xywh[mask]
         max_scores = max_scores[mask]
@@ -109,32 +165,31 @@ class YOLODetector:
 
         # Convert xywh -> xyxy
         boxes_xyxy = np.zeros_like(boxes_xywh)
-        boxes_xyxy[:, 0] = boxes_xywh[:, 0] - boxes_xywh[:, 2] / 2  # x1
-        boxes_xyxy[:, 1] = boxes_xywh[:, 1] - boxes_xywh[:, 3] / 2  # y1
-        boxes_xyxy[:, 2] = boxes_xywh[:, 0] + boxes_xywh[:, 2] / 2  # x2
-        boxes_xyxy[:, 3] = boxes_xywh[:, 1] + boxes_xywh[:, 3] / 2  # y2
+        boxes_xyxy[:, 0] = boxes_xywh[:, 0] - boxes_xywh[:, 2] / 2
+        boxes_xyxy[:, 1] = boxes_xywh[:, 1] - boxes_xywh[:, 3] / 2
+        boxes_xyxy[:, 2] = boxes_xywh[:, 0] + boxes_xywh[:, 2] / 2
+        boxes_xyxy[:, 3] = boxes_xywh[:, 1] + boxes_xywh[:, 3] / 2
 
-        # Remove padding and rescale to original image
+        # Remove padding and rescale
         boxes_xyxy[:, 0] = (boxes_xyxy[:, 0] - pad_x) / scale
         boxes_xyxy[:, 1] = (boxes_xyxy[:, 1] - pad_y) / scale
         boxes_xyxy[:, 2] = (boxes_xyxy[:, 2] - pad_x) / scale
         boxes_xyxy[:, 3] = (boxes_xyxy[:, 3] - pad_y) / scale
 
-        # Clip to image bounds
         boxes_xyxy[:, 0] = np.clip(boxes_xyxy[:, 0], 0, orig_w)
         boxes_xyxy[:, 1] = np.clip(boxes_xyxy[:, 1], 0, orig_h)
         boxes_xyxy[:, 2] = np.clip(boxes_xyxy[:, 2], 0, orig_w)
         boxes_xyxy[:, 3] = np.clip(boxes_xyxy[:, 3], 0, orig_h)
 
-        # NMS
         indices = self._nms(boxes_xyxy, max_scores, self.iou_threshold)
 
         results = []
         for i in indices:
             x1, y1, x2, y2 = boxes_xyxy[i].astype(int)
+            cid = int(class_ids[i])
             results.append({
-                "class_id": int(class_ids[i]),
-                "class_name": self.names.get(int(class_ids[i]), "unknown"),
+                "class_id": cid,
+                "class_name": self.names.get(cid, "unknown"),
                 "confidence": float(max_scores[i]),
                 "bbox": [int(x1), int(y1), int(x2), int(y2)],
                 "center": [int((x1 + x2) // 2), int((y1 + y2) // 2)]
@@ -174,3 +229,14 @@ class YOLODetector:
         blob, scale, pad_x, pad_y = self.preprocess(frame)
         output = self.session.run(None, {self.input_name: blob})
         return self.postprocess(output, scale, pad_x, pad_y, orig_h, orig_w, conf_threshold)
+
+    def detect_targets_only(self, frame, conf_threshold=None):
+        """Run detection and return only target classes (player, bot, head).
+        For FPS models, filters out weapons, dead_bodies, smoke, fire etc.
+        For COCO models, returns only 'person' class.
+        """
+        all_dets = self.detect(frame, conf_threshold)
+        if self.is_fps_model:
+            return [d for d in all_dets if d["class_name"] in TARGET_CLASSES]
+        else:
+            return [d for d in all_dets if d["class_name"] == "person"]

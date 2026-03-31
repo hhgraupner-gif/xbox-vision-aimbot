@@ -267,13 +267,20 @@ def get_yolo_model():
         return None
     if yolo_model is None:
         try:
-            onnx_path = str(ROOT_DIR / 'yolov8n.onnx')
-            if os.path.exists(onnx_path):
-                yolo_model = YOLODetector(onnx_path)
-                logger.info(f"YOLO ONNX model loaded from {onnx_path}")
+            # Try FPS models first, then fallback to COCO
+            candidates = [
+                str(ROOT_DIR / 'sunxds_nano_320.onnx'),
+                str(ROOT_DIR / 'sunxds_640.onnx'),
+                str(ROOT_DIR / 'yolov8n.onnx'),
+            ]
+            for onnx_path in candidates:
+                if os.path.exists(onnx_path):
+                    yolo_model = YOLODetector(onnx_path)
+                    logger.info(f"YOLO model loaded from {onnx_path}")
+                    break
             else:
                 _yolo_load_failed = True
-                logger.error(f"yolov8n.onnx not found at {onnx_path}")
+                logger.error("No YOLO ONNX model found")
                 return None
         except Exception as e:
             _yolo_load_failed = True

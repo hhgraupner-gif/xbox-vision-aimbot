@@ -1,15 +1,17 @@
 """
-AIMBOT DIRECT v2 - Mit ADS-Erkennung + Screenshot-Sammlung
-Capture Card → YOLO → KMBox Net → XIM Matrix → Xbox
+AIMBOT DIRECT v3 - FPS-KI Modell + ADS-Erkennung + Screenshot-Sammlung
+Capture Card -> YOLO (FPS) -> KMBox Net -> XIM Matrix -> Xbox
 
 Features:
+- FPS-spezifisches YOLO-Modell (erkennt Spieler, Koepfe, keine Waffen/Toten)
 - Visuelle ADS-Erkennung (erkennt wenn du zielst)
+- Headshot-Priorisierung
 - Screenshot-Sammlung fuer Custom-Modell Training
-- Verbesserte Tracking-Logik
 
 Starten:     python aimbot_direct.py
 Beenden:     Q oder Strg+C
 Screenshots: S druecken zum Speichern ein/ausschalten
+Modell:      M druecken zum Wechseln (nano <-> standard)
 """
 import cv2
 import numpy as np
@@ -19,7 +21,7 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'backend'))
 
-from yolo_onnx import YOLODetector
+from yolo_onnx import YOLODetector, TARGET_CLASSES
 import kmbox_net
 
 # ============================================================
@@ -30,10 +32,14 @@ KMBOX_IP = "192.168.2.188"
 KMBOX_PORT = "32778"
 KMBOX_UUID = "C14AE466"
 
+# Modell-Auswahl: "nano" (schnell, 320px) oder "standard" (genauer, 640px)
+MODEL_MODE = "nano"
+
 # Erkennung
-CONFIDENCE = 0.35
-MIN_TARGET_SIZE = 400
-AIM_POINT = 0.45
+CONFIDENCE = 0.40           # Hoeher als vorher: FPS-Modell ist praeziser
+MIN_TARGET_SIZE = 200       # Kleiner: FPS-Modell erkennt besser
+AIM_POINT_BODY = 0.35       # Zielpunkt am Koerper (0=oben, 1=unten)
+PREFER_HEADSHOTS = True     # Kopf-Erkennungen bevorzugen
 
 # Aimbot - NUR wenn ADS aktiv
 AIM_SENSITIVITY = 0.50
@@ -43,12 +49,12 @@ DEADZONE = 40
 LOCK_FRAMES = 1
 
 # ADS Erkennung
-ADS_DETECTION = True           # ADS visuell erkennen
-ADS_ZOOM_THRESHOLD = 12.0      # Schwelle fuer Zoom-Erkennung
+ADS_DETECTION = True
+ADS_ZOOM_THRESHOLD = 12.0
 
 # Screenshot Sammlung
-COLLECT_SCREENSHOTS = False     # S druecken zum toggeln
-SCREENSHOT_INTERVAL = 0.5      # Sekunden zwischen Screenshots
+COLLECT_SCREENSHOTS = False
+SCREENSHOT_INTERVAL = 0.5
 SCREENSHOT_FOLDER = "training_data"
 
 # Anzeige
@@ -57,11 +63,27 @@ WINDOW_SCALE = 0.5
 # ============================================================
 
 
+def get_model_path(mode):
+    """Gibt den Modell-Pfad zurueck."""
+    base = os.path.join(os.path.dirname(__file__), 'backend')
+    if mode == "nano":
+        path = os.path.join(base, 'sunxds_nano_320.onnx')
+        if os.path.exists(path):
+            return path
+    elif mode == "standard":
+        path = os.path.join(base, 'sunxds_640.onnx')
+        if os.path.exists(path):
+            return path
+    # Fallback: altes COCO-Modell
+    fallback = os.path.join(base, 'yolov8n.onnx')
+    if os.path.exists(fallback):
+        print(f"  WARNUNG: FPS-Modell nicht gefunden, nutze COCO-Fallback")
+        return fallback
+    return None
+
+
 class ADSDetector:
-    """Erkennt ob der Spieler gerade ADS (Aim Down Sight) benutzt.
-    Methode: Vergleicht aufeinanderfolgende Frames auf Zoom-Aenderung.
-    Wenn ADS gedrueckt wird, zoomt die Kamera rein (FOV wird kleiner).
-    """
+    """Erkennt ob der Spieler gerade ADS (Aim Down Sight) benutzt."""
     def __init__(self):
         self.prev_gray_center = None
         self.ads_active = False
@@ -71,10 +93,7 @@ class ADSDetector:
         self.sharpness_history = []
 
     def update(self, frame):
-        """Analysiere Frame und bestimme ADS-Status."""
         h, w = frame.shape[:2]
-
-        # Zentrale Region (wo Scope/Visier erscheint)
         cx, cy = w // 2, h // 2
         region_size = 200
         center = frame[cy-region_size:cy+region_size, cx-region_size:cx+region_size]
@@ -83,8 +102,6 @@ class ADSDetector:
             return self.ads_active
 
         gray = cv2.cvtColor(center, cv2.COLOR_BGR2GRAY)
-
-        # Methode 1: Schaerfe messen (ADS = schaerfer wegen Zoom)
         laplacian = cv2.Laplacian(gray, cv2.CV_64F)
         sharpness = laplacian.var()
 
@@ -92,35 +109,27 @@ class ADSDetector:
         if len(self.sharpness_history) > 30:
             self.sharpness_history.pop(0)
 
-        # Baseline nach 10 Frames setzen (hip-fire Schaerfe)
         if len(self.sharpness_history) >= 10 and self.baseline_sharpness is None:
             self.baseline_sharpness = np.median(self.sharpness_history)
 
         if self.baseline_sharpness is not None and self.baseline_sharpness > 0:
-            # Wenn aktuelle Schaerfe deutlich hoeher als Baseline = ADS
             ratio = sharpness / self.baseline_sharpness
             self.ads_confidence = ratio
-
-            if ratio > 1.3:  # 30% schaerfer = wahrscheinlich ADS
+            if ratio > 1.3:
                 self.ads_active = True
-            elif ratio < 1.1:  # Zurueck zu normal
+            elif ratio < 1.1:
                 self.ads_active = False
 
-        # Methode 2: Optischer Fluss (Zoom-Bewegung erkennen)
         if self.prev_gray_center is not None and self.prev_gray_center.shape == gray.shape:
             diff = cv2.absdiff(gray, self.prev_gray_center)
             mean_diff = np.mean(diff)
-
-            # Grosser ploetzlicher Unterschied = ADS Uebergang
             if mean_diff > ADS_ZOOM_THRESHOLD:
                 self.ads_active = True
-                # Neue Baseline setzen nach ADS-Wechsel
                 self.baseline_sharpness = None
                 self.sharpness_history.clear()
 
         self.prev_gray_center = gray.copy()
         self.frame_count += 1
-
         return self.ads_active
 
 
@@ -149,23 +158,19 @@ class TargetTracker:
             self.frames_seen = 1
             self.locked = False
         else:
-            # Velocity berechnen (fuer Prediction)
             old_x, old_y = self.ema_x, self.ema_y
             self.ema_x = alpha * rx + (1 - alpha) * self.ema_x
             self.ema_y = alpha * ry + (1 - alpha) * self.ema_y
-
             if dt > 0:
                 new_vx = (self.ema_x - old_x) / dt
                 new_vy = (self.ema_y - old_y) / dt
                 self.vel_x = 0.7 * self.vel_x + 0.3 * new_vx
                 self.vel_y = 0.7 * self.vel_y + 0.3 * new_vy
-
             self.frames_seen += 1
 
         self.last_seen = now
 
     def get_predicted(self, lookahead=0.02):
-        """Gibt vorhergesagte Position zurueck (kompensiert Latenz)."""
         if self.ema_x is None:
             return None
         px = self.ema_x + self.vel_x * lookahead
@@ -222,31 +227,106 @@ def move_aim(tracker, tx, ty, fw, fh):
     return False
 
 
-def draw_overlay(frame, detections, target, fps, ads_active, collecting, tracker):
+def pick_best_target(detections, center_x, center_y, prefer_head=True):
+    """Waehlt das beste Ziel aus den Erkennungen.
+    Priorisiert: 1. Kopf-Erkennungen 2. Naechster Spieler zum Fadenkreuz
+    """
+    heads = []
+    bodies = []
+
+    for det in detections:
+        x1, y1, x2, y2 = det["bbox"]
+        bw = x2 - x1
+        bh = y2 - y1
+        if bw * bh < MIN_TARGET_SIZE:
+            continue
+
+        cx_det = (x1 + x2) / 2.0
+        class_name = det["class_name"]
+
+        if class_name == "head":
+            # Kopf: Zielpunkt = Mitte des Kopfes
+            cy_det = (y1 + y2) / 2.0
+            d = ((cx_det - center_x)**2 + (cy_det - center_y)**2) ** 0.5
+            heads.append((cx_det, cy_det, d, det))
+        elif class_name in ("player", "bot", "person"):
+            # Koerper: Zielpunkt = oberes Drittel
+            target_y = y1 + int(bh * AIM_POINT_BODY)
+            d = ((cx_det - center_x)**2 + (target_y - center_y)**2) ** 0.5
+            bodies.append((cx_det, target_y, d, det))
+
+    # Kopf-Erkennung bevorzugen wenn vorhanden und nah genug
+    if prefer_head and heads:
+        heads.sort(key=lambda x: x[2])
+        best_head = heads[0]
+        # Kopf nur bevorzugen wenn er innerhalb 500px vom Fadenkreuz ist
+        if best_head[2] < 500:
+            return (best_head[0], best_head[1]), best_head[3]
+
+    # Sonst naechsten Koerper nehmen
+    if bodies:
+        bodies.sort(key=lambda x: x[2])
+        best = bodies[0]
+        return (best[0], best[1]), best[3]
+
+    # Fallback: Kopf nehmen auch wenn weiter weg
+    if heads:
+        heads.sort(key=lambda x: x[2])
+        best = heads[0]
+        return (best[0], best[1]), best[3]
+
+    return None, None
+
+
+# Farben fuer verschiedene Klassen
+CLASS_COLORS = {
+    "player": (0, 0, 255),      # Rot
+    "bot": (0, 0, 255),         # Rot
+    "head": (0, 165, 255),      # Orange
+    "person": (0, 0, 255),      # Rot (COCO fallback)
+    "weapon": (128, 128, 128),  # Grau
+    "dead_body": (80, 80, 80),  # Dunkelgrau
+    "smoke": (200, 200, 200),   # Hellgrau
+    "fire": (0, 100, 255),      # Orange-Rot
+}
+
+
+def draw_overlay(frame, all_detections, target_dets, target_pos, fps, ads_active, collecting, tracker, model_info):
     h, w = frame.shape[:2]
 
     # Fadenkreuz
     color = (0, 255, 255) if ads_active else (0, 255, 0)
     cv2.line(frame, (w//2-25, h//2), (w//2+25, h//2), color, 2)
     cv2.line(frame, (w//2, h//2-25), (w//2, h//2+25), color, 2)
-
-    # Deadzone
     cv2.circle(frame, (w//2, h//2), DEADZONE, (50, 50, 50), 1)
 
-    for det in detections:
+    # Alle Erkennungen zeichnen (auch nicht-Ziele, fuer Debug)
+    for det in all_detections:
         x1, y1, x2, y2 = det["bbox"]
         conf = det["confidence"]
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
-        cv2.putText(frame, f'{conf:.0%}', (x1, y1-8), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+        cls = det["class_name"]
+        box_color = CLASS_COLORS.get(cls, (100, 100, 100))
+        is_target = cls in TARGET_CLASSES or cls == "person"
 
-    if target:
-        tx, ty = int(target[0]), int(target[1])
-        cv2.circle(frame, (tx, ty), 10, (0, 255, 255), 3)
+        if is_target:
+            cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
+            cv2.putText(frame, f'{cls} {conf:.0%}', (x1, y1-8),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, box_color, 2)
+        else:
+            # Nicht-Ziele duenn zeichnen
+            cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 1)
+            cv2.putText(frame, f'{cls}', (x1, y1-5),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, box_color, 1)
+
+    # Ziel-Markierung
+    if target_pos:
+        tx, ty = int(target_pos[0]), int(target_pos[1])
+        cv2.circle(frame, (tx, ty), 12, (0, 255, 255), 3)
         cv2.line(frame, (w//2, h//2), (tx, ty), (0, 255, 255), 2)
 
-    # Status
+    # Status-Leiste
     cv2.putText(frame, f'FPS: {fps}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-    cv2.putText(frame, f'Targets: {len(detections)}', (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+    cv2.putText(frame, f'Ziele: {len(target_dets)}', (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
     # ADS Status
     if ads_active:
@@ -260,30 +340,36 @@ def draw_overlay(frame, detections, target, fps, ads_active, collecting, tracker
     if collecting:
         cv2.putText(frame, 'SAMMELT SCREENSHOTS', (w-350, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
-    # Tastenbelegung
-    cv2.putText(frame, 'S=Screenshots | Q=Beenden', (10, h-15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (128, 128, 128), 1)
+    # Modell-Info
+    cv2.putText(frame, f'Modell: {model_info}', (w-400, h-15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (128, 128, 128), 1)
+    cv2.putText(frame, 'S=Screenshots | M=Modell | Q=Beenden', (10, h-15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (128, 128, 128), 1)
 
     return frame
 
 
 def main():
-    print("=" * 50)
-    print("  XBOX VISION AI - AIMBOT v2")
-    print("  ADS-Erkennung + Screenshot-Sammlung")
-    print("=" * 50)
+    print("=" * 55)
+    print("  XBOX VISION AI - AIMBOT v3")
+    print("  FPS-KI Modell + ADS-Erkennung")
+    print("=" * 55)
     print()
 
-    # Ordner fuer Screenshots
     screenshot_dir = os.path.join(os.path.dirname(__file__), SCREENSHOT_FOLDER)
     os.makedirs(screenshot_dir, exist_ok=True)
 
-    # 1. YOLO
-    onnx_path = os.path.join(os.path.dirname(__file__), 'backend', 'yolov8n.onnx')
-    if not os.path.exists(onnx_path):
-        print(f"FEHLER: {onnx_path} nicht gefunden!")
+    # 1. YOLO laden
+    current_mode = MODEL_MODE
+    onnx_path = get_model_path(current_mode)
+    if not onnx_path:
+        print("FEHLER: Kein YOLO-Modell gefunden!")
+        print("Erwartete Dateien:")
+        print("  backend/sunxds_nano_320.onnx (schnell)")
+        print("  backend/sunxds_640.onnx (genau)")
         sys.exit(1)
-    print("[1/3] YOLO laden...")
+
+    print(f"[1/3] YOLO laden ({current_mode})...")
     detector = YOLODetector(onnx_path, conf_threshold=CONFIDENCE)
+    model_info = f"{current_mode} {'FPS' if detector.is_fps_model else 'COCO'}"
     print("      OK!")
 
     # 2. KMBox
@@ -311,9 +397,18 @@ def main():
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     print(f"      Capture: {w}x{h}")
     print()
-    print("BEREIT! Druecke S fuer Screenshot-Sammlung an/aus.")
+    print("BEREIT!")
+    if detector.is_fps_model:
+        print("FPS-Modell geladen: Erkennt Spieler + Koepfe")
+        print("Ignoriert: Waffen, Tote, Rauch, Feuer")
+    else:
+        print("COCO-Modell geladen (Fallback)")
+    print()
+    print("S = Screenshot-Sammlung an/aus")
+    print("M = Modell wechseln (nano/standard)")
+    print("Q = Beenden")
     print("Aimbot aktiviert sich automatisch wenn du ADS drueckst.")
-    print("=" * 50)
+    print("=" * 55)
 
     tracker = TargetTracker()
     ads_detector = ADSDetector()
@@ -333,39 +428,26 @@ def main():
         fh, fw = frame.shape[:2]
 
         # ADS erkennen
-        ads_active = True  # Default: immer an
+        ads_active = True
         if ADS_DETECTION:
             ads_active = ads_detector.update(frame)
 
-        # YOLO Erkennung (immer, fuer rote Boxen)
-        raw_dets = detector.detect(frame, conf_threshold=CONFIDENCE)
+        # YOLO Erkennung - ALLE Klassen (fuer Anzeige)
+        all_dets = detector.detect(frame, conf_threshold=CONFIDENCE)
 
-        detections = []
-        best_target = None
-        min_dist = float('inf')
+        # Nur Ziel-Klassen fuer Aimbot
+        if detector.is_fps_model:
+            target_dets = [d for d in all_dets if d["class_name"] in TARGET_CLASSES]
+        else:
+            target_dets = [d for d in all_dets if d["class_name"] == "person"]
+
         center_x = fw / 2.0
         center_y = fh / 2.0
 
-        for det in raw_dets:
-            if det["class_name"] != "person":
-                continue
-            x1, y1, x2, y2 = det["bbox"]
-            bw = x2 - x1
-            bh = y2 - y1
-            if bw * bh < MIN_TARGET_SIZE:
-                continue
-            ratio = bh / max(1, bw)
-            if ratio < 0.8 or ratio > 5.0:
-                continue
-
-            cx_det = (x1 + x2) // 2
-            detections.append(det)
-
-            target_y = y1 + int(bh * AIM_POINT)
-            d = ((cx_det - center_x)**2 + (target_y - center_y)**2) ** 0.5
-            if d < min_dist:
-                min_dist = d
-                best_target = (cx_det, target_y)
+        # Bestes Ziel waehlen (mit Headshot-Priorisierung)
+        best_target, target_det = pick_best_target(
+            target_dets, center_x, center_y, prefer_head=PREFER_HEADSHOTS
+        )
 
         # Aimbot - NUR wenn ADS aktiv
         if best_target and ads_active:
@@ -401,10 +483,13 @@ def main():
 
         # Anzeige
         if SHOW_WINDOW:
-            display = draw_overlay(frame.copy(), detections, best_target, fps, ads_active, collecting, tracker)
+            display = draw_overlay(
+                frame.copy(), all_dets, target_dets, best_target,
+                fps, ads_active, collecting, tracker, model_info
+            )
             if WINDOW_SCALE != 1.0:
                 display = cv2.resize(display, None, fx=WINDOW_SCALE, fy=WINDOW_SCALE)
-            cv2.imshow('AIMBOT v2', display)
+            cv2.imshow('AIMBOT v3 - FPS KI', display)
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q') or key == 27:
                 break
@@ -412,6 +497,22 @@ def main():
                 collecting = not collecting
                 status = "AN" if collecting else "AUS"
                 print(f"Screenshot-Sammlung: {status} ({screenshot_count} gespeichert)")
+            elif key == ord('m'):
+                # Modell wechseln
+                if current_mode == "nano":
+                    new_mode = "standard"
+                else:
+                    new_mode = "nano"
+                new_path = get_model_path(new_mode)
+                if new_path:
+                    print(f"Lade Modell: {new_mode}...")
+                    detector = YOLODetector(new_path, conf_threshold=CONFIDENCE)
+                    current_mode = new_mode
+                    model_info = f"{current_mode} {'FPS' if detector.is_fps_model else 'COCO'}"
+                    tracker.reset()
+                    print(f"Modell gewechselt: {model_info}")
+                else:
+                    print(f"Modell '{new_mode}' nicht gefunden!")
 
     cap.release()
     kmbox_net.close()
