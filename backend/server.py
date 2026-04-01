@@ -1,5 +1,5 @@
 from fastapi import FastAPI, APIRouter, WebSocket, WebSocketDisconnect, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -1186,6 +1186,23 @@ async def demo_frame():
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "demo": True
     }
+
+
+# File download endpoint for training files
+@api_router.get("/download/{filename}")
+async def download_file(filename: str):
+    """Download training files (notebook, labels, anleitung)"""
+    allowed = {
+        "BO7_GPU_Training.ipynb": Path("/app/BO7_GPU_Training.ipynb"),
+        "labels_only.zip": Path("/app/labels_only.zip"),
+        "ANLEITUNG_GPU_TRAINING.md": Path("/app/ANLEITUNG_GPU_TRAINING.md"),
+    }
+    if filename not in allowed:
+        raise HTTPException(status_code=404, detail="Datei nicht gefunden")
+    fpath = allowed[filename]
+    if not fpath.exists():
+        raise HTTPException(status_code=404, detail="Datei existiert nicht auf dem Server")
+    return FileResponse(str(fpath), filename=filename)
 
 
 # Include the router
