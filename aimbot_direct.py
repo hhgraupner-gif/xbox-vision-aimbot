@@ -264,9 +264,52 @@ def move_aim(tracker, tx, ty, fw, fh, profile):
     return False
 
 
-def pick_best_target(detections, center_x, center_y, prefer_head=True):
+def is_teammate(frame, bbox):
+    """Prueft ob ein erkannter Spieler ein Teammate ist.
+    Teammates in CoD haben blaue/gruene Namenschilder ueber dem Kopf.
+    Gegner haben rote oder gar keine.
+    """
+    x1, y1, x2, y2 = bbox
+    bw = x2 - x1
+    fh, fw = frame.shape[:2]
+
+    # Bereich UEBER der Bounding Box pruefen (Namensschild)
+    check_h = max(20, int((y2 - y1) * 0.25))
+    check_top = max(0, y1 - check_h)
+    check_left = max(0, x1 - 10)
+    check_right = min(fw, x2 + 10)
+
+    if check_top >= y1 or check_right <= check_left:
+        return False
+
+    region = frame[check_top:y1, check_left:check_right]
+    if region.size == 0:
+        return False
+
+    # BGR: Blau und Gruen erkennen (Teammate-Farben)
+    hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
+
+    # Blau: H=90-130, S>80, V>80
+    blue_mask = cv2.inRange(hsv, (90, 80, 80), (130, 255, 255))
+    # Gruen: H=40-80, S>80, V>80
+    green_mask = cv2.inRange(hsv, (40, 80, 80), (80, 255, 255))
+    # Cyan/Tuerkis: H=80-95, S>80, V>80
+    cyan_mask = cv2.inRange(hsv, (80, 80, 80), (95, 255, 255))
+
+    teammate_pixels = cv2.countNonZero(blue_mask) + cv2.countNonZero(green_mask) + cv2.countNonZero(cyan_mask)
+    total_pixels = region.shape[0] * region.shape[1]
+
+    if total_pixels == 0:
+        return False
+
+    ratio = teammate_pixels / total_pixels
+    # Wenn mehr als 5% der Pixel ueber dem Spieler blau/gruen sind = Teammate
+    return ratio > 0.05
+
+
+def pick_best_target(detections, center_x, center_y, prefer_head=True, frame=None):
     """Waehlt das beste Ziel aus den Erkennungen.
-    Priorisiert: 1. Kopf-Erkennungen 2. Naechster Spieler zum Fadenkreuz
+    Filtert Teammates raus. Priorisiert Headshots.
     """
     heads = []
     bodies = []
@@ -278,16 +321,19 @@ def pick_best_target(detections, center_x, center_y, prefer_head=True):
         if bw * bh < MIN_TARGET_SIZE:
             continue
 
+        # Teammate-Check: Blaue/Gruene Markierung = ueberspringen
+        if frame is not None and is_teammate(frame, det["bbox"]):
+            det["_teammate"] = True
+            continue
+
         cx_det = (x1 + x2) / 2.0
         class_name = det["class_name"]
 
         if class_name == "head":
-            # Kopf: Zielpunkt = Mitte des Kopfes
             cy_det = (y1 + y2) / 2.0
             d = ((cx_det - center_x)**2 + (cy_det - center_y)**2) ** 0.5
             heads.append((cx_det, cy_det, d, det))
         elif class_name in ("player", "bot", "person"):
-            # Koerper: Zielpunkt = oberes Drittel
             target_y = y1 + int(bh * AIM_POINT_BODY)
             d = ((cx_det - center_x)**2 + (target_y - center_y)**2) ** 0.5
             bodies.append((cx_det, target_y, d, det))
@@ -421,10 +467,15 @@ def draw_overlay(frame, all_detections, target_dets, target_pos, fps, ads_active
         x1, y1, x2, y2 = det["bbox"]
         conf = det["confidence"]
         cls = det["class_name"]
-        box_color = CLASS_COLORS.get(cls, (100, 100, 100))
         is_target = cls in TARGET_CLASSES or cls == "person"
+        is_tm = det.get("_teammate", False)
 
-        if is_target:
+        if is_tm:
+            # Teammate: blau, durchgestrichen
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 150, 0), 2)
+            cv2.putText(frame, 'TEAM', (x1, y1-8),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 150, 0), 2)
+        elif is_target:
             cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
             cv2.putText(frame, f'{cls} {conf:.0%}', (x1, y1-8),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, box_color, 2)
@@ -550,9 +601,9 @@ def main():
         center_x = fw / 2.0
         center_y = fh / 2.0
 
-        # Bestes Ziel waehlen (mit Headshot-Priorisierung)
+        # Bestes Ziel waehlen (mit Headshot-Priorisierung + Teammate-Filter)
         best_target, target_det = pick_best_target(
-            target_dets, center_x, center_y, prefer_head=PREFER_HEADSHOTS
+            target_dets, center_x, center_y, prefer_head=PREFER_HEADSHOTS, frame=frame
         )
 
         # Aimbot - NUR wenn ADS aktiv
