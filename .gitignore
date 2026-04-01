@@ -182,3 +182,7 @@ android-sdk/ -e
 *.env
 *.env.*
 training_small.zip
+-e 
+# Environment files
+*.env
+*.env.*
