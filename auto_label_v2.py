@@ -12,7 +12,7 @@ import random
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'backend'))
 from yolo_onnx import YOLODetector, TARGET_CLASSES
 
-INPUT_FOLDER = "training_data"
+INPUT_FOLDER = "training_data_full"
 OUTPUT_FOLDER = "dataset_bo7_v2"
 CONFIDENCE = 0.25
 IMG_SIZE = 640
