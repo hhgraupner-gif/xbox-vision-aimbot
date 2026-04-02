@@ -393,14 +393,11 @@ def get_speed_curve_multiplier(dist, curve, is_locked=False):
 
 
 def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
-    """Richtung zum Ziel, mit ADS-Kompensation.
+    """Korrektur mit ADS-Kompensation.
     
-    WICHTIG: Waehrend ADS reduziert das Spiel + XIM die Maus-Empfindlichkeit
-    um ca. 60-70%. Deswegen: Korrekturen waehrend ADS 3x staerker senden!
-    
-    Diagnose-Test (Hip-Fire): move_auto(80, 0, 500ms) = kaum sichtbar
-    → Waehrend ADS: gleicher Befehl = fast nichts (ADS-Reduktion)
-    → Loesung: 250px statt 80px waehrend ADS senden
+    XIM Matrix ADS-Reduktion schluckt ~80% der Mausbewegung.
+    Diagnose: move_auto(500, 0, 500ms) funktioniert waehrend ADS.
+    → Korrekturen muessen im Bereich 300-600px sein!
     """
     cx = fw / 2.0
     cy = fh / 2.0
@@ -411,13 +408,17 @@ def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
     if dist < profile["deadzone"]:
         return 0, 0
 
-    # ADS-Kompensation: 250px Magnitude (3x staerker als Hip-Fire Test)
-    # Die XIM ADS-Reduktion macht daraus effektiv ~80px = sichtbar
-    target_magnitude = 250.0
+    # ADS-Kompensation: Offset * 3.0, damit nach XIM-Reduktion genug ankommt
+    ADS_BOOST = 3.0
+    mx = dx * ADS_BOOST
+    my = dy * ADS_BOOST
 
-    scale = target_magnitude / dist
-    mx = dx * scale
-    my = dy * scale
+    # Deckeln bei 600px (mehr brauchen wir nicht)
+    mag = (mx*mx + my*my) ** 0.5
+    if mag > 600:
+        s = 600.0 / mag
+        mx *= s
+        my *= s
 
     return mx, my
 
