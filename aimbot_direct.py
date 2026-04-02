@@ -370,22 +370,75 @@ def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
     return mx, my
 
 
+class AimAccumulator:
+    """Akkumuliert Aim-Korrekturen ueber mehrere Frames.
+    Sendet nur alle N Frames eine groessere move_auto Bewegung,
+    damit die XIM Matrix die Bewegung nicht als Rauschen filtert.
+    """
+    def __init__(self, send_every=3, move_duration_ms=50):
+        self.send_every = send_every       # Alle N Frames senden
+        self.move_duration_ms = move_duration_ms  # Dauer der move_auto Bewegung
+        self.acc_x = 0.0                   # Akkumulierte X-Korrektur
+        self.acc_y = 0.0                   # Akkumulierte Y-Korrektur
+        self.frame_count = 0               # Frame-Zaehler
+
+    def accumulate(self, mx, my):
+        """Fuegt eine Frame-Korrektur hinzu."""
+        self.acc_x += mx
+        self.acc_y += my
+        self.frame_count += 1
+
+    def should_send(self):
+        """Prueft ob jetzt gesendet werden soll."""
+        return self.frame_count >= self.send_every
+
+    def send(self):
+        """Sendet die akkumulierte Bewegung per move_auto und resettet.
+        Returns True wenn eine Bewegung gesendet wurde.
+        """
+        ix = int(round(self.acc_x))
+        iy = int(round(self.acc_y))
+        sent = False
+
+        # Nur senden wenn Bewegung gross genug (XIM Mindest-Schwelle)
+        if abs(ix) >= 5 or abs(iy) >= 5:
+            kmbox_net.move_auto(ix, iy, ms=self.move_duration_ms)
+            sent = True
+
+        # Reset
+        self.acc_x = 0.0
+        self.acc_y = 0.0
+        self.frame_count = 0
+        return sent
+
+    def reset(self):
+        """Komplett zuruecksetzen (z.B. wenn Ziel verloren)."""
+        self.acc_x = 0.0
+        self.acc_y = 0.0
+        self.frame_count = 0
+
+
+# Globaler Akkumulator
+aim_accumulator = AimAccumulator(send_every=3, move_duration_ms=50)
+
+
 def move_aim(tracker, tx, ty, fw, fh, profile):
-    """Bewegt das Fadenkreuz zum Ziel per KMBox move_auto.
-    Sendet eine groessere Bewegung die ueber 30ms ausgefuehrt wird.
+    """Akkumuliert Aim-Korrekturen und sendet alle 3 Frames eine grosse move_auto.
+    
+    Problem: XIM Matrix ignoriert kleine Mausbewegungen (<10px).
+    Loesung: 3 Frames Korrekturen sammeln, dann eine groessere Bewegung senden.
+    Bei 60 FPS: ~20 Korrekturen/Sek statt 60 winzige.
     """
     mx, my = calc_aim_correction(tracker, tx, ty, fw, fh, profile)
 
-    ix = int(round(mx))
-    iy = int(round(my))
+    # Korrektur akkumulieren
+    aim_accumulator.accumulate(mx, my)
 
-    # Mindestbewegung 3px damit XIM es nicht ignoriert
-    if abs(ix) < 3 and abs(iy) < 3:
-        return False
+    # Alle 3 Frames: Akkumulierte Bewegung senden
+    if aim_accumulator.should_send():
+        return aim_accumulator.send()
 
-    # move_auto: KMBox fuehrt Bewegung ueber 30ms smooth aus
-    kmbox_net.move_auto(ix, iy, ms=30)
-    return True
+    return False
 
 
 def is_teammate(frame, bbox):
@@ -725,7 +778,7 @@ def main():
     active_profile_key = ACTIVE_PROFILE
     profile = PROFILES[active_profile_key]
     print(f"Aktives Profil: {profile['name']}")
-    aim_frame_counter = 0  # Nur jedes N-te Frame korrigieren
+    print(f"Aim-Batching: Alle {aim_accumulator.send_every} Frames, {aim_accumulator.move_duration_ms}ms Dauer")
 
     # Scuf Controller suchen
     global SCUF_CONTROLLER_ID
@@ -838,8 +891,10 @@ def main():
                 if not best_target:
                     # Sofort stoppen wenn kein Ziel — keine Geister-Bewegungen!
                     tracker.reset()
+                    aim_accumulator.reset()
                 elif not ads_active:
                     tracker.reset()
+                    aim_accumulator.reset()
 
         # Screenshots sammeln
         now = time.monotonic()
