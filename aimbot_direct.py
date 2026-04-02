@@ -130,27 +130,36 @@ MAX_AIM_RADIUS = 400        # Ignoriere Ziele weiter als 400px vom Fadenkreuz
 MIN_MOUSE_MOVE = 1          # Nur sub-pixel Bewegungen ignorieren
 
 # ============================================================
+# KMBOX KALIBRIERUNG — DER WICHTIGSTE PARAMETER!
+# Multipliziert alle Mausbewegungen. Musst du an deine Ingame-Sensitivity anpassen:
+# - Zu wenig Bewegung ingame? → Erhoehen (z.B. 3.0, 5.0, 8.0)
+# - Zu viel Bewegung / zittrig? → Verringern (z.B. 1.0, 0.5)
+# - Taste 5/6 zum live anpassen (5=runter, 6=rauf)
+KMBOX_MULTIPLIER = 4.0
+# ============================================================
+
+# ============================================================
 # AIMBOT PROFILE: Taste 1 = Aim-Assist, Taste 2 = Aimbot
 # ============================================================
 PROFILES = {
     "assist": {
         "name": "AIM-ASSIST",
         "sensitivity": 0.60,
-        "smoothing": 0.60,      # Hoeher = glatter
-        "max_move": 25,
-        "deadzone": 35,
+        "smoothing": 0.55,
+        "max_move": 40,
+        "deadzone": 25,
         "lock_frames": 1,
-        "ema_alpha": 0.35,
+        "ema_alpha": 0.40,
         "lookahead": 0.02,
     },
     "aimbot": {
         "name": "AIMBOT",
-        "sensitivity": 0.80,
-        "smoothing": 0.40,
-        "max_move": 50,
-        "deadzone": 20,
+        "sensitivity": 0.85,
+        "smoothing": 0.35,
+        "max_move": 80,
+        "deadzone": 15,
         "lock_frames": 1,
-        "ema_alpha": 0.55,
+        "ema_alpha": 0.60,
         "lookahead": 0.03,
     },
 }
@@ -380,6 +389,11 @@ def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
 def move_aim(tracker, tx, ty, fw, fh, profile):
     """Bewegt das Fadenkreuz zum Ziel direkt per KMBox (ohne Passthrough)."""
     mx, my = calc_aim_correction(tracker, tx, ty, fw, fh, profile)
+
+    # KMBOX_MULTIPLIER anwenden
+    mx *= KMBOX_MULTIPLIER
+    my *= KMBOX_MULTIPLIER
+
     ix = int(round(mx))
     iy = int(round(my))
 
@@ -625,13 +639,13 @@ def draw_overlay(frame, all_detections, target_dets, target_pos, fps, ads_active
     cv2.putText(frame, f'Ziele: {len(target_dets)}', (10, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
     # Tastenbelegung unten
-    cv2.putText(frame, '1=Assist | 2=Aimbot | 3=ADS-Trigger | S=Screenshots | M=Modell | Q=Beenden', (10, h-12), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (160, 160, 160), 1)
+    cv2.putText(frame, f'1=Assist | 2=Aimbot | 3=ADS | 5/6=Multi({KMBOX_MULTIPLIER:.1f}) | 7=Test | M=Modell | Q=Quit', (10, h-12), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (160, 160, 160), 1)
 
     return frame
 
 
 def main():
-    global ADS_MODE, SCUF_CONTROLLER_ID
+    global ADS_MODE, SCUF_CONTROLLER_ID, KMBOX_MULTIPLIER
     print("=" * 55)
     print("  XBOX VISION AI - AIMBOT v4")
     print("  Scuf Passthrough + FPS-KI + ADS-Trigger")
@@ -696,10 +710,13 @@ def main():
     print("    [kmbox]    Halte rechte Maustaste (KMBox)")
     print("    [visual]   Automatisch (Zoom-Erkennung)")
     print("    [always]   Immer an")
+    print("5/6 = KMBox Multiplier runter/rauf (WICHTIG fuer Kalibrierung!)")
+    print("7 = Kalibrierungs-Test (sendet Test-Bewegung)")
     print("S = Screenshot-Sammlung an/aus")
     print("M = Modell wechseln (nano/standard)")
     print("Q = Beenden")
     print(f"ADS-Trigger: {ADS_MODE.upper()}")
+    print(f"KMBox Multiplier: {KMBOX_MULTIPLIER:.1f}")
     print("=" * 55)
 
     tracker = TargetTracker()
@@ -898,6 +915,29 @@ def main():
                     "always": "IMMER AN",
                 }
                 print(f"ADS-Trigger: {mode_names.get(ADS_MODE, ADS_MODE)}")
+            elif key == ord('5'):
+                # KMBOX Multiplier runter
+                KMBOX_MULTIPLIER = max(0.5, KMBOX_MULTIPLIER - 0.5)
+                print(f"KMBOX Multiplier: {KMBOX_MULTIPLIER:.1f}")
+            elif key == ord('6'):
+                # KMBOX Multiplier rauf
+                KMBOX_MULTIPLIER = min(20.0, KMBOX_MULTIPLIER + 0.5)
+                print(f"KMBOX Multiplier: {KMBOX_MULTIPLIER:.1f}")
+            elif key == ord('7'):
+                # Kalibrierungs-Test: Sendet definierte Bewegung
+                print(f"=== KALIBRIERUNGS-TEST (Multiplier: {KMBOX_MULTIPLIER:.1f}) ===")
+                print("  Sende 20px nach RECHTS...")
+                kmbox_net.move(int(20 * KMBOX_MULTIPLIER), 0)
+                time.sleep(0.5)
+                print("  Sende 20px nach LINKS...")
+                kmbox_net.move(int(-20 * KMBOX_MULTIPLIER), 0)
+                time.sleep(0.5)
+                print("  Sende 20px nach UNTEN...")
+                kmbox_net.move(0, int(20 * KMBOX_MULTIPLIER))
+                time.sleep(0.5)
+                print("  Sende 20px nach OBEN...")
+                kmbox_net.move(0, int(-20 * KMBOX_MULTIPLIER))
+                print("=== Hast du Bewegung ingame gesehen? ===")
 
     cap.release()
     if scuf:
