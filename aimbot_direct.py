@@ -18,11 +18,24 @@ import numpy as np
 import time
 import sys
 import os
+import ctypes
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'backend'))
 
 from yolo_onnx import YOLODetector, TARGET_CLASSES
 import kmbox_net
+
+# Windows API fuer Tastenerkennung (kein pip install noetig)
+try:
+    user32 = ctypes.windll.user32
+    def is_key_pressed(vk_code):
+        """Prueft ob eine Taste gerade gedrueckt ist (Windows)."""
+        return (user32.GetAsyncKeyState(vk_code) & 0x8000) != 0
+    KEY_DETECTION_AVAILABLE = True
+except (AttributeError, OSError):
+    def is_key_pressed(vk_code):
+        return False
+    KEY_DETECTION_AVAILABLE = False
 
 # ============================================================
 # EINSTELLUNGEN
@@ -75,8 +88,12 @@ MAX_MOVE = PROFILES[ACTIVE_PROFILE]["max_move"]
 DEADZONE = PROFILES[ACTIVE_PROFILE]["deadzone"]
 LOCK_FRAMES = PROFILES[ACTIVE_PROFILE]["lock_frames"]
 
-# ADS Erkennung
-ADS_DETECTION = True
+# ADS Erkennung / Trigger-Modus
+# "visual"   = Automatisch per Zoom-Erkennung (unzuverlaessig)
+# "keyboard" = Halte Taste X am PC (zuverlaessig)
+# "kmbox"    = Halte rechte Maustaste an KMBox-Maus (zuverlaessig)
+ADS_MODE = "keyboard"       # Standard: Tastatur
+ADS_KEY = 0x58              # 0x58 = X-Taste (Virtual Key Code)
 ADS_ZOOM_THRESHOLD = 12.0
 
 # Screenshot Sammlung
@@ -440,6 +457,10 @@ def draw_status_bar(frame, model_mode, collecting, screenshot_count, fps, ads_ac
         ads_text = "ADS: AUS"
         ads_color = (100, 100, 100)
 
+    # Zeige aktuellen ADS-Modus
+    mode_short = {"keyboard": "[X]", "kmbox": "[MAUS]", "visual": "[AUTO]", "always": "[ON]"}
+    ads_text += " " + mode_short.get(ADS_MODE, "")
+
     (tw_ads, _), _ = cv2.getTextSize(ads_text, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
     ads_x = w - tw_ads - 15
     cv2.putText(frame, ads_text, (ads_x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, ads_color, 2)
@@ -494,7 +515,7 @@ def draw_overlay(frame, all_detections, target_dets, target_pos, fps, ads_active
     cv2.putText(frame, f'Ziele: {len(target_dets)}', (10, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
     # Tastenbelegung unten
-    cv2.putText(frame, '1=Assist | 2=Aimbot | S=Screenshots | M=Modell | Q=Beenden', (10, h-12), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (160, 160, 160), 1)
+    cv2.putText(frame, '1=Assist | 2=Aimbot | 3=ADS-Trigger | S=Screenshots | M=Modell | Q=Beenden', (10, h-12), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (160, 160, 160), 1)
 
     return frame
 
@@ -558,10 +579,15 @@ def main():
     print()
     print("1 = Aim-Assist (sanft)")
     print("2 = Aimbot (aggressiv)")
+    print("3 = ADS-Trigger umschalten:")
+    print("    [keyboard] Halte X-Taste am PC")
+    print("    [kmbox]    Halte rechte Maustaste (KMBox)")
+    print("    [visual]   Automatisch (Zoom-Erkennung)")
+    print("    [always]   Immer an")
     print("S = Screenshot-Sammlung an/aus")
     print("M = Modell wechseln (nano/standard)")
     print("Q = Beenden")
-    print("Aimbot aktiviert sich automatisch wenn du ADS drueckst.")
+    print(f"ADS-Trigger: {ADS_MODE.upper()}")
     print("=" * 55)
 
     tracker = TargetTracker()
@@ -584,10 +610,16 @@ def main():
 
         fh, fw = frame.shape[:2]
 
-        # ADS erkennen
-        ads_active = True
-        if ADS_DETECTION:
+        # ADS erkennen (je nach Modus)
+        ads_active = False
+        if ADS_MODE == "keyboard":
+            ads_active = is_key_pressed(ADS_KEY)
+        elif ADS_MODE == "kmbox":
+            ads_active = kmbox_net.is_mouse_right_pressed()
+        elif ADS_MODE == "visual":
             ads_active = ads_detector.update(frame)
+        else:
+            ads_active = True  # Fallback: immer an
 
         # YOLO Erkennung - ALLE Klassen (fuer Anzeige)
         all_dets = detector.detect(frame, conf_threshold=CONFIDENCE)
@@ -686,6 +718,18 @@ def main():
                         print(f"Modell '{new_mode}' nicht gefunden, nutze: {current_mode}")
                     else:
                         print(f"Kein alternatives Modell gefunden!")
+            elif key == ord('3'):
+                # ADS-Trigger-Modus umschalten
+                ads_cycle = {"keyboard": "kmbox", "kmbox": "visual", "visual": "always", "always": "keyboard"}
+                ADS_MODE = ads_cycle.get(ADS_MODE, "keyboard")
+                tracker.reset()
+                mode_names = {
+                    "keyboard": f"TASTATUR (halte X-Taste)",
+                    "kmbox": "KMBOX (rechte Maustaste)",
+                    "visual": "VISUELL (automatisch)",
+                    "always": "IMMER AN",
+                }
+                print(f"ADS-Trigger: {mode_names.get(ADS_MODE, ADS_MODE)}")
 
     cap.release()
     kmbox_net.close()
