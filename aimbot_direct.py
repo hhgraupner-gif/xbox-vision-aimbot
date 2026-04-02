@@ -453,72 +453,49 @@ def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
 
 
 class AimController:
-    """Zeit-basierter Aim Controller — KEINE ueberlappenden Befehle.
+    """Einfacher Zeit-basierter Aim Controller.
     
-    Problem vorher: Bezier-Befehle alle 67ms gesendet, aber jeder braucht
-    50-120ms → Befehle ueberlappen sich → ZITTERN.
+    KEIN Akkumulieren! Jede Korrektur basiert nur auf dem AKTUELLEN Frame.
+    Nach jeder Korrektur: Warten bis der Video-Feed die Aenderung zeigt.
     
-    Loesung: Nur EINE Bewegung gleichzeitig aktiv.
-    Wartet bis die vorherige fertig ist, dann naechste senden.
-    Ergebnis: Smooth, kontinuierlicher Pull wie bei den Profi-Aimbots.
+    Das verhindert den Feedback-Loop der das Zittern verursacht hat:
+    - Korrektur senden → Warten → Neues Bild sehen → Neu berechnen
     """
-    def __init__(self, cooldown_ms=100):
-        self.cooldown = cooldown_ms / 1000.0
+    def __init__(self, cooldown_ms=120):
+        self.cooldown = cooldown_ms / 1000.0  # Warte-Zeit nach jeder Korrektur
         self.last_send_time = 0.0
-        self.acc_x = 0.0
-        self.acc_y = 0.0
 
-    def add_correction(self, mx, my):
-        """Fuegt eine Frame-Korrektur hinzu."""
-        self.acc_x += mx
-        self.acc_y += my
-
-    def try_send(self):
-        """Sendet NUR wenn genug Zeit seit dem letzten Befehl vergangen ist.
-        Verhindert Command-Overlap = verhindert Zittern.
-        """
+    def try_correct(self, mx, my):
+        """Sende Korrektur wenn Cooldown abgelaufen. Keine Akkumulation."""
         now = time.monotonic()
-        elapsed = now - self.last_send_time
-
-        if elapsed < self.cooldown:
+        if now - self.last_send_time < self.cooldown:
             return False
 
-        ix = int(round(self.acc_x))
-        iy = int(round(self.acc_y))
+        ix = int(round(mx))
+        iy = int(round(my))
         mag = (ix*ix + iy*iy) ** 0.5
 
-        if mag < 6:
-            self.acc_x = 0.0
-            self.acc_y = 0.0
+        if mag < 3:
             return False
 
-        # Dauer proportional zur Distanz: 80-150ms
-        ms = int(max(80, min(150, mag * 2.5)))
-
-        kmbox_net.move_auto(ix, iy, ms=ms)
-
-        # Cooldown = Dauer des Befehls (kein Overlap!)
-        self.cooldown = ms / 1000.0
+        # Kurzes move_auto (40ms) — fertig bevor naechste Korrektur kommt
+        kmbox_net.move_auto(ix, iy, ms=40)
         self.last_send_time = now
-        self.acc_x = 0.0
-        self.acc_y = 0.0
         return True
 
     def reset(self):
-        self.acc_x = 0.0
-        self.acc_y = 0.0
+        pass  # Kein State zum resetten
 
 
-aim_controller = AimController(cooldown_ms=100)
+aim_controller = AimController(cooldown_ms=120)
 
 
 def move_aim(tracker, tx, ty, fw, fh, profile):
-    """Berechnet Korrektur und sendet wenn Cooldown abgelaufen.
-    Kein Overlap — nur eine Bewegung gleichzeitig aktiv.
+    """Berechnet Korrektur und sendet sofort wenn Cooldown abgelaufen.
+    Keine Akkumulation — nur aktuelle Frame-Daten.
     """
     mx, my = calc_aim_correction(tracker, tx, ty, fw, fh, profile)
-    aim_controller.add_correction(mx, my)
-    return aim_controller.try_send()
+    return aim_controller.try_correct(mx, my)
 
 
 def is_teammate(frame, bbox):
