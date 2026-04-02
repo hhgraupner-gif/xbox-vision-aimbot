@@ -130,12 +130,11 @@ MAX_AIM_RADIUS = 300        # Nur Ziele nah am Fadenkreuz (kleiner = weniger Him
 MIN_MOUSE_MOVE = 1          # Nur sub-pixel Bewegungen ignorieren
 
 # ============================================================
-# KMBOX KALIBRIERUNG — DER WICHTIGSTE PARAMETER!
-# Multipliziert alle Mausbewegungen. Musst du an deine Ingame-Sensitivity anpassen:
-# - Zu wenig Bewegung ingame? → Erhoehen (z.B. 5.0, 10.0, 15.0)
-# - Zu viel Bewegung / zittrig? → Verringern (z.B. 2.0, 1.0)
-# - Taste 5/6 zum live anpassen (5=runter, 6=rauf)
-KMBOX_MULTIPLIER = 6.0
+# KMBOX SENSITIVITY — Steuert wie stark die Maus pro Pixel Fehler bewegt wird
+# Taste 5/6 zum live anpassen
+# - Zu wenig Mitziehen? → Erhoehen (0.15, 0.20, 0.30)
+# - Zu zuckig? → Verringern (0.05, 0.08)
+KMBOX_SENSITIVITY = 0.12
 # ============================================================
 
 # ============================================================
@@ -144,33 +143,20 @@ KMBOX_MULTIPLIER = 6.0
 PROFILES = {
     "assist": {
         "name": "AIM-ASSIST",
-        "sensitivity": 0.50,
-        "smoothing": 0.65,      # Hoch = glatt
-        "max_move": 30,
-        "deadzone": 40,         # Grosser Totbereich = kein Zittern nahe Ziel
-        "lock_frames": 1,
-        "ema_alpha": 0.35,
-        "lookahead": 0.01,      # Wenig Vorhersage = stabiler
+        "speed": 0.70,          # Anteil des Fehlers pro Frame (0.5=langsam, 1.0=direkt)
+        "smoothing": 0.55,      # Mix mit vorheriger Bewegung (hoeher=glatter)
+        "max_move": 80,         # Max KMBox-Pixel pro Frame
+        "deadzone": 25,         # Pixel wo nichts passiert
     },
     "aimbot": {
         "name": "AIMBOT",
-        "sensitivity": 0.75,
-        "smoothing": 0.45,
-        "max_move": 60,
-        "deadzone": 30,
-        "lock_frames": 1,
-        "ema_alpha": 0.50,
-        "lookahead": 0.02,
+        "speed": 0.90,
+        "smoothing": 0.35,
+        "max_move": 120,
+        "deadzone": 15,
     },
 }
 ACTIVE_PROFILE = "assist"  # Standard: Aim-Assist (sanft, sicherer Start)
-
-# Aktive Werte (werden vom Profil gesetzt)
-AIM_SENSITIVITY = PROFILES[ACTIVE_PROFILE]["sensitivity"]
-SMOOTHING = PROFILES[ACTIVE_PROFILE]["smoothing"]
-MAX_MOVE = PROFILES[ACTIVE_PROFILE]["max_move"]
-DEADZONE = PROFILES[ACTIVE_PROFILE]["deadzone"]
-LOCK_FRAMES = PROFILES[ACTIVE_PROFILE]["lock_frames"]
 
 # ADS Erkennung / Trigger-Modus
 # "scuf"     = Halte LT am Scuf inVision Pro (zuverlaessig, bester Modus)
@@ -344,12 +330,10 @@ class TargetTracker:
 
 
 def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
-    """Berechnet die Aimbot-Mauskorrektur mit Proportional-Daempfung.
+    """Simple P-Controller: Fehler in Pixel * Gain = Mausbewegung.
     
-    Verhindert Oszillation durch:
-    - Starke Daempfung nahe dem Ziel (kein Ueberschwingen)
-    - Geschwindigkeits-Bremse (kein Kreiseln)
-    - Totzone fuer "nah genug"
+    Je weiter das Ziel vom Fadenkreuz, desto staerker die Korrektur.
+    Natuerlich proportional — kein kompliziertes Ramping.
     """
     cx = fw / 2.0
     cy = fh / 2.0
@@ -357,39 +341,23 @@ def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
     dy = ty - cy
     dist = (dx*dx + dy*dy) ** 0.5
 
-    sens = profile["sensitivity"]
+    dz = profile["deadzone"]
+    speed = profile["speed"]
     smooth = profile["smoothing"]
     max_mv = profile["max_move"]
-    dz = profile["deadzone"]
 
-    # Totzone: Wenn nah genug am Ziel, NICHTS tun
     if dist < dz:
         tracker.prev_mx *= 0.3
         tracker.prev_my *= 0.3
         return 0, 0
 
-    # === PROPORTIONAL-DAEMPFUNG ===
-    # Je naeher am Ziel, desto WENIGER Korrektur (verhindert Ueberschwingen)
-    # Bei >200px: volle Korrektur
-    # Bei 100px: 50% Korrektur
-    # Bei 50px: 25% Korrektur
-    ramp = min(1.0, (dist - dz) / 200.0)
-    ramp = ramp * ramp  # Quadratisch: noch sanfter nahe dem Ziel
+    # Einfacher P-Controller: Fehler * Speed * Sensitivity
+    mx = dx * KMBOX_SENSITIVITY * speed
+    my = dy * KMBOX_SENSITIVITY * speed
 
-    mx = (dx / fw) * sens * 300 * ramp
-    my = (dy / fh) * sens * 300 * ramp
-
-    # Smoothing: Mix mit vorherigem Wert
+    # Smoothing mit vorheriger Bewegung
     mx = smooth * tracker.prev_mx + (1 - smooth) * mx
     my = smooth * tracker.prev_my + (1 - smooth) * my
-
-    # Geschwindigkeits-Bremse: Wenn Richtung wechselt (Oszillation), stark bremsen
-    if tracker.prev_mx != 0 and mx != 0:
-        if (tracker.prev_mx > 0) != (mx > 0):  # Richtungswechsel X
-            mx *= 0.3  # 70% bremsen
-    if tracker.prev_my != 0 and my != 0:
-        if (tracker.prev_my > 0) != (my > 0):  # Richtungswechsel Y
-            my *= 0.3  # 70% bremsen
 
     # Max Speed begrenzen
     mag = (mx*mx + my*my) ** 0.5
@@ -398,12 +366,6 @@ def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
         mx *= s
         my *= s
 
-    # Anti-Jitter: Zu kleine Bewegungen ignorieren
-    if abs(mx) < MIN_MOUSE_MOVE and abs(my) < MIN_MOUSE_MOVE:
-        tracker.prev_mx = mx
-        tracker.prev_my = my
-        return 0, 0
-
     tracker.prev_mx = mx
     tracker.prev_my = my
 
@@ -411,21 +373,15 @@ def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
 
 
 def move_aim(tracker, tx, ty, fw, fh, profile):
-    """Bewegt das Fadenkreuz zum Ziel per KMBox.
-    Nutzt move() statt move_auto() um Akkumulationsprobleme zu vermeiden.
-    """
+    """Bewegt das Fadenkreuz zum Ziel per KMBox."""
     mx, my = calc_aim_correction(tracker, tx, ty, fw, fh, profile)
-
-    # KMBOX_MULTIPLIER anwenden
-    mx *= KMBOX_MULTIPLIER
-    my *= KMBOX_MULTIPLIER
-
-    # Hard-Cap bei 100px pro Frame (verhindert wilde Spruenge)
-    mx = max(-100, min(100, mx))
-    my = max(-100, min(100, my))
 
     ix = int(round(mx))
     iy = int(round(my))
+
+    # Hard-Cap (Sicherheit)
+    ix = max(-127, min(127, ix))
+    iy = max(-127, min(127, iy))
 
     if abs(ix) >= 1 or abs(iy) >= 1:
         kmbox_net.move(ix, iy)
@@ -682,13 +638,13 @@ def draw_overlay(frame, all_detections, target_dets, target_pos, fps, ads_active
     cv2.putText(frame, f'Ziele: {len(target_dets)}', (10, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
     # Tastenbelegung unten
-    cv2.putText(frame, f'1=Assist | 2=Aimbot | 3=ADS | 5/6=Multi({KMBOX_MULTIPLIER:.1f}) | 7=Test | M=Modell | Q=Quit', (10, h-12), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (160, 160, 160), 1)
+    cv2.putText(frame, f'1=Assist | 2=Aimbot | 3=ADS | 5/6=Sens({KMBOX_SENSITIVITY:.2f}) | 7=Test | Q=Quit', (10, h-12), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (160, 160, 160), 1)
 
     return frame
 
 
 def main():
-    global ADS_MODE, SCUF_CONTROLLER_ID, KMBOX_MULTIPLIER
+    global ADS_MODE, SCUF_CONTROLLER_ID, KMBOX_SENSITIVITY
     print("=" * 55)
     print("  XBOX VISION AI - AIMBOT v4")
     print("  Scuf Passthrough + FPS-KI + ADS-Trigger")
@@ -753,13 +709,13 @@ def main():
     print("    [kmbox]    Halte rechte Maustaste (KMBox)")
     print("    [visual]   Automatisch (Zoom-Erkennung)")
     print("    [always]   Immer an")
-    print("5/6 = KMBox Multiplier runter/rauf (WICHTIG fuer Kalibrierung!)")
+    print("5/6 = KMBox Sensitivity runter/rauf (WICHTIG!)")
     print("7 = Kalibrierungs-Test (sendet Test-Bewegung)")
     print("S = Screenshot-Sammlung an/aus")
     print("M = Modell wechseln (nano/standard)")
     print("Q = Beenden")
     print(f"ADS-Trigger: {ADS_MODE.upper()}")
-    print(f"KMBox Multiplier: {KMBOX_MULTIPLIER:.1f}")
+    print(f"KMBox Sensitivity: {KMBOX_SENSITIVITY:.2f}")
     print("=" * 55)
 
     tracker = TargetTracker()
@@ -867,14 +823,12 @@ def main():
                 ads_active = True
 
             # Aimbot - NUR wenn ADS aktiv
-            aim_frame_counter += 1
-            if best_target and ads_active and aim_frame_counter >= 2:
-                aim_frame_counter = 0
-                # Confidence-Check: Nur bei genuegend sicherer Erkennung aimen
+            if best_target and ads_active:
+                # Confidence-Check
                 if target_det and target_det.get("confidence", 0) >= 0.50:
-                    tracker.update(best_target[0], best_target[1], alpha=profile["ema_alpha"])
-                    if tracker.stable(profile["lock_frames"]):
-                        pos = tracker.get_predicted(lookahead=profile["lookahead"])
+                    tracker.update(best_target[0], best_target[1], alpha=0.45)
+                    if tracker.stable(1):
+                        pos = tracker.get_predicted()
                         if pos:
                             tracker.locked = True
                             move_aim(tracker, pos[0], pos[1], fw, fh, profile)
@@ -967,28 +921,30 @@ def main():
                 print(f"ADS-Trigger: {mode_names.get(ADS_MODE, ADS_MODE)}")
             elif key == ord('5'):
                 # KMBOX Multiplier runter
-                KMBOX_MULTIPLIER = max(0.5, KMBOX_MULTIPLIER - 1.0)
-                print(f"KMBOX Multiplier: {KMBOX_MULTIPLIER:.1f}")
+                KMBOX_SENSITIVITY = max(0.02, KMBOX_SENSITIVITY - 0.02)
+                print(f"KMBOX Sensitivity: {KMBOX_SENSITIVITY:.2f}")
             elif key == ord('6'):
-                # KMBOX Multiplier rauf
-                KMBOX_MULTIPLIER = min(50.0, KMBOX_MULTIPLIER + 1.0)
-                print(f"KMBOX Multiplier: {KMBOX_MULTIPLIER:.1f}")
+                # KMBOX Sensitivity rauf
+                KMBOX_SENSITIVITY = min(1.0, KMBOX_SENSITIVITY + 0.02)
+                print(f"KMBOX Sensitivity: {KMBOX_SENSITIVITY:.2f}")
             elif key == ord('7'):
-                # Kalibrierungs-Test: Sendet definierte Bewegung mit move_auto
-                test_val = int(50 * KMBOX_MULTIPLIER)
-                print(f"=== KALIBRIERUNGS-TEST (Multi: {KMBOX_MULTIPLIER:.1f}, Wert: {test_val}px) ===")
-                print("  Sende nach RECHTS...")
+                # Kalibrierungs-Test
+                test_val = int(100 * KMBOX_SENSITIVITY * 10)
+                if test_val < 5:
+                    test_val = 5
+                print(f"=== KALIBRIERUNGS-TEST (Sens: {KMBOX_SENSITIVITY:.2f}, Wert: {test_val}px) ===")
+                print("  RECHTS...")
                 kmbox_net.move_auto(test_val, 0, ms=200)
                 time.sleep(0.8)
-                print("  Sende nach LINKS (zurueck)...")
+                print("  LINKS...")
                 kmbox_net.move_auto(-test_val, 0, ms=200)
                 time.sleep(0.8)
-                print("  Sende nach UNTEN...")
+                print("  UNTEN...")
                 kmbox_net.move_auto(0, test_val, ms=200)
                 time.sleep(0.8)
-                print("  Sende nach OBEN (zurueck)...")
+                print("  OBEN...")
                 kmbox_net.move_auto(0, -test_val, ms=200)
-                print(f"=== FERTIG! Bewegung sichtbar? 5=weniger 6=mehr, dann 7 nochmal ===")
+                print(f"=== 5=weniger 6=mehr, dann 7 nochmal ===")
 
     cap.release()
     if scuf:
