@@ -1020,47 +1020,28 @@ def main():
                 KMBOX_SENSITIVITY = min(5.0, KMBOX_SENSITIVITY + 0.10)
                 print(f"KMBOX Sensitivity: {KMBOX_SENSITIVITY:.2f}")
             elif key == ord('7'):
-                # DIAGNOSE-TEST: Verschiedene Methoden und Staerken testen
                 print(f"")
-                print(f"=== DIAGNOSE-TEST ===")
-                print(f"Teste verschiedene KMBox-Befehle. Schau auf den Bildschirm!")
+                print(f"=== ADS-DIAGNOSE ===")
+                print(f"GEH IN ADS (LT halten) und drueck dann 8, 9 oder 0!")
+                print(f"  Taste 8: move_auto(500, 0, 500ms) — Riesen-Wert")
+                print(f"  Taste 9: 10x move(50, 0) mit Pausen — Rapid-Fire")
+                print(f"  Taste 0: move_auto(500, 0, 50ms) — Schnell+Stark")
+                print(f"=== Welcher bewegt am meisten? ===")
                 print(f"")
 
-                # Test 1: Einzelner move() mit kleinem Wert
-                print(f"  [1] move(30, 0) — Klein, direkt...")
-                kmbox_net.move(30, 0)
-                time.sleep(1.0)
+            elif key == ord('8'):
+                print(f"  [8] ADS-TEST: move_auto(500, 0, 500ms)...")
+                kmbox_net.move_auto(500, 0, ms=500)
 
-                # Test 2: Einzelner move() mit grossem Wert
-                print(f"  [2] move(100, 0) — Gross, direkt...")
-                kmbox_net.move(100, 0)
-                time.sleep(1.0)
+            elif key == ord('9'):
+                print(f"  [9] ADS-TEST: 10x move(50, 0) rapid-fire...")
+                for i in range(10):
+                    kmbox_net.move(50, 0)
+                    time.sleep(0.03)
 
-                # Test 3: move_auto mit kurzem Timing
-                print(f"  [3] move_auto(80, 0, 100ms) — Auto, kurz...")
-                kmbox_net.move_auto(80, 0, ms=100)
-                time.sleep(1.0)
-
-                # Test 4: move_auto mit langem Timing
-                print(f"  [4] move_auto(80, 0, 500ms) — Auto, lang...")
-                kmbox_net.move_auto(80, 0, ms=500)
-                time.sleep(1.0)
-
-                # Test 5: Mehrere kleine moves mit Pause
-                print(f"  [5] 5x move(20, 0) mit 50ms Pause — Stotternd...")
-                for _ in range(5):
-                    kmbox_net.move(20, 0)
-                    time.sleep(0.05)
-                time.sleep(1.0)
-
-                # Test 6: Zurueck nach links (alles rueckgaengig)
-                print(f"  [6] Zurueck: move_auto(-200, 0, 500ms)...")
-                kmbox_net.move_auto(-200, 0, ms=500)
-                time.sleep(1.0)
-
-                print(f"=== DIAGNOSE FERTIG ===")
-                print(f"Welcher Test hat die GROESSTE Bewegung erzeugt? (1-5)")
-                print(f"Sag mir die Nummer!")
+            elif key == ord('0'):
+                print(f"  [0] ADS-TEST: move_auto(500, 0, 50ms)...")
+                kmbox_net.move_auto(500, 0, ms=50)
 
     cap.release()
     if scuf:
