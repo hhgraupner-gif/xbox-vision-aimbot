@@ -132,9 +132,7 @@ MIN_MOUSE_MOVE = 1          # Nur sub-pixel Bewegungen ignorieren
 # ============================================================
 # KMBOX SENSITIVITY — Steuert wie stark die Maus pro Pixel Fehler bewegt wird
 # Taste 5/6 zum live anpassen
-# - Zu wenig Mitziehen? → Erhoehen (0.15, 0.20, 0.30)
-# - Zu zuckig? → Verringern (0.05, 0.08)
-KMBOX_SENSITIVITY = 0.12
+KMBOX_SENSITIVITY = 0.45
 # ============================================================
 
 # ============================================================
@@ -143,17 +141,17 @@ KMBOX_SENSITIVITY = 0.12
 PROFILES = {
     "assist": {
         "name": "AIM-ASSIST",
-        "speed": 0.70,          # Anteil des Fehlers pro Frame (0.5=langsam, 1.0=direkt)
-        "smoothing": 0.55,      # Mix mit vorheriger Bewegung (hoeher=glatter)
-        "max_move": 80,         # Max KMBox-Pixel pro Frame
-        "deadzone": 25,         # Pixel wo nichts passiert
+        "speed": 0.60,
+        "smoothing": 0.40,
+        "max_move": 127,        # KMBox HID max
+        "deadzone": 20,
     },
     "aimbot": {
         "name": "AIMBOT",
-        "speed": 0.90,
-        "smoothing": 0.35,
-        "max_move": 120,
-        "deadzone": 15,
+        "speed": 0.85,
+        "smoothing": 0.25,
+        "max_move": 127,
+        "deadzone": 12,
     },
 }
 ACTIVE_PROFILE = "assist"  # Standard: Aim-Assist (sanft, sicherer Start)
@@ -373,20 +371,21 @@ def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
 
 
 def move_aim(tracker, tx, ty, fw, fh, profile):
-    """Bewegt das Fadenkreuz zum Ziel per KMBox."""
+    """Bewegt das Fadenkreuz zum Ziel per KMBox move_auto.
+    Sendet eine groessere Bewegung die ueber 30ms ausgefuehrt wird.
+    """
     mx, my = calc_aim_correction(tracker, tx, ty, fw, fh, profile)
 
     ix = int(round(mx))
     iy = int(round(my))
 
-    # Hard-Cap (Sicherheit)
-    ix = max(-127, min(127, ix))
-    iy = max(-127, min(127, iy))
+    # Mindestbewegung 3px damit XIM es nicht ignoriert
+    if abs(ix) < 3 and abs(iy) < 3:
+        return False
 
-    if abs(ix) >= 1 or abs(iy) >= 1:
-        kmbox_net.move(ix, iy)
-        return True
-    return False
+    # move_auto: KMBox fuehrt Bewegung ueber 30ms smooth aus
+    kmbox_net.move_auto(ix, iy, ms=30)
+    return True
 
 
 def is_teammate(frame, bbox):
