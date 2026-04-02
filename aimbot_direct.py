@@ -122,11 +122,11 @@ KMBOX_UUID = "C14AE466"
 MODEL_MODE = "bo7"
 
 # Erkennung
-CONFIDENCE = 0.45           # Balance zwischen Erkennung und Fehlalarme
-MIN_TARGET_SIZE = 300       # Kleine Boxen ignorieren
+CONFIDENCE = 0.50           # Nur sichere Erkennungen
+MIN_TARGET_SIZE = 400       # Kleine Boxen ignorieren
 AIM_POINT_BODY = 0.40       # Zielpunkt am Koerper (0.40 = obere Brust)
 PREFER_HEADSHOTS = False    # AUS: Verhindert Springen zwischen Kopf/Koerper
-MAX_AIM_RADIUS = 400        # Ignoriere Ziele weiter als 400px vom Fadenkreuz
+MAX_AIM_RADIUS = 300        # Nur Ziele nah am Fadenkreuz (kleiner = weniger Himmel-Aiming)
 MIN_MOUSE_MOVE = 1          # Nur sub-pixel Bewegungen ignorieren
 
 # ============================================================
@@ -144,23 +144,23 @@ KMBOX_MULTIPLIER = 6.0
 PROFILES = {
     "assist": {
         "name": "AIM-ASSIST",
-        "sensitivity": 0.60,
-        "smoothing": 0.55,
-        "max_move": 40,
-        "deadzone": 25,
+        "sensitivity": 0.50,
+        "smoothing": 0.65,      # Hoch = glatt
+        "max_move": 30,
+        "deadzone": 40,         # Grosser Totbereich = kein Zittern nahe Ziel
         "lock_frames": 1,
-        "ema_alpha": 0.40,
-        "lookahead": 0.02,
+        "ema_alpha": 0.35,
+        "lookahead": 0.01,      # Wenig Vorhersage = stabiler
     },
     "aimbot": {
         "name": "AIMBOT",
-        "sensitivity": 0.85,
-        "smoothing": 0.35,
-        "max_move": 80,
-        "deadzone": 15,
+        "sensitivity": 0.75,
+        "smoothing": 0.45,
+        "max_move": 60,
+        "deadzone": 30,
         "lock_frames": 1,
-        "ema_alpha": 0.60,
-        "lookahead": 0.03,
+        "ema_alpha": 0.50,
+        "lookahead": 0.02,
     },
 }
 ACTIVE_PROFILE = "assist"  # Standard: Aim-Assist (sanft, sicherer Start)
@@ -343,7 +343,13 @@ class TargetTracker:
 
 
 def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
-    """Berechnet die Aimbot-Mauskorrektur. Gibt (dx, dy) zurueck."""
+    """Berechnet die Aimbot-Mauskorrektur mit Proportional-Daempfung.
+    
+    Verhindert Oszillation durch:
+    - Starke Daempfung nahe dem Ziel (kein Ueberschwingen)
+    - Geschwindigkeits-Bremse (kein Kreiseln)
+    - Totzone fuer "nah genug"
+    """
     cx = fw / 2.0
     cy = fh / 2.0
     dx = tx - cx
@@ -355,19 +361,36 @@ def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
     max_mv = profile["max_move"]
     dz = profile["deadzone"]
 
+    # Totzone: Wenn nah genug am Ziel, NICHTS tun
     if dist < dz:
-        # Sanft ausfaden statt abrupt stoppen
-        tracker.prev_mx *= 0.5
-        tracker.prev_my *= 0.5
+        tracker.prev_mx *= 0.3
+        tracker.prev_my *= 0.3
         return 0, 0
 
-    mx = (dx / fw) * sens * 250
-    my = (dy / fh) * sens * 250
+    # === PROPORTIONAL-DAEMPFUNG ===
+    # Je naeher am Ziel, desto WENIGER Korrektur (verhindert Ueberschwingen)
+    # Bei >200px: volle Korrektur
+    # Bei 100px: 50% Korrektur
+    # Bei 50px: 25% Korrektur
+    ramp = min(1.0, (dist - dz) / 200.0)
+    ramp = ramp * ramp  # Quadratisch: noch sanfter nahe dem Ziel
 
-    # Smoothing: Hoeher = glatter (mix mit vorherigem Wert)
+    mx = (dx / fw) * sens * 300 * ramp
+    my = (dy / fh) * sens * 300 * ramp
+
+    # Smoothing: Mix mit vorherigem Wert
     mx = smooth * tracker.prev_mx + (1 - smooth) * mx
     my = smooth * tracker.prev_my + (1 - smooth) * my
 
+    # Geschwindigkeits-Bremse: Wenn Richtung wechselt (Oszillation), stark bremsen
+    if tracker.prev_mx != 0 and mx != 0:
+        if (tracker.prev_mx > 0) != (mx > 0):  # Richtungswechsel X
+            mx *= 0.3  # 70% bremsen
+    if tracker.prev_my != 0 and my != 0:
+        if (tracker.prev_my > 0) != (my > 0):  # Richtungswechsel Y
+            my *= 0.3  # 70% bremsen
+
+    # Max Speed begrenzen
     mag = (mx*mx + my*my) ** 0.5
     if mag > max_mv:
         s = max_mv / mag
@@ -733,6 +756,7 @@ def main():
     active_profile_key = ACTIVE_PROFILE
     profile = PROFILES[active_profile_key]
     print(f"Aktives Profil: {profile['name']}")
+    aim_frame_counter = 0  # Nur jedes N-te Frame korrigieren
 
     # Scuf Controller suchen
     global SCUF_CONTROLLER_ID
@@ -829,13 +853,17 @@ def main():
                 ads_active = True
 
             # Aimbot - NUR wenn ADS aktiv
-            if best_target and ads_active:
-                tracker.update(best_target[0], best_target[1], alpha=profile["ema_alpha"])
-                if tracker.stable(profile["lock_frames"]):
-                    pos = tracker.get_predicted(lookahead=profile["lookahead"])
-                    if pos:
-                        tracker.locked = True
-                        move_aim(tracker, pos[0], pos[1], fw, fh, profile)
+            aim_frame_counter += 1
+            if best_target and ads_active and aim_frame_counter >= 2:
+                aim_frame_counter = 0
+                # Confidence-Check: Nur bei genuegend sicherer Erkennung aimen
+                if target_det and target_det.get("confidence", 0) >= 0.50:
+                    tracker.update(best_target[0], best_target[1], alpha=profile["ema_alpha"])
+                    if tracker.stable(profile["lock_frames"]):
+                        pos = tracker.get_predicted(lookahead=profile["lookahead"])
+                        if pos:
+                            tracker.locked = True
+                            move_aim(tracker, pos[0], pos[1], fw, fh, profile)
             else:
                 if not ads_active:
                     tracker.reset()
