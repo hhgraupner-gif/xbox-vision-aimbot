@@ -122,10 +122,12 @@ KMBOX_UUID = "C14AE466"
 MODEL_MODE = "bo7"
 
 # Erkennung
-CONFIDENCE = 0.40           # Hoeher als vorher: FPS-Modell ist praeziser
-MIN_TARGET_SIZE = 200       # Kleiner: FPS-Modell erkennt besser
+CONFIDENCE = 0.55           # Hoeher = weniger Fehlerkennungen (war 0.40)
+MIN_TARGET_SIZE = 400       # Kleine Boxen ignorieren (war 200)
 AIM_POINT_BODY = 0.35       # Zielpunkt am Koerper (0=oben, 1=unten)
 PREFER_HEADSHOTS = True     # Kopf-Erkennungen bevorzugen
+MAX_AIM_RADIUS = 350        # NEU: Ignoriere Ziele weiter als 350px vom Fadenkreuz
+MIN_MOUSE_MOVE = 2          # NEU: Mausbewegungen kleiner als 2px ignorieren (Anti-Jitter)
 
 # ============================================================
 # AIMBOT PROFILE: Taste 1 = Aim-Assist, Taste 2 = Aimbot
@@ -133,26 +135,26 @@ PREFER_HEADSHOTS = True     # Kopf-Erkennungen bevorzugen
 PROFILES = {
     "assist": {
         "name": "AIM-ASSIST",
-        "sensitivity": 0.50,
-        "smoothing": 0.55,
-        "max_move": 30,
-        "deadzone": 40,
-        "lock_frames": 1,
-        "ema_alpha": 0.45,
-        "lookahead": 0.03,
+        "sensitivity": 0.35,    # Sanft (war 0.50)
+        "smoothing": 0.75,      # Sehr glatt (war 0.55, hoeher=glatter)
+        "max_move": 18,         # Langsam (war 30)
+        "deadzone": 50,         # Grosser Totbereich (war 40)
+        "lock_frames": 2,       # 2 Frames zum Bestaetigen (war 1)
+        "ema_alpha": 0.25,      # Langsam anpassen (war 0.45)
+        "lookahead": 0.02,
     },
     "aimbot": {
         "name": "AIMBOT",
-        "sensitivity": 0.85,
-        "smoothing": 0.25,
-        "max_move": 70,
-        "deadzone": 15,
-        "lock_frames": 1,
-        "ema_alpha": 0.70,
-        "lookahead": 0.05,
+        "sensitivity": 0.55,    # Kontrolliert (war 0.85!)
+        "smoothing": 0.55,      # Deutlich glatter (war 0.25!)
+        "max_move": 35,         # Begrenzt (war 70!)
+        "deadzone": 30,         # Vernuenftig (war 15)
+        "lock_frames": 2,       # 2 Frames zum Bestaetigen (war 1)
+        "ema_alpha": 0.40,      # Stabiler (war 0.70!)
+        "lookahead": 0.03,
     },
 }
-ACTIVE_PROFILE = "aimbot"  # Standard: Aimbot (aggressiv)
+ACTIVE_PROFILE = "assist"  # Standard: Aim-Assist (sanft, sicherer Start)
 
 # Aktive Werte (werden vom Profil gesetzt)
 AIM_SENSITIVITY = PROFILES[ACTIVE_PROFILE]["sensitivity"]
@@ -258,7 +260,7 @@ class ADSDetector:
 
 
 class TargetTracker:
-    """Verbessertes Target Tracking mit Prediction."""
+    """Verbessertes Target Tracking mit Prediction und Anti-Jitter."""
     def __init__(self):
         self.ema_x = None
         self.ema_y = None
@@ -269,12 +271,15 @@ class TargetTracker:
         self.prev_mx = 0.0
         self.prev_my = 0.0
         self.locked = False
+        self.last_raw_x = 0.0
+        self.last_raw_y = 0.0
 
     def update(self, rx, ry, alpha=0.4):
         now = time.monotonic()
         dt = now - self.last_seen if self.last_seen > 0 else 0.033
 
         if self.ema_x is None or (now - self.last_seen) > 0.3:
+            # Neues Ziel oder zu lange kein Update
             self.ema_x = float(rx)
             self.ema_y = float(ry)
             self.vel_x = 0.0
@@ -282,16 +287,29 @@ class TargetTracker:
             self.frames_seen = 1
             self.locked = False
         else:
-            old_x, old_y = self.ema_x, self.ema_y
-            self.ema_x = alpha * rx + (1 - alpha) * self.ema_x
-            self.ema_y = alpha * ry + (1 - alpha) * self.ema_y
-            if dt > 0:
-                new_vx = (self.ema_x - old_x) / dt
-                new_vy = (self.ema_y - old_y) / dt
-                self.vel_x = 0.7 * self.vel_x + 0.3 * new_vx
-                self.vel_y = 0.7 * self.vel_y + 0.3 * new_vy
-            self.frames_seen += 1
+            # Target-Sprung erkennen: Wenn neue Position > 150px entfernt, 
+            # ist es wahrscheinlich ein anderes Ziel → Reset
+            jump = ((rx - self.ema_x)**2 + (ry - self.ema_y)**2) ** 0.5
+            if jump > 150:
+                self.ema_x = float(rx)
+                self.ema_y = float(ry)
+                self.vel_x = 0.0
+                self.vel_y = 0.0
+                self.frames_seen = 1
+                self.locked = False
+            else:
+                old_x, old_y = self.ema_x, self.ema_y
+                self.ema_x = alpha * rx + (1 - alpha) * self.ema_x
+                self.ema_y = alpha * ry + (1 - alpha) * self.ema_y
+                if dt > 0:
+                    new_vx = (self.ema_x - old_x) / dt
+                    new_vy = (self.ema_y - old_y) / dt
+                    self.vel_x = 0.8 * self.vel_x + 0.2 * new_vx
+                    self.vel_y = 0.8 * self.vel_y + 0.2 * new_vy
+                self.frames_seen += 1
 
+        self.last_raw_x = rx
+        self.last_raw_y = ry
         self.last_seen = now
 
     def get_predicted(self, lookahead=0.02):
@@ -329,13 +347,18 @@ def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
     dz = profile["deadzone"]
 
     if dist < dz:
-        tracker.prev_mx *= 0.3
-        tracker.prev_my *= 0.3
+        # Sanft ausfaden statt abrupt stoppen
+        tracker.prev_mx *= 0.5
+        tracker.prev_my *= 0.5
         return 0, 0
 
-    mx = (dx / fw) * sens * 250
-    my = (dy / fh) * sens * 250
+    # Distanz-basierte Daempfung: Je naeher am Ziel, desto langsamer
+    dist_factor = min(1.0, dist / 200.0)
 
+    mx = (dx / fw) * sens * 250 * dist_factor
+    my = (dy / fh) * sens * 250 * dist_factor
+
+    # Smoothing: Hoeher = glatter (mix mit vorherigem Wert)
     mx = smooth * tracker.prev_mx + (1 - smooth) * mx
     my = smooth * tracker.prev_my + (1 - smooth) * my
 
@@ -344,6 +367,12 @@ def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
         s = max_mv / mag
         mx *= s
         my *= s
+
+    # Anti-Jitter: Zu kleine Bewegungen ignorieren
+    if abs(mx) < MIN_MOUSE_MOVE and abs(my) < MIN_MOUSE_MOVE:
+        tracker.prev_mx = mx
+        tracker.prev_my = my
+        return 0, 0
 
     tracker.prev_mx = mx
     tracker.prev_my = my
@@ -408,7 +437,7 @@ def is_teammate(frame, bbox):
 
 def pick_best_target(detections, center_x, center_y, prefer_head=True, frame=None):
     """Waehlt das beste Ziel aus den Erkennungen.
-    Filtert Teammates raus. Priorisiert Headshots.
+    Filtert Teammates und zu weit entfernte Ziele raus.
     """
     heads = []
     bodies = []
@@ -420,17 +449,24 @@ def pick_best_target(detections, center_x, center_y, prefer_head=True, frame=Non
         if bw * bh < MIN_TARGET_SIZE:
             continue
 
+        # Mittelpunkt der Box
+        cx_det = (x1 + x2) / 2.0
+        cy_det = (y1 + y2) / 2.0
+
+        # MAX_AIM_RADIUS: Zu weit vom Fadenkreuz = ignorieren
+        dist_from_center = ((cx_det - center_x)**2 + (cy_det - center_y)**2) ** 0.5
+        if dist_from_center > MAX_AIM_RADIUS:
+            continue
+
         # Teammate-Check: Blaue/Gruene Markierung = ueberspringen
         if frame is not None and is_teammate(frame, det["bbox"]):
             det["_teammate"] = True
             continue
 
-        cx_det = (x1 + x2) / 2.0
         class_name = det["class_name"]
 
         if class_name == "head":
-            cy_det = (y1 + y2) / 2.0
-            d = ((cx_det - center_x)**2 + (cy_det - center_y)**2) ** 0.5
+            d = dist_from_center
             heads.append((cx_det, cy_det, d, det))
         elif class_name in ("player", "bot", "person"):
             target_y = y1 + int(bh * AIM_POINT_BODY)
