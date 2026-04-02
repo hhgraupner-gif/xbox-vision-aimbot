@@ -122,12 +122,12 @@ KMBOX_UUID = "C14AE466"
 MODEL_MODE = "bo7"
 
 # Erkennung
-CONFIDENCE = 0.55           # Hoeher = weniger Fehlerkennungen (war 0.40)
-MIN_TARGET_SIZE = 400       # Kleine Boxen ignorieren (war 200)
+CONFIDENCE = 0.45           # Balance zwischen Erkennung und Fehlalarme
+MIN_TARGET_SIZE = 300       # Kleine Boxen ignorieren
 AIM_POINT_BODY = 0.40       # Zielpunkt am Koerper (0.40 = obere Brust)
 PREFER_HEADSHOTS = False    # AUS: Verhindert Springen zwischen Kopf/Koerper
-MAX_AIM_RADIUS = 350        # Ignoriere Ziele weiter als 350px vom Fadenkreuz
-MIN_MOUSE_MOVE = 2          # Mausbewegungen kleiner als 2px ignorieren (Anti-Jitter)
+MAX_AIM_RADIUS = 400        # Ignoriere Ziele weiter als 400px vom Fadenkreuz
+MIN_MOUSE_MOVE = 1          # Nur sub-pixel Bewegungen ignorieren
 
 # ============================================================
 # AIMBOT PROFILE: Taste 1 = Aim-Assist, Taste 2 = Aimbot
@@ -135,22 +135,22 @@ MIN_MOUSE_MOVE = 2          # Mausbewegungen kleiner als 2px ignorieren (Anti-Ji
 PROFILES = {
     "assist": {
         "name": "AIM-ASSIST",
-        "sensitivity": 0.35,    # Sanft (war 0.50)
-        "smoothing": 0.75,      # Sehr glatt (war 0.55, hoeher=glatter)
-        "max_move": 18,         # Langsam (war 30)
-        "deadzone": 50,         # Grosser Totbereich (war 40)
-        "lock_frames": 2,       # 2 Frames zum Bestaetigen (war 1)
-        "ema_alpha": 0.25,      # Langsam anpassen (war 0.45)
+        "sensitivity": 0.60,
+        "smoothing": 0.60,      # Hoeher = glatter
+        "max_move": 25,
+        "deadzone": 35,
+        "lock_frames": 1,
+        "ema_alpha": 0.35,
         "lookahead": 0.02,
     },
     "aimbot": {
         "name": "AIMBOT",
-        "sensitivity": 0.55,    # Kontrolliert (war 0.85!)
-        "smoothing": 0.55,      # Deutlich glatter (war 0.25!)
-        "max_move": 35,         # Begrenzt (war 70!)
-        "deadzone": 30,         # Vernuenftig (war 15)
-        "lock_frames": 2,       # 2 Frames zum Bestaetigen (war 1)
-        "ema_alpha": 0.40,      # Stabiler (war 0.70!)
+        "sensitivity": 0.80,
+        "smoothing": 0.40,
+        "max_move": 50,
+        "deadzone": 20,
+        "lock_frames": 1,
+        "ema_alpha": 0.55,
         "lookahead": 0.03,
     },
 }
@@ -352,14 +352,8 @@ def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
         tracker.prev_my *= 0.5
         return 0, 0
 
-    # Distanz-basierte Daempfung: Je naeher am Ziel, desto langsamer
-    dist_factor = min(1.0, dist / 200.0)
-
-    mx = (dx / fw) * sens * 250 * dist_factor
-    my = (dy / fh) * sens * 250 * dist_factor
-
-    # Vertikale Bewegung extra daempfen (verhindert "ueber den Gegner aimen")
-    my *= 0.7
+    mx = (dx / fw) * sens * 250
+    my = (dy / fh) * sens * 250
 
     # Smoothing: Hoeher = glatter (mix mit vorherigem Wert)
     mx = smooth * tracker.prev_mx + (1 - smooth) * mx
