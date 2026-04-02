@@ -132,10 +132,10 @@ MIN_MOUSE_MOVE = 1          # Nur sub-pixel Bewegungen ignorieren
 # ============================================================
 # KMBOX KALIBRIERUNG — DER WICHTIGSTE PARAMETER!
 # Multipliziert alle Mausbewegungen. Musst du an deine Ingame-Sensitivity anpassen:
-# - Zu wenig Bewegung ingame? → Erhoehen (z.B. 3.0, 5.0, 8.0)
-# - Zu viel Bewegung / zittrig? → Verringern (z.B. 1.0, 0.5)
+# - Zu wenig Bewegung ingame? → Erhoehen (z.B. 5.0, 10.0, 15.0)
+# - Zu viel Bewegung / zittrig? → Verringern (z.B. 2.0, 1.0)
 # - Taste 5/6 zum live anpassen (5=runter, 6=rauf)
-KMBOX_MULTIPLIER = 4.0
+KMBOX_MULTIPLIER = 6.0
 # ============================================================
 
 # ============================================================
@@ -387,7 +387,7 @@ def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
 
 
 def move_aim(tracker, tx, ty, fw, fh, profile):
-    """Bewegt das Fadenkreuz zum Ziel direkt per KMBox (ohne Passthrough)."""
+    """Bewegt das Fadenkreuz zum Ziel per KMBox move_auto (smooth, kein Paketverlust)."""
     mx, my = calc_aim_correction(tracker, tx, ty, fw, fh, profile)
 
     # KMBOX_MULTIPLIER anwenden
@@ -398,7 +398,8 @@ def move_aim(tracker, tx, ty, fw, fh, profile):
     iy = int(round(my))
 
     if abs(ix) >= 1 or abs(iy) >= 1:
-        kmbox_net.move(ix, iy)
+        # move_auto: KMBox teilt die Bewegung intern auf (16ms = 1 Frame bei 60fps)
+        kmbox_net.move_auto(ix, iy, ms=16)
         return True
     return False
 
@@ -463,6 +464,11 @@ def pick_best_target(detections, center_x, center_y, prefer_head=False, frame=No
         # Mittelpunkt der Box
         cx_det = (x1 + x2) / 2.0
         cy_det = (y1 + y2) / 2.0
+
+        # Obere 12% vom Bildschirm ignorieren (Himmel/HUD-Bereich)
+        frame_height = center_y * 2
+        if cy_det < frame_height * 0.12:
+            continue
 
         # MAX_AIM_RADIUS: Zu weit vom Fadenkreuz = ignorieren
         dist_from_center = ((cx_det - center_x)**2 + (cy_det - center_y)**2) ** 0.5
@@ -917,27 +923,27 @@ def main():
                 print(f"ADS-Trigger: {mode_names.get(ADS_MODE, ADS_MODE)}")
             elif key == ord('5'):
                 # KMBOX Multiplier runter
-                KMBOX_MULTIPLIER = max(0.5, KMBOX_MULTIPLIER - 0.5)
+                KMBOX_MULTIPLIER = max(0.5, KMBOX_MULTIPLIER - 1.0)
                 print(f"KMBOX Multiplier: {KMBOX_MULTIPLIER:.1f}")
             elif key == ord('6'):
                 # KMBOX Multiplier rauf
-                KMBOX_MULTIPLIER = min(20.0, KMBOX_MULTIPLIER + 0.5)
+                KMBOX_MULTIPLIER = min(50.0, KMBOX_MULTIPLIER + 1.0)
                 print(f"KMBOX Multiplier: {KMBOX_MULTIPLIER:.1f}")
             elif key == ord('7'):
-                # Kalibrierungs-Test: Sendet definierte Bewegung
+                # Kalibrierungs-Test: Sendet definierte Bewegung mit move_auto
                 test_val = int(50 * KMBOX_MULTIPLIER)
                 print(f"=== KALIBRIERUNGS-TEST (Multi: {KMBOX_MULTIPLIER:.1f}, Wert: {test_val}px) ===")
                 print("  Sende nach RECHTS...")
-                kmbox_net.move(test_val, 0)
+                kmbox_net.move_auto(test_val, 0, ms=200)
                 time.sleep(0.8)
                 print("  Sende nach LINKS (zurueck)...")
-                kmbox_net.move(-test_val, 0)
+                kmbox_net.move_auto(-test_val, 0, ms=200)
                 time.sleep(0.8)
                 print("  Sende nach UNTEN...")
-                kmbox_net.move(0, test_val)
+                kmbox_net.move_auto(0, test_val, ms=200)
                 time.sleep(0.8)
                 print("  Sende nach OBEN (zurueck)...")
-                kmbox_net.move(0, -test_val)
+                kmbox_net.move_auto(0, -test_val, ms=200)
                 print(f"=== FERTIG! Bewegung sichtbar? 5=weniger 6=mehr, dann 7 nochmal ===")
 
     cap.release()
