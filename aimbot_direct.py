@@ -37,6 +37,75 @@ except (AttributeError, OSError):
         return False
     KEY_DETECTION_AVAILABLE = False
 
+
+# ============================================================
+# SCUF / XINPUT CONTROLLER AUSLESEN (Windows, kein pip noetig)
+# ============================================================
+XINPUT_AVAILABLE = False
+try:
+    xinput_dll = ctypes.windll.xinput1_4
+    XINPUT_AVAILABLE = True
+except (AttributeError, OSError):
+    try:
+        xinput_dll = ctypes.windll.xinput1_3
+        XINPUT_AVAILABLE = True
+    except (AttributeError, OSError):
+        try:
+            xinput_dll = ctypes.windll.xinput9_1_0
+            XINPUT_AVAILABLE = True
+        except (AttributeError, OSError):
+            xinput_dll = None
+
+if XINPUT_AVAILABLE:
+    class XINPUT_GAMEPAD(ctypes.Structure):
+        _fields_ = [
+            ("wButtons", ctypes.c_ushort),
+            ("bLeftTrigger", ctypes.c_ubyte),
+            ("bRightTrigger", ctypes.c_ubyte),
+            ("sThumbLX", ctypes.c_short),
+            ("sThumbLY", ctypes.c_short),
+            ("sThumbRX", ctypes.c_short),
+            ("sThumbRY", ctypes.c_short),
+        ]
+
+    class XINPUT_STATE(ctypes.Structure):
+        _fields_ = [
+            ("dwPacketNumber", ctypes.c_ulong),
+            ("Gamepad", XINPUT_GAMEPAD),
+        ]
+
+    # Button Konstanten
+    XINPUT_GAMEPAD_LB = 0x0100
+    XINPUT_GAMEPAD_RB = 0x0200
+    XINPUT_GAMEPAD_A  = 0x1000
+    XINPUT_GAMEPAD_B  = 0x2000
+    XINPUT_GAMEPAD_X  = 0x4000
+    XINPUT_GAMEPAD_Y  = 0x8000
+
+    def get_xinput_state(controller_id=0):
+        """Liest den XInput Controller Status. Returns None wenn nicht verbunden."""
+        state = XINPUT_STATE()
+        ret = xinput_dll.XInputGetState(controller_id, ctypes.byref(state))
+        if ret == 0:
+            return state
+        return None
+
+    def is_scuf_ads_pressed(controller_id=0, trigger_threshold=50):
+        """Prueft ob LT (Aim Down Sight) am Scuf gedrueckt ist."""
+        state = get_xinput_state(controller_id)
+        if state is None:
+            return False
+        # Left Trigger > threshold = ADS aktiv
+        return state.Gamepad.bLeftTrigger > trigger_threshold
+
+    def find_scuf_controller():
+        """Findet den Scuf Controller (durchsucht alle 4 XInput Slots)."""
+        for i in range(4):
+            state = get_xinput_state(i)
+            if state is not None:
+                return i
+        return -1
+
 # ============================================================
 # EINSTELLUNGEN
 # ============================================================
@@ -89,12 +158,15 @@ DEADZONE = PROFILES[ACTIVE_PROFILE]["deadzone"]
 LOCK_FRAMES = PROFILES[ACTIVE_PROFILE]["lock_frames"]
 
 # ADS Erkennung / Trigger-Modus
-# "visual"   = Automatisch per Zoom-Erkennung (unzuverlaessig)
+# "scuf"     = Halte LT am Scuf inVision Pro (zuverlaessig, bester Modus)
 # "keyboard" = Halte Taste X am PC (zuverlaessig)
 # "kmbox"    = Halte rechte Maustaste an KMBox-Maus (zuverlaessig)
-ADS_MODE = "keyboard"       # Standard: Tastatur
+# "visual"   = Automatisch per Zoom-Erkennung (unzuverlaessig)
+ADS_MODE = "scuf"           # Standard: Scuf Controller
 ADS_KEY = 0x58              # 0x58 = X-Taste (Virtual Key Code)
 ADS_ZOOM_THRESHOLD = 12.0
+SCUF_CONTROLLER_ID = -1     # -1 = automatisch finden
+SCUF_TRIGGER_THRESHOLD = 50 # LT Empfindlichkeit (0-255, niedriger = empfindlicher)
 
 # Screenshot Sammlung
 COLLECT_SCREENSHOTS = False
@@ -458,7 +530,7 @@ def draw_status_bar(frame, model_mode, collecting, screenshot_count, fps, ads_ac
         ads_color = (100, 100, 100)
 
     # Zeige aktuellen ADS-Modus
-    mode_short = {"keyboard": "[X]", "kmbox": "[MAUS]", "visual": "[AUTO]", "always": "[ON]"}
+    mode_short = {"scuf": "[LT]", "keyboard": "[X]", "kmbox": "[MAUS]", "visual": "[AUTO]", "always": "[ON]"}
     ads_text += " " + mode_short.get(ADS_MODE, "")
 
     (tw_ads, _), _ = cv2.getTextSize(ads_text, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
@@ -580,6 +652,7 @@ def main():
     print("1 = Aim-Assist (sanft)")
     print("2 = Aimbot (aggressiv)")
     print("3 = ADS-Trigger umschalten:")
+    print("    [scuf]     Halte LT am Scuf inVision Pro")
     print("    [keyboard] Halte X-Taste am PC")
     print("    [kmbox]    Halte rechte Maustaste (KMBox)")
     print("    [visual]   Automatisch (Zoom-Erkennung)")
@@ -599,6 +672,24 @@ def main():
     profile = PROFILES[active_profile_key]
     print(f"Aktives Profil: {profile['name']}")
 
+    # Scuf Controller suchen
+    global SCUF_CONTROLLER_ID
+    if XINPUT_AVAILABLE:
+        if SCUF_CONTROLLER_ID == -1:
+            SCUF_CONTROLLER_ID = find_scuf_controller()
+        if SCUF_CONTROLLER_ID >= 0:
+            print(f"Scuf Controller gefunden: Slot {SCUF_CONTROLLER_ID}")
+            print("  -> Halte LT am Scuf = Aimbot aktiviert")
+        else:
+            print("Kein XInput Controller gefunden")
+            if ADS_MODE == "scuf":
+                ADS_MODE = "keyboard"
+                print("  -> Fallback: Tastatur-Modus (halte X)")
+    else:
+        print("XInput nicht verfuegbar (nur Windows)")
+        if ADS_MODE == "scuf":
+            ADS_MODE = "keyboard"
+
     fps = 0
     frame_count = 0
     fps_time = time.monotonic()
@@ -612,7 +703,9 @@ def main():
 
         # ADS erkennen (je nach Modus)
         ads_active = False
-        if ADS_MODE == "keyboard":
+        if ADS_MODE == "scuf":
+            ads_active = is_scuf_ads_pressed(SCUF_CONTROLLER_ID, SCUF_TRIGGER_THRESHOLD) if XINPUT_AVAILABLE else False
+        elif ADS_MODE == "keyboard":
             ads_active = is_key_pressed(ADS_KEY)
         elif ADS_MODE == "kmbox":
             ads_active = kmbox_net.is_mouse_right_pressed()
@@ -720,10 +813,11 @@ def main():
                         print(f"Kein alternatives Modell gefunden!")
             elif key == ord('3'):
                 # ADS-Trigger-Modus umschalten
-                ads_cycle = {"keyboard": "kmbox", "kmbox": "visual", "visual": "always", "always": "keyboard"}
-                ADS_MODE = ads_cycle.get(ADS_MODE, "keyboard")
+                ads_cycle = {"scuf": "keyboard", "keyboard": "kmbox", "kmbox": "visual", "visual": "always", "always": "scuf"}
+                ADS_MODE = ads_cycle.get(ADS_MODE, "scuf")
                 tracker.reset()
                 mode_names = {
+                    "scuf": "SCUF CONTROLLER (halte LT)",
                     "keyboard": f"TASTATUR (halte X-Taste)",
                     "kmbox": "KMBOX (rechte Maustaste)",
                     "visual": "VISUELL (automatisch)",
