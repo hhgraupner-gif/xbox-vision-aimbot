@@ -123,11 +123,11 @@ KMBOX_UUID = "C14AE466"
 MODEL_MODE = "bo7"
 
 # Erkennung
-CONFIDENCE = 0.50           # Nur sichere Erkennungen
-MIN_TARGET_SIZE = 400       # Kleine Boxen ignorieren
+CONFIDENCE = 0.60           # Hoeher = weniger falsche Erkennungen (Gegenstaende etc.)
+MIN_TARGET_SIZE = 500       # Kleine Boxen ignorieren (groesser = weniger Muell)
 AIM_POINT_BODY = 0.40       # Zielpunkt am Koerper (0.40 = obere Brust)
 PREFER_HEADSHOTS = False    # AUS: Verhindert Springen zwischen Kopf/Koerper
-MAX_AIM_RADIUS = 300        # Nur Ziele nah am Fadenkreuz (kleiner = weniger Himmel-Aiming)
+MAX_AIM_RADIUS = 220        # Nur Ziele nah am Fadenkreuz (kleiner = weniger Fehlziele)
 MIN_MOUSE_MOVE = 1          # Nur sub-pixel Bewegungen ignorieren
 
 # ============================================================
@@ -547,9 +547,9 @@ def pick_best_target(detections, center_x, center_y, prefer_head=False, frame=No
         if bh < 40:
             continue
 
-        # Obere 12% vom Bildschirm ignorieren (Himmel/HUD-Bereich)
+        # Obere 18% vom Bildschirm ignorieren (Himmel/HUD-Bereich)
         frame_height = center_y * 2
-        if cy_det < frame_height * 0.12:
+        if cy_det < frame_height * 0.18:
             continue
 
         # Untere 10% ignorieren (HUD/Killfeed)
