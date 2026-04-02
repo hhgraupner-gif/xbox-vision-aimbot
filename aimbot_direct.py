@@ -482,6 +482,7 @@ class AimController:
         ms = int(self.duration * 1000)
         kmbox_net.move_auto(ix, iy, ms=ms)
         self.last_send_time = now
+        print(f"  >>> GESENDET: move_auto({ix}, {iy}, {ms}ms)")
         return True
 
     def reset(self):
@@ -496,6 +497,12 @@ def move_aim(tracker, tx, ty, fw, fh, profile):
     Keine Akkumulation — nur aktuelle Frame-Daten.
     """
     mx, my = calc_aim_correction(tracker, tx, ty, fw, fh, profile)
+    cx = fw / 2.0
+    cy = fh / 2.0
+    dx = tx - cx
+    dy = ty - cy
+    dist = (dx*dx + dy*dy) ** 0.5
+    print(f"  AIM: Ziel={int(tx)},{int(ty)} Mitte={int(cx)},{int(cy)} Offset={int(dx)},{int(dy)} Dist={int(dist)} → Korr={mx:.1f},{my:.1f}")
     return aim_controller.try_correct(mx, my)
 
 
