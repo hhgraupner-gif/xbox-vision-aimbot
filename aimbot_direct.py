@@ -137,6 +137,42 @@ KMBOX_SENSITIVITY = 0.45
 # ============================================================
 
 # ============================================================
+# SPEED CURVES — Der Kern des Auto-Track Systems
+# Inspiriert von professionellen Console-Aimbots (Console Aimbot v1.1.3)
+#
+# Idee: Je naeher am Ziel, desto LANGSAMER und PRAEZISER die Korrektur.
+#       Je weiter weg, desto SCHNELLER der Snap.
+#       Erzeugt den "Magnet-Effekt" — Fadenkreuz klebt am Gegner.
+#
+# Format: Liste von (Distanz-Schwelle, Speed-Multiplikator)
+# Distanz = Pixel vom Fadenkreuz zum Ziel
+# ============================================================
+SPEED_CURVE_DEFAULT = [
+    # (max_distanz, multiplikator)
+    (15,   0.10),   # Sehr nah: Kaum bewegen (anti-jitter, "sticky")
+    (40,   0.30),   # Nah: Sanfte Mikro-Korrekturen
+    (80,   0.55),   # Mittel-nah: Moderates Tracking
+    (150,  0.80),   # Mittel: Zuegiges Anziehen
+    (250,  1.00),   # Weit: Volle Geschwindigkeit
+    (9999, 1.15),   # Sehr weit: Extra schneller Snap
+]
+
+SPEED_CURVE_ON_TARGET = [
+    # Wenn bereits auf dem Ziel (nach erstem Lock): Noch praeziser
+    (10,   0.05),   # Minimal: Fast stillstehen
+    (25,   0.20),   # Sehr nah: Feinste Korrekturen
+    (50,   0.40),   # Nah: Sanftes Nachfuehren
+    (100,  0.65),   # Mittel: Kontrolliert folgen
+    (200,  0.85),   # Weit: Schnell nachziehen
+    (9999, 1.00),   # Sehr weit: Volle Geschwindigkeit
+]
+
+# Separate X/Y Sensitivitaet (wie im Profi-Aimbot Video)
+SPEED_X_MULTIPLIER = 1.0    # Horizontal (Strafing = oft schneller noetig)
+SPEED_Y_MULTIPLIER = 0.85   # Vertikal (weniger Bewegung noetig, praeziser)
+# ============================================================
+
+# ============================================================
 # AIMBOT PROFILE: Taste 1 = Aim-Assist, Taste 2 = Aimbot
 # ============================================================
 PROFILES = {
@@ -145,14 +181,14 @@ PROFILES = {
         "speed": 0.60,
         "smoothing": 0.40,
         "max_move": 127,        # KMBox HID max
-        "deadzone": 20,
+        "deadzone": 15,         # Kleiner = praeziser, groesser = weniger Jitter
     },
     "aimbot": {
         "name": "AIMBOT",
         "speed": 0.85,
-        "smoothing": 0.25,
+        "smoothing": 0.20,
         "max_move": 127,
-        "deadzone": 12,
+        "deadzone": 10,
     },
 }
 ACTIVE_PROFILE = "assist"  # Standard: Aim-Assist (sanft, sicherer Start)
@@ -301,6 +337,9 @@ class TargetTracker:
                     self.vel_x = 0.8 * self.vel_x + 0.2 * new_vx
                     self.vel_y = 0.8 * self.vel_y + 0.2 * new_vy
                 self.frames_seen += 1
+                # Nach 3 Frames stabiles Tracking → "locked" (On-Target Kurve)
+                if self.frames_seen >= 3:
+                    self.locked = True
 
         self.last_raw_x = rx
         self.last_raw_y = ry
@@ -328,14 +367,41 @@ class TargetTracker:
         self.locked = False
 
 
+def get_speed_curve_multiplier(dist, curve, is_locked=False):
+    """Liest den Speed-Multiplikator aus der Speed Curve.
+    
+    Sucht die passende Distanz-Stufe und interpoliert linear dazwischen.
+    Erzeugt den 'Magnet-Effekt': Weit weg = schnell, nah = langsam + praezise.
+    """
+    # Wenn bereits gelockt, benutze die praezisere On-Target Kurve
+    active_curve = SPEED_CURVE_ON_TARGET if is_locked else curve
+
+    prev_dist = 0
+    prev_mult = active_curve[0][1]
+
+    for threshold, multiplier in active_curve:
+        if dist <= threshold:
+            # Lineare Interpolation zwischen den Stufen
+            if threshold == prev_dist:
+                return multiplier
+            t = (dist - prev_dist) / (threshold - prev_dist)
+            return prev_mult + t * (multiplier - prev_mult)
+        prev_dist = threshold
+        prev_mult = multiplier
+
+    return active_curve[-1][1]
+
+
 def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
-    """PD-Controller: Proportional + Derivative fuer smooth Tracking.
+    """Speed-Curve PD-Controller — Profi-Aimbot Tracking.
     
-    P (Proportional): Fehler * Gain = Grundbewegung (wie bisher)
-    D (Derivative):   Aenderungsrate des Fehlers = Damping gegen Overshoot
+    Kombiniert:
+    1. Speed Curves: Nicht-lineare Geschwindigkeit basierend auf Distanz
+       (weit = schnell snappen, nah = langsam + praezise = Magnet-Effekt)
+    2. PD-Controller: Proportional + Derivative fuer smooth Damping
+    3. Separate X/Y: Horizontale und vertikale Geschwindigkeit getrennt
     
-    Ergebnis: Schnelles Anziehen zum Ziel OHNE Ueberschwingen.
-    Das nutzen professionelle Aimbots (Aimmy, SunOner, etc.)
+    Das ist der Ansatz den professionelle Console-Aimbots nutzen.
     """
     cx = fw / 2.0
     cy = fh / 2.0
@@ -353,13 +419,15 @@ def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
         tracker.prev_my *= 0.3
         return 0, 0
 
-    # --- P-Anteil: Proportional zum Fehler ---
-    p_x = dx * KMBOX_SENSITIVITY * speed
-    p_y = dy * KMBOX_SENSITIVITY * speed
+    # --- Speed Curve: Multiplikator basierend auf Distanz ---
+    curve_mult = get_speed_curve_multiplier(dist, SPEED_CURVE_DEFAULT, is_locked=tracker.locked)
+
+    # --- P-Anteil: Proportional zum Fehler * Speed Curve ---
+    p_x = dx * KMBOX_SENSITIVITY * speed * curve_mult * SPEED_X_MULTIPLIER
+    p_y = dy * KMBOX_SENSITIVITY * speed * curve_mult * SPEED_Y_MULTIPLIER
 
     # --- D-Anteil: Damping basierend auf Aenderung ---
-    # Verhindert Ueberschwingen wenn sich der Fehler schnell aendert
-    d_gain = 0.15  # Damping-Staerke (0.1 = sanft, 0.3 = stark)
+    d_gain = 0.15
     d_x = (p_x - tracker.prev_mx) * d_gain
     d_y = (p_y - tracker.prev_my) * d_gain
 
@@ -813,8 +881,10 @@ def main():
     active_profile_key = ACTIVE_PROFILE
     profile = PROFILES[active_profile_key]
     print(f"Aktives Profil: {profile['name']}")
-    print(f"Aim-System: BEZIER-KURVEN (alle {aim_accumulator.send_every} Frames)")
+    print(f"Aim-System: BEZIER + SPEED CURVES (alle {aim_accumulator.send_every} Frames)")
     print(f"Controller: PD (Proportional + Derivative Damping)")
+    print(f"Speed X: {SPEED_X_MULTIPLIER:.2f} | Speed Y: {SPEED_Y_MULTIPLIER:.2f}")
+    print(f"Speed Curve: {len(SPEED_CURVE_DEFAULT)} Stufen (nah=langsam, weit=schnell)")
 
     # Scuf Controller suchen
     global SCUF_CONTROLLER_ID
