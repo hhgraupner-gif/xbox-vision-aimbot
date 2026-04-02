@@ -124,10 +124,10 @@ MODEL_MODE = "bo7"
 # Erkennung
 CONFIDENCE = 0.55           # Hoeher = weniger Fehlerkennungen (war 0.40)
 MIN_TARGET_SIZE = 400       # Kleine Boxen ignorieren (war 200)
-AIM_POINT_BODY = 0.35       # Zielpunkt am Koerper (0=oben, 1=unten)
-PREFER_HEADSHOTS = True     # Kopf-Erkennungen bevorzugen
-MAX_AIM_RADIUS = 350        # NEU: Ignoriere Ziele weiter als 350px vom Fadenkreuz
-MIN_MOUSE_MOVE = 2          # NEU: Mausbewegungen kleiner als 2px ignorieren (Anti-Jitter)
+AIM_POINT_BODY = 0.40       # Zielpunkt am Koerper (0.40 = obere Brust)
+PREFER_HEADSHOTS = False    # AUS: Verhindert Springen zwischen Kopf/Koerper
+MAX_AIM_RADIUS = 350        # Ignoriere Ziele weiter als 350px vom Fadenkreuz
+MIN_MOUSE_MOVE = 2          # Mausbewegungen kleiner als 2px ignorieren (Anti-Jitter)
 
 # ============================================================
 # AIMBOT PROFILE: Taste 1 = Aim-Assist, Taste 2 = Aimbot
@@ -358,6 +358,9 @@ def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
     mx = (dx / fw) * sens * 250 * dist_factor
     my = (dy / fh) * sens * 250 * dist_factor
 
+    # Vertikale Bewegung extra daempfen (verhindert "ueber den Gegner aimen")
+    my *= 0.7
+
     # Smoothing: Hoeher = glatter (mix mit vorherigem Wert)
     mx = smooth * tracker.prev_mx + (1 - smooth) * mx
     my = smooth * tracker.prev_my + (1 - smooth) * my
@@ -435,11 +438,11 @@ def is_teammate(frame, bbox):
     return ratio > 0.05
 
 
-def pick_best_target(detections, center_x, center_y, prefer_head=True, frame=None):
+def pick_best_target(detections, center_x, center_y, prefer_head=False, frame=None):
     """Waehlt das beste Ziel aus den Erkennungen.
-    Filtert Teammates und zu weit entfernte Ziele raus.
+    Nutzt NUR body-Erkennung fuer konsistenten Zielpunkt.
+    Head-Erkennung wird ignoriert (verhindert Springen).
     """
-    heads = []
     bodies = []
 
     for det in detections:
@@ -465,32 +468,25 @@ def pick_best_target(detections, center_x, center_y, prefer_head=True, frame=Non
 
         class_name = det["class_name"]
 
-        if class_name == "head":
-            d = dist_from_center
-            heads.append((cx_det, cy_det, d, det))
-        elif class_name in ("player", "bot", "person"):
+        # NUR Body/Player Detections verwenden (konsistenter Zielpunkt)
+        if class_name in ("player", "bot", "person"):
             target_y = y1 + int(bh * AIM_POINT_BODY)
             d = ((cx_det - center_x)**2 + (target_y - center_y)**2) ** 0.5
             bodies.append((cx_det, target_y, d, det))
+        elif class_name == "head":
+            # Head-Box in Body-aehnlichen Zielpunkt umrechnen
+            # (Mitte der Head-Box statt oben drueber zu aimen)
+            head_cy = (y1 + y2) / 2.0
+            # Etwas UNTER die Head-Mitte zielen (realistischer)
+            target_y = head_cy + bh * 0.3
+            d = ((cx_det - center_x)**2 + (target_y - center_y)**2) ** 0.5
+            # Head nur nehmen wenn kein Body da ist (niedriger Prio)
+            bodies.append((cx_det, target_y, d + 100, det))  # +100 = niedrigere Prio
 
-    # Kopf-Erkennung bevorzugen wenn vorhanden und nah genug
-    if prefer_head and heads:
-        heads.sort(key=lambda x: x[2])
-        best_head = heads[0]
-        # Kopf nur bevorzugen wenn er innerhalb 500px vom Fadenkreuz ist
-        if best_head[2] < 500:
-            return (best_head[0], best_head[1]), best_head[3]
-
-    # Sonst naechsten Koerper nehmen
+    # Naechstes Ziel zum Fadenkreuz nehmen
     if bodies:
         bodies.sort(key=lambda x: x[2])
         best = bodies[0]
-        return (best[0], best[1]), best[3]
-
-    # Fallback: Kopf nehmen auch wenn weiter weg
-    if heads:
-        heads.sort(key=lambda x: x[2])
-        best = heads[0]
         return (best[0], best[1]), best[3]
 
     return None, None
