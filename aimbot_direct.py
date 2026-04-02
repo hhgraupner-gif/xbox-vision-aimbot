@@ -133,7 +133,7 @@ MIN_MOUSE_MOVE = 1          # Nur sub-pixel Bewegungen ignorieren
 # ============================================================
 # KMBOX SENSITIVITY — Steuert wie stark die Maus pro Pixel Fehler bewegt wird
 # Taste 5/6 zum live anpassen
-KMBOX_SENSITIVITY = 2.50
+KMBOX_SENSITIVITY = 1.20
 # ============================================================
 
 # ============================================================
@@ -453,19 +453,23 @@ def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
 
 
 class AimController:
-    """Einfachster Aim Controller — direktes move() mit Cooldown.
+    """Aim Controller optimiert fuer XIM Matrix.
     
-    Kein move_auto, kein move_beizer — nur das simpelste KMBox-Kommando.
-    move() ist sofort, zuverlaessig, kein Timing-Problem.
+    XIM braucht LANGSAME, KONTINUIERLICHE Mausbewegungen.
+    Kurze Bursts und direkte move() werden verschluckt.
+    
+    Diagnose-Ergebnis: move_auto mit 300-500ms Dauer funktioniert am besten.
+    → ~2-3 Korrekturen pro Sekunde, aber jede kommt an!
     """
-    def __init__(self, cooldown_ms=80):
-        self.cooldown = cooldown_ms / 1000.0
+    def __init__(self, duration_ms=300):
+        self.duration = duration_ms / 1000.0
         self.last_send_time = 0.0
 
     def try_correct(self, mx, my):
-        """Sende Korrektur per direktem move() wenn Cooldown abgelaufen."""
+        """Sende Korrektur per move_auto mit langer Dauer."""
         now = time.monotonic()
-        if now - self.last_send_time < self.cooldown:
+        # Cooldown = Dauer der letzten Bewegung (kein Overlap)
+        if now - self.last_send_time < self.duration:
             return False
 
         ix = int(round(mx))
@@ -474,8 +478,9 @@ class AimController:
         if abs(ix) < 2 and abs(iy) < 2:
             return False
 
-        # Direktes move — simpelstes KMBox Kommando, kein Timing-Problem
-        kmbox_net.move(ix, iy)
+        # move_auto mit langer Dauer — XIM versteht das!
+        ms = int(self.duration * 1000)
+        kmbox_net.move_auto(ix, iy, ms=ms)
         self.last_send_time = now
         return True
 
@@ -483,7 +488,7 @@ class AimController:
         pass
 
 
-aim_controller = AimController(cooldown_ms=80)
+aim_controller = AimController(duration_ms=300)
 
 
 def move_aim(tracker, tx, ty, fw, fh, profile):
