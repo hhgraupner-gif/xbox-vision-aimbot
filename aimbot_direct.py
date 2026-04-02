@@ -133,7 +133,7 @@ MIN_MOUSE_MOVE = 1          # Nur sub-pixel Bewegungen ignorieren
 # ============================================================
 # KMBOX SENSITIVITY — Steuert wie stark die Maus pro Pixel Fehler bewegt wird
 # Taste 5/6 zum live anpassen
-KMBOX_SENSITIVITY = 0.45
+KMBOX_SENSITIVITY = 0.70
 # ============================================================
 
 # ============================================================
@@ -149,27 +149,27 @@ KMBOX_SENSITIVITY = 0.45
 # ============================================================
 SPEED_CURVE_DEFAULT = [
     # (max_distanz, multiplikator)
-    (15,   0.10),   # Sehr nah: Kaum bewegen (anti-jitter, "sticky")
-    (40,   0.30),   # Nah: Sanfte Mikro-Korrekturen
-    (80,   0.55),   # Mittel-nah: Moderates Tracking
-    (150,  0.80),   # Mittel: Zuegiges Anziehen
-    (250,  1.00),   # Weit: Volle Geschwindigkeit
-    (9999, 1.15),   # Sehr weit: Extra schneller Snap
+    (20,   0.05),   # Sehr nah: Fast stillstehen (KEIN ZITTERN)
+    (50,   0.35),   # Nah: Sanfte Korrekturen
+    (100,  0.65),   # Mittel: Zuegiges Tracking
+    (180,  0.90),   # Mittel-weit: Starkes Anziehen
+    (300,  1.10),   # Weit: Aggressiver Pull
+    (9999, 1.30),   # Sehr weit: Maximaler Snap
 ]
 
 SPEED_CURVE_ON_TARGET = [
-    # Wenn bereits auf dem Ziel (nach erstem Lock): Noch praeziser
-    (10,   0.05),   # Minimal: Fast stillstehen
-    (25,   0.20),   # Sehr nah: Feinste Korrekturen
-    (50,   0.40),   # Nah: Sanftes Nachfuehren
-    (100,  0.65),   # Mittel: Kontrolliert folgen
-    (200,  0.85),   # Weit: Schnell nachziehen
-    (9999, 1.00),   # Sehr weit: Volle Geschwindigkeit
+    # Wenn bereits auf dem Ziel (nach Lock): Praezise halten
+    (15,   0.02),   # Minimal: Praktisch stillstehen (anti-jitter)
+    (35,   0.20),   # Sehr nah: Feinste Korrekturen
+    (70,   0.45),   # Nah: Sanftes Nachfuehren
+    (130,  0.70),   # Mittel: Kontrolliert folgen
+    (250,  0.90),   # Weit: Schnell nachziehen
+    (9999, 1.10),   # Sehr weit: Volle Geschwindigkeit
 ]
 
 # Separate X/Y Sensitivitaet (wie im Profi-Aimbot Video)
 SPEED_X_MULTIPLIER = 1.0    # Horizontal (Strafing = oft schneller noetig)
-SPEED_Y_MULTIPLIER = 0.85   # Vertikal (weniger Bewegung noetig, praeziser)
+SPEED_Y_MULTIPLIER = 0.80   # Vertikal (weniger Bewegung noetig, praeziser)
 # ============================================================
 
 # ============================================================
@@ -178,17 +178,17 @@ SPEED_Y_MULTIPLIER = 0.85   # Vertikal (weniger Bewegung noetig, praeziser)
 PROFILES = {
     "assist": {
         "name": "AIM-ASSIST",
-        "speed": 0.60,
-        "smoothing": 0.40,
-        "max_move": 127,        # KMBox HID max
-        "deadzone": 15,         # Kleiner = praeziser, groesser = weniger Jitter
+        "speed": 0.70,
+        "smoothing": 0.50,          # Mehr Smoothing = weniger Zittern
+        "max_move": 127,            # KMBox HID max
+        "deadzone": 25,             # Groesser = kein Zittern wenn fast drauf
     },
     "aimbot": {
         "name": "AIMBOT",
-        "speed": 0.85,
-        "smoothing": 0.20,
+        "speed": 0.90,
+        "smoothing": 0.35,
         "max_move": 127,
-        "deadzone": 10,
+        "deadzone": 18,
     },
 }
 ACTIVE_PROFILE = "assist"  # Standard: Aim-Assist (sanft, sicherer Start)
@@ -427,7 +427,7 @@ def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
     p_y = dy * KMBOX_SENSITIVITY * speed * curve_mult * SPEED_Y_MULTIPLIER
 
     # --- D-Anteil: Damping basierend auf Aenderung ---
-    d_gain = 0.15
+    d_gain = 0.08  # Reduziert: Weniger aggressives Damping = weniger Zittern
     d_x = (p_x - tracker.prev_mx) * d_gain
     d_y = (p_y - tracker.prev_my) * d_gain
 
@@ -461,8 +461,8 @@ class AimAccumulator:
     
     Das ist der Ansatz den Aimmy, SunOner und andere Profi-Aimbots nutzen.
     """
-    def __init__(self, send_every=3, min_move=5):
-        self.send_every = send_every       # Alle N Frames senden
+    def __init__(self, send_every=4, min_move=8):
+        self.send_every = send_every       # Alle N Frames senden (4 statt 3)
         self.min_move = min_move           # Minimale Pixel bevor gesendet wird
         self.acc_x = 0.0                   # Akkumulierte X-Korrektur
         self.acc_y = 0.0                   # Akkumulierte Y-Korrektur
@@ -492,13 +492,12 @@ class AimAccumulator:
         mag = (ix*ix + iy*iy) ** 0.5
 
         if mag >= self.min_move:
-            # Dauer: Proportional zur Distanz, 30-80ms
-            # Kurze Distanz = schnell, weite = etwas langsamer
-            ms = int(max(30, min(80, mag * 1.5)))
+            # Dauer: Proportional zur Distanz, 50-120ms (laenger = smoother)
+            ms = int(max(50, min(120, mag * 2.0)))
 
             # Kontrollpunkte fuer leichte Kurve (menschlich)
-            # Senkrecht zur Bewegungsrichtung, zufaellige Staerke
-            jitter = max(2, mag * 0.15)
+            # Weniger Jitter als vorher — smooth statt wackelig
+            jitter = max(1, mag * 0.08)
             cx1 = int(ix * 0.3 + random.uniform(-jitter, jitter))
             cy1 = int(iy * 0.3 + random.uniform(-jitter, jitter))
             cx2 = int(ix * 0.7 + random.uniform(-jitter, jitter))
