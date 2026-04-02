@@ -1200,6 +1200,7 @@ async def download_file(filename: str):
         "scuf_passthrough.py": Path("/app/scuf_passthrough.py"),
         "aimbot_direct.py": Path("/app/aimbot_direct.py"),
         "kmbox_net.py": Path("/app/backend/kmbox_net.py"),
+        "yolo_onnx.py": Path("/app/backend/yolo_onnx.py"),
     }
     if filename not in allowed:
         raise HTTPException(status_code=404, detail="Datei nicht gefunden")

@@ -579,13 +579,15 @@ def draw_overlay(frame, all_detections, target_dets, target_pos, fps, ads_active
             cv2.putText(frame, 'TEAM', (x1, y1-8),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 150, 0), 2)
         elif is_target:
-            cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
+            tgt_color = (0, 0, 255)  # Rot fuer Ziele
+            cv2.rectangle(frame, (x1, y1), (x2, y2), tgt_color, 2)
             cv2.putText(frame, f'{cls} {conf:.0%}', (x1, y1-8),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, box_color, 2)
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, tgt_color, 2)
         else:
-            cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 1)
+            other_color = (100, 100, 100)  # Grau fuer Nicht-Ziele
+            cv2.rectangle(frame, (x1, y1), (x2, y2), other_color, 1)
             cv2.putText(frame, f'{cls}', (x1, y1-5),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, box_color, 1)
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, other_color, 1)
 
     # Ziel-Markierung
     if target_pos:
