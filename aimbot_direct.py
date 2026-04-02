@@ -22,6 +22,7 @@ import time
 import sys
 import os
 import ctypes
+import random
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'backend'))
 
@@ -328,10 +329,13 @@ class TargetTracker:
 
 
 def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
-    """Simple P-Controller: Fehler in Pixel * Gain = Mausbewegung.
+    """PD-Controller: Proportional + Derivative fuer smooth Tracking.
     
-    Je weiter das Ziel vom Fadenkreuz, desto staerker die Korrektur.
-    Natuerlich proportional — kein kompliziertes Ramping.
+    P (Proportional): Fehler * Gain = Grundbewegung (wie bisher)
+    D (Derivative):   Aenderungsrate des Fehlers = Damping gegen Overshoot
+    
+    Ergebnis: Schnelles Anziehen zum Ziel OHNE Ueberschwingen.
+    Das nutzen professionelle Aimbots (Aimmy, SunOner, etc.)
     """
     cx = fw / 2.0
     cy = fh / 2.0
@@ -349,9 +353,19 @@ def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
         tracker.prev_my *= 0.3
         return 0, 0
 
-    # Einfacher P-Controller: Fehler * Speed * Sensitivity
-    mx = dx * KMBOX_SENSITIVITY * speed
-    my = dy * KMBOX_SENSITIVITY * speed
+    # --- P-Anteil: Proportional zum Fehler ---
+    p_x = dx * KMBOX_SENSITIVITY * speed
+    p_y = dy * KMBOX_SENSITIVITY * speed
+
+    # --- D-Anteil: Damping basierend auf Aenderung ---
+    # Verhindert Ueberschwingen wenn sich der Fehler schnell aendert
+    d_gain = 0.15  # Damping-Staerke (0.1 = sanft, 0.3 = stark)
+    d_x = (p_x - tracker.prev_mx) * d_gain
+    d_y = (p_y - tracker.prev_my) * d_gain
+
+    # Kombiniert: P + D
+    mx = p_x + d_x
+    my = p_y + d_y
 
     # Smoothing mit vorheriger Bewegung
     mx = smooth * tracker.prev_mx + (1 - smooth) * mx
@@ -371,16 +385,21 @@ def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
 
 
 class AimAccumulator:
-    """Akkumuliert Aim-Korrekturen ueber mehrere Frames.
-    Sendet nur alle N Frames eine groessere move_auto Bewegung,
-    damit die XIM Matrix die Bewegung nicht als Rauschen filtert.
+    """Bezier-basiertes Aim-System.
+    
+    Statt viele kleine move-Befehle zu senden (die der XIM schluckt),
+    senden wir alle paar Frames eine Bezier-Kurve.
+    Die KMBox-Hardware fuehrt die Bewegung smooth und kontinuierlich aus.
+    
+    Das ist der Ansatz den Aimmy, SunOner und andere Profi-Aimbots nutzen.
     """
-    def __init__(self, send_every=3, move_duration_ms=50):
+    def __init__(self, send_every=3, min_move=5):
         self.send_every = send_every       # Alle N Frames senden
-        self.move_duration_ms = move_duration_ms  # Dauer der move_auto Bewegung
+        self.min_move = min_move           # Minimale Pixel bevor gesendet wird
         self.acc_x = 0.0                   # Akkumulierte X-Korrektur
         self.acc_y = 0.0                   # Akkumulierte Y-Korrektur
         self.frame_count = 0               # Frame-Zaehler
+        self.last_send_time = 0.0          # Zeitpunkt der letzten Sendung
 
     def accumulate(self, mx, my):
         """Fuegt eine Frame-Korrektur hinzu."""
@@ -393,16 +412,32 @@ class AimAccumulator:
         return self.frame_count >= self.send_every
 
     def send(self):
-        """Sendet die akkumulierte Bewegung per move_auto und resettet.
-        Returns True wenn eine Bewegung gesendet wurde.
+        """Sendet die akkumulierte Bewegung per Bezier-Kurve.
+        
+        Erzeugt leicht gekruemmte Pfade mit zufaelligen Kontrollpunkten
+        (sieht menschlicher aus als gerade Linien).
         """
         ix = int(round(self.acc_x))
         iy = int(round(self.acc_y))
         sent = False
 
-        # Nur senden wenn Bewegung gross genug (XIM Mindest-Schwelle)
-        if abs(ix) >= 5 or abs(iy) >= 5:
-            kmbox_net.move_auto(ix, iy, ms=self.move_duration_ms)
+        mag = (ix*ix + iy*iy) ** 0.5
+
+        if mag >= self.min_move:
+            # Dauer: Proportional zur Distanz, 30-80ms
+            # Kurze Distanz = schnell, weite = etwas langsamer
+            ms = int(max(30, min(80, mag * 1.5)))
+
+            # Kontrollpunkte fuer leichte Kurve (menschlich)
+            # Senkrecht zur Bewegungsrichtung, zufaellige Staerke
+            jitter = max(2, mag * 0.15)
+            cx1 = int(ix * 0.3 + random.uniform(-jitter, jitter))
+            cy1 = int(iy * 0.3 + random.uniform(-jitter, jitter))
+            cx2 = int(ix * 0.7 + random.uniform(-jitter, jitter))
+            cy2 = int(iy * 0.7 + random.uniform(-jitter, jitter))
+
+            kmbox_net.move_beizer(ix, iy, ms, cx1, cy1, cx2, cy2)
+            self.last_send_time = time.monotonic()
             sent = True
 
         # Reset
@@ -419,7 +454,7 @@ class AimAccumulator:
 
 
 # Globaler Akkumulator
-aim_accumulator = AimAccumulator(send_every=3, move_duration_ms=50)
+aim_accumulator = AimAccumulator(send_every=3, min_move=5)
 
 
 def move_aim(tracker, tx, ty, fw, fh, profile):
@@ -778,7 +813,8 @@ def main():
     active_profile_key = ACTIVE_PROFILE
     profile = PROFILES[active_profile_key]
     print(f"Aktives Profil: {profile['name']}")
-    print(f"Aim-Batching: Alle {aim_accumulator.send_every} Frames, {aim_accumulator.move_duration_ms}ms Dauer")
+    print(f"Aim-System: BEZIER-KURVEN (alle {aim_accumulator.send_every} Frames)")
+    print(f"Controller: PD (Proportional + Derivative Damping)")
 
     # Scuf Controller suchen
     global SCUF_CONTROLLER_ID
@@ -982,23 +1018,23 @@ def main():
                 KMBOX_SENSITIVITY = min(1.0, KMBOX_SENSITIVITY + 0.02)
                 print(f"KMBOX Sensitivity: {KMBOX_SENSITIVITY:.2f}")
             elif key == ord('7'):
-                # Kalibrierungs-Test
+                # Kalibrierungs-Test mit Bezier-Kurven
                 test_val = int(100 * KMBOX_SENSITIVITY * 10)
-                if test_val < 5:
-                    test_val = 5
-                print(f"=== KALIBRIERUNGS-TEST (Sens: {KMBOX_SENSITIVITY:.2f}, Wert: {test_val}px) ===")
-                print("  RECHTS...")
-                kmbox_net.move_auto(test_val, 0, ms=200)
+                if test_val < 10:
+                    test_val = 10
+                print(f"=== KALIBRIERUNGS-TEST BEZIER (Sens: {KMBOX_SENSITIVITY:.2f}, Wert: {test_val}px) ===")
+                print("  RECHTS (Bezier-Kurve)...")
+                kmbox_net.move_beizer(test_val, 0, ms=200, cx1=test_val//3, cy1=-10, cx2=test_val*2//3, cy2=10)
                 time.sleep(0.8)
-                print("  LINKS...")
-                kmbox_net.move_auto(-test_val, 0, ms=200)
+                print("  LINKS (Bezier-Kurve)...")
+                kmbox_net.move_beizer(-test_val, 0, ms=200, cx1=-test_val//3, cy1=10, cx2=-test_val*2//3, cy2=-10)
                 time.sleep(0.8)
-                print("  UNTEN...")
-                kmbox_net.move_auto(0, test_val, ms=200)
+                print("  UNTEN (Bezier-Kurve)...")
+                kmbox_net.move_beizer(0, test_val, ms=200, cx1=10, cy1=test_val//3, cx2=-10, cy2=test_val*2//3)
                 time.sleep(0.8)
-                print("  OBEN...")
-                kmbox_net.move_auto(0, -test_val, ms=200)
-                print(f"=== 5=weniger 6=mehr, dann 7 nochmal ===")
+                print("  OBEN (Bezier-Kurve)...")
+                kmbox_net.move_beizer(0, -test_val, ms=200, cx1=-10, cy1=-test_val//3, cx2=10, cy2=-test_val*2//3)
+                print(f"=== Bezier-Test fertig! 5=weniger 6=mehr, dann 7 nochmal ===")
 
     cap.release()
     if scuf:

@@ -190,6 +190,43 @@ class KMBoxNet:
             logger.error(f"KMBox auto move error: {e}")
             return -1
 
+    def move_beizer(self, x, y, ms=200, cx1=0, cy1=0, cx2=0, cy2=0):
+        """Move mouse along a Bezier curve to (x, y) over ms milliseconds.
+        
+        Die KMBox-Hardware berechnet die Kurve selbst — erzeugt eine 
+        kontinuierliche, menschlich aussehende Mausbewegung.
+        
+        x, y:       Ziel-Position (relativ, in Pixeln)
+        ms:         Dauer der Bewegung in Millisekunden
+        cx1, cy1:   Erster Kontrollpunkt (zieht Kurve in diese Richtung)
+        cx2, cy2:   Zweiter Kontrollpunkt (formt die Landung)
+        
+        Beispiel: move_beizer(50, 30, 200, -10, 5, 15, -8)
+        """
+        if self.sock is None:
+            return -1
+        self.indexpts += 1
+        # Header: mac + ms (Dauer) + indexpts + CMD_BAZER_MOVE
+        header = struct.pack('<IIII',
+            self.mac,
+            ms,
+            self.indexpts,
+            CMD_BAZER_MOVE
+        )
+        # Mouse payload: button(4) + x(4) + y(4) + wheel(4) = 16 bytes
+        # Point array: point[0]=(cx1,cy1), point[1]=(cx2,cy2), rest=0
+        # soft_point_t = {int16 x, int16 y} = 4 bytes each, 10 entries = 40 bytes
+        mouse_data = struct.pack('<iiii', 0, int(x), int(y), 0)
+        point_data = struct.pack('<hh', int(cx1), int(cy1))   # Kontrollpunkt 1
+        point_data += struct.pack('<hh', int(cx2), int(cy2))  # Kontrollpunkt 2
+        point_data += b'\x00' * 32  # Restliche 8 Punkte (unbenutzt)
+        try:
+            self.sock.sendto(header + mouse_data + point_data, self.addr)
+            return 0
+        except Exception as e:
+            logger.error(f"KMBox bezier move error: {e}")
+            return -1
+
     def left(self, state):
         """Left mouse button: 1=press, 0=release."""
         return self._send_mouse_cmd(CMD_MOUSE_LEFT, button=1 if state else 0)
@@ -257,6 +294,9 @@ def move(x, y):
 
 def move_auto(x, y, ms=100):
     return _kmbox.move_auto(x, y, ms)
+
+def move_beizer(x, y, ms=200, cx1=0, cy1=0, cx2=0, cy2=0):
+    return _kmbox.move_beizer(x, y, ms, cx1, cy1, cx2, cy2)
 
 def left(state):
     return _kmbox.left(state)
