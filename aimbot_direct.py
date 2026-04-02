@@ -452,95 +452,73 @@ def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
     return mx, my
 
 
-class AimAccumulator:
-    """Bezier-basiertes Aim-System.
+class AimController:
+    """Zeit-basierter Aim Controller — KEINE ueberlappenden Befehle.
     
-    Statt viele kleine move-Befehle zu senden (die der XIM schluckt),
-    senden wir alle paar Frames eine Bezier-Kurve.
-    Die KMBox-Hardware fuehrt die Bewegung smooth und kontinuierlich aus.
+    Problem vorher: Bezier-Befehle alle 67ms gesendet, aber jeder braucht
+    50-120ms → Befehle ueberlappen sich → ZITTERN.
     
-    Das ist der Ansatz den Aimmy, SunOner und andere Profi-Aimbots nutzen.
+    Loesung: Nur EINE Bewegung gleichzeitig aktiv.
+    Wartet bis die vorherige fertig ist, dann naechste senden.
+    Ergebnis: Smooth, kontinuierlicher Pull wie bei den Profi-Aimbots.
     """
-    def __init__(self, send_every=4, min_move=8):
-        self.send_every = send_every       # Alle N Frames senden (4 statt 3)
-        self.min_move = min_move           # Minimale Pixel bevor gesendet wird
-        self.acc_x = 0.0                   # Akkumulierte X-Korrektur
-        self.acc_y = 0.0                   # Akkumulierte Y-Korrektur
-        self.frame_count = 0               # Frame-Zaehler
-        self.last_send_time = 0.0          # Zeitpunkt der letzten Sendung
+    def __init__(self, cooldown_ms=100):
+        self.cooldown = cooldown_ms / 1000.0
+        self.last_send_time = 0.0
+        self.acc_x = 0.0
+        self.acc_y = 0.0
 
-    def accumulate(self, mx, my):
+    def add_correction(self, mx, my):
         """Fuegt eine Frame-Korrektur hinzu."""
         self.acc_x += mx
         self.acc_y += my
-        self.frame_count += 1
 
-    def should_send(self):
-        """Prueft ob jetzt gesendet werden soll."""
-        return self.frame_count >= self.send_every
-
-    def send(self):
-        """Sendet die akkumulierte Bewegung per Bezier-Kurve.
-        
-        Erzeugt leicht gekruemmte Pfade mit zufaelligen Kontrollpunkten
-        (sieht menschlicher aus als gerade Linien).
+    def try_send(self):
+        """Sendet NUR wenn genug Zeit seit dem letzten Befehl vergangen ist.
+        Verhindert Command-Overlap = verhindert Zittern.
         """
+        now = time.monotonic()
+        elapsed = now - self.last_send_time
+
+        if elapsed < self.cooldown:
+            return False
+
         ix = int(round(self.acc_x))
         iy = int(round(self.acc_y))
-        sent = False
-
         mag = (ix*ix + iy*iy) ** 0.5
 
-        if mag >= self.min_move:
-            # Dauer: Proportional zur Distanz, 50-120ms (laenger = smoother)
-            ms = int(max(50, min(120, mag * 2.0)))
+        if mag < 6:
+            self.acc_x = 0.0
+            self.acc_y = 0.0
+            return False
 
-            # Kontrollpunkte fuer leichte Kurve (menschlich)
-            # Weniger Jitter als vorher — smooth statt wackelig
-            jitter = max(1, mag * 0.08)
-            cx1 = int(ix * 0.3 + random.uniform(-jitter, jitter))
-            cy1 = int(iy * 0.3 + random.uniform(-jitter, jitter))
-            cx2 = int(ix * 0.7 + random.uniform(-jitter, jitter))
-            cy2 = int(iy * 0.7 + random.uniform(-jitter, jitter))
+        # Dauer proportional zur Distanz: 80-150ms
+        ms = int(max(80, min(150, mag * 2.5)))
 
-            kmbox_net.move_beizer(ix, iy, ms, cx1, cy1, cx2, cy2)
-            self.last_send_time = time.monotonic()
-            sent = True
+        kmbox_net.move_auto(ix, iy, ms=ms)
 
-        # Reset
+        # Cooldown = Dauer des Befehls (kein Overlap!)
+        self.cooldown = ms / 1000.0
+        self.last_send_time = now
         self.acc_x = 0.0
         self.acc_y = 0.0
-        self.frame_count = 0
-        return sent
+        return True
 
     def reset(self):
-        """Komplett zuruecksetzen (z.B. wenn Ziel verloren)."""
         self.acc_x = 0.0
         self.acc_y = 0.0
-        self.frame_count = 0
 
 
-# Globaler Akkumulator
-aim_accumulator = AimAccumulator(send_every=3, min_move=5)
+aim_controller = AimController(cooldown_ms=100)
 
 
 def move_aim(tracker, tx, ty, fw, fh, profile):
-    """Akkumuliert Aim-Korrekturen und sendet alle 3 Frames eine grosse move_auto.
-    
-    Problem: XIM Matrix ignoriert kleine Mausbewegungen (<10px).
-    Loesung: 3 Frames Korrekturen sammeln, dann eine groessere Bewegung senden.
-    Bei 60 FPS: ~20 Korrekturen/Sek statt 60 winzige.
+    """Berechnet Korrektur und sendet wenn Cooldown abgelaufen.
+    Kein Overlap — nur eine Bewegung gleichzeitig aktiv.
     """
     mx, my = calc_aim_correction(tracker, tx, ty, fw, fh, profile)
-
-    # Korrektur akkumulieren
-    aim_accumulator.accumulate(mx, my)
-
-    # Alle 3 Frames: Akkumulierte Bewegung senden
-    if aim_accumulator.should_send():
-        return aim_accumulator.send()
-
-    return False
+    aim_controller.add_correction(mx, my)
+    return aim_controller.try_send()
 
 
 def is_teammate(frame, bbox):
@@ -880,7 +858,7 @@ def main():
     active_profile_key = ACTIVE_PROFILE
     profile = PROFILES[active_profile_key]
     print(f"Aktives Profil: {profile['name']}")
-    print(f"Aim-System: BEZIER + SPEED CURVES (alle {aim_accumulator.send_every} Frames)")
+    print(f"Aim-System: SPEED CURVES + COOLDOWN (kein Overlap)")
     print(f"Controller: PD (Proportional + Derivative Damping)")
     print(f"Speed X: {SPEED_X_MULTIPLIER:.2f} | Speed Y: {SPEED_Y_MULTIPLIER:.2f}")
     print(f"Speed Curve: {len(SPEED_CURVE_DEFAULT)} Stufen (nah=langsam, weit=schnell)")
@@ -996,10 +974,10 @@ def main():
                 if not best_target:
                     # Sofort stoppen wenn kein Ziel — keine Geister-Bewegungen!
                     tracker.reset()
-                    aim_accumulator.reset()
+                    aim_controller.reset()
                 elif not ads_active:
                     tracker.reset()
-                    aim_accumulator.reset()
+                    aim_controller.reset()
 
         # Screenshots sammeln
         now = time.monotonic()
