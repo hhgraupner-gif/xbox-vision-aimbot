@@ -1196,6 +1196,10 @@ async def download_file(filename: str):
         "BO7_GPU_Training.ipynb": Path("/app/BO7_GPU_Training.ipynb"),
         "labels_only.zip": Path("/app/labels_only.zip"),
         "ANLEITUNG_GPU_TRAINING.md": Path("/app/ANLEITUNG_GPU_TRAINING.md"),
+        "test_scuf.py": Path("/app/test_scuf.py"),
+        "scuf_passthrough.py": Path("/app/scuf_passthrough.py"),
+        "aimbot_direct.py": Path("/app/aimbot_direct.py"),
+        "kmbox_net.py": Path("/app/backend/kmbox_net.py"),
     }
     if filename not in allowed:
         raise HTTPException(status_code=404, detail="Datei nicht gefunden")
