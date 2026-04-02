@@ -1,11 +1,14 @@
 """
-AIMBOT DIRECT v3 - FPS-KI Modell + ADS-Erkennung + Screenshot-Sammlung
-Capture Card -> YOLO (FPS) -> KMBox Net -> XIM Matrix -> Xbox
+AIMBOT DIRECT v4 - Scuf Passthrough + FPS-KI + Multi-ADS-Trigger
+Scuf Envision Pro -> PC -> KMBox Net -> XIM Matrix -> Xbox
+Capture Card -> YOLO (FPS) -> Aim-Assist auf Stick-Bewegung
 
 Features:
-- FPS-spezifisches YOLO-Modell (erkennt Spieler, Koepfe, keine Waffen/Toten)
-- Visuelle ADS-Erkennung (erkennt wenn du zielst)
-- Headshot-Priorisierung
+- Scuf Envision Pro Passthrough (komplett ueber PC geroutet)
+- FPS-spezifisches YOLO-Modell (erkennt Spieler, Koepfe)
+- Multi-ADS-Trigger: Scuf LT, Tastatur, KMBox, Visuell
+- Aimbot-Korrektur wird auf Stick-Aim ADDIERT (natuerliches Gefuehl)
+- Headshot-Priorisierung + Teammate-Filter
 - Screenshot-Sammlung fuer Custom-Modell Training
 
 Starten:     python aimbot_direct.py
@@ -24,6 +27,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'backend'))
 
 from yolo_onnx import YOLODetector, TARGET_CLASSES
 import kmbox_net
+from scuf_passthrough import ScufPassthrough, print_button_map
 
 # Windows API fuer Tastenerkennung (kein pip install noetig)
 try:
@@ -311,8 +315,8 @@ class TargetTracker:
         self.locked = False
 
 
-def move_aim(tracker, tx, ty, fw, fh, profile):
-    """Bewegt das Fadenkreuz zum Ziel. Nutzt Profil-Werte."""
+def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
+    """Berechnet die Aimbot-Mauskorrektur. Gibt (dx, dy) zurueck."""
     cx = fw / 2.0
     cy = fh / 2.0
     dx = tx - cx
@@ -327,7 +331,7 @@ def move_aim(tracker, tx, ty, fw, fh, profile):
     if dist < dz:
         tracker.prev_mx *= 0.3
         tracker.prev_my *= 0.3
-        return False
+        return 0, 0
 
     mx = (dx / fw) * sens * 250
     my = (dy / fh) * sens * 250
@@ -344,6 +348,12 @@ def move_aim(tracker, tx, ty, fw, fh, profile):
     tracker.prev_mx = mx
     tracker.prev_my = my
 
+    return mx, my
+
+
+def move_aim(tracker, tx, ty, fw, fh, profile):
+    """Bewegt das Fadenkreuz zum Ziel direkt per KMBox (ohne Passthrough)."""
+    mx, my = calc_aim_correction(tracker, tx, ty, fw, fh, profile)
     ix = int(round(mx))
     iy = int(round(my))
 
@@ -674,14 +684,17 @@ def main():
 
     # Scuf Controller suchen
     global SCUF_CONTROLLER_ID
+    scuf = None
     if XINPUT_AVAILABLE:
-        if SCUF_CONTROLLER_ID == -1:
-            SCUF_CONTROLLER_ID = find_scuf_controller()
-        if SCUF_CONTROLLER_ID >= 0:
-            print(f"Scuf Controller gefunden: Slot {SCUF_CONTROLLER_ID}")
-            print("  -> Halte LT am Scuf = Aimbot aktiviert")
+        scuf = ScufPassthrough(kmbox_net)
+        scuf_id = scuf.find_controller()
+        if scuf_id >= 0:
+            SCUF_CONTROLLER_ID = scuf_id
+            print(f"Scuf Controller gefunden: Slot {scuf_id}")
+            print_button_map()
         else:
             print("Kein XInput Controller gefunden")
+            scuf = None
             if ADS_MODE == "scuf":
                 ADS_MODE = "keyboard"
                 print("  -> Fallback: Tastatur-Modus (halte X)")
@@ -701,19 +714,6 @@ def main():
 
         fh, fw = frame.shape[:2]
 
-        # ADS erkennen (je nach Modus)
-        ads_active = False
-        if ADS_MODE == "scuf":
-            ads_active = is_scuf_ads_pressed(SCUF_CONTROLLER_ID, SCUF_TRIGGER_THRESHOLD) if XINPUT_AVAILABLE else False
-        elif ADS_MODE == "keyboard":
-            ads_active = is_key_pressed(ADS_KEY)
-        elif ADS_MODE == "kmbox":
-            ads_active = kmbox_net.is_mouse_right_pressed()
-        elif ADS_MODE == "visual":
-            ads_active = ads_detector.update(frame)
-        else:
-            ads_active = True  # Fallback: immer an
-
         # YOLO Erkennung - ALLE Klassen (fuer Anzeige)
         all_dets = detector.detect(frame, conf_threshold=CONFIDENCE)
 
@@ -731,21 +731,60 @@ def main():
             target_dets, center_x, center_y, prefer_head=PREFER_HEADSHOTS, frame=frame
         )
 
-        # Aimbot - NUR wenn ADS aktiv
-        if best_target and ads_active:
-            tracker.update(best_target[0], best_target[1], alpha=profile["ema_alpha"])
-            if tracker.stable(profile["lock_frames"]):
-                pos = tracker.get_predicted(lookahead=profile["lookahead"])
-                if pos:
-                    tracker.locked = True
-                    move_aim(tracker, pos[0], pos[1], fw, fh, profile)
+        # ADS erkennen (je nach Modus)
+        ads_active = False
+        aimbot_dx, aimbot_dy = 0, 0
+
+        if ADS_MODE == "scuf" and scuf and scuf.is_available():
+            # Scuf-Modus: Passthrough liest den Controller
+            # Aimbot-Korrektur berechnen WENN Ziel vorhanden
+            if best_target:
+                tracker.update(best_target[0], best_target[1], alpha=profile["ema_alpha"])
+                if tracker.stable(profile["lock_frames"]):
+                    pos = tracker.get_predicted(lookahead=profile["lookahead"])
+                    if pos:
+                        aimbot_dx, aimbot_dy = calc_aim_correction(tracker, pos[0], pos[1], fw, fh, profile)
+                        tracker.locked = True
+
+            # Passthrough sendet Stick+Buttons+Trigger UND addiert Aimbot-Korrektur
+            ads_active = scuf.update(
+                aimbot_override_x=aimbot_dx if best_target else 0,
+                aimbot_override_y=aimbot_dy if best_target else 0
+            )
+
+            # Wenn kein Ziel, Tracker zuruecksetzen
+            if not best_target:
+                if tracker.frames_seen > 0:
+                    tracker.frames_seen = max(0, tracker.frames_seen - 1)
+                    if tracker.frames_seen == 0:
+                        tracker.reset()
+
         else:
-            if not ads_active:
-                tracker.reset()
-            elif tracker.frames_seen > 0:
-                tracker.frames_seen = max(0, tracker.frames_seen - 1)
-                if tracker.frames_seen == 0:
+            # Nicht-Scuf Modi: Original-Logik
+            if ADS_MODE == "keyboard":
+                ads_active = is_key_pressed(ADS_KEY)
+            elif ADS_MODE == "kmbox":
+                ads_active = kmbox_net.is_mouse_right_pressed()
+            elif ADS_MODE == "visual":
+                ads_active = ads_detector.update(frame)
+            else:
+                ads_active = True
+
+            # Aimbot - NUR wenn ADS aktiv
+            if best_target and ads_active:
+                tracker.update(best_target[0], best_target[1], alpha=profile["ema_alpha"])
+                if tracker.stable(profile["lock_frames"]):
+                    pos = tracker.get_predicted(lookahead=profile["lookahead"])
+                    if pos:
+                        tracker.locked = True
+                        move_aim(tracker, pos[0], pos[1], fw, fh, profile)
+            else:
+                if not ads_active:
                     tracker.reset()
+                elif tracker.frames_seen > 0:
+                    tracker.frames_seen = max(0, tracker.frames_seen - 1)
+                    if tracker.frames_seen == 0:
+                        tracker.reset()
 
         # Screenshots sammeln
         now = time.monotonic()
@@ -826,6 +865,8 @@ def main():
                 print(f"ADS-Trigger: {mode_names.get(ADS_MODE, ADS_MODE)}")
 
     cap.release()
+    if scuf:
+        scuf.stop()
     kmbox_net.close()
     if SHOW_WINDOW:
         cv2.destroyAllWindows()

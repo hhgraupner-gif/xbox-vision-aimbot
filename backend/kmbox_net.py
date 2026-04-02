@@ -190,6 +190,34 @@ class KMBoxNet:
         """Combined mouse command."""
         return self._send_mouse_cmd(CMD_MOUSE_MOVE, button=int(button), x=int(x), y=int(y), wheel=int(wheel))
 
+    def keyboard(self, modifier=0, keys=None):
+        """Send keyboard state. 
+        modifier: bitmask (1=LCtrl, 2=LShift, 4=LAlt, 8=LGUI, 16=RCtrl, 32=RShift, 64=RAlt, 128=RGUI)
+        keys: list of up to 6 HID key codes pressed simultaneously
+        """
+        if self.sock is None:
+            return -1
+        header = self._build_header(CMD_KEYBOARD_ALL)
+        # Build keyboard HID report: modifier(1) + reserved(1) + key[6]
+        key_data = [0] * 8
+        key_data[0] = modifier & 0xFF
+        key_data[1] = 0  # reserved
+        if keys:
+            for i, k in enumerate(keys[:6]):
+                key_data[2 + i] = k & 0xFF
+        # Pack as 8 bytes + pad to 48 bytes (same as mouse payload size)
+        payload = bytes(key_data) + b'\x00' * 40
+        try:
+            self.sock.sendto(header + payload, self.addr)
+            return 0
+        except Exception as e:
+            logger.error(f"KMBox keyboard error: {e}")
+            return -1
+
+    def keyboard_release(self):
+        """Release all keyboard keys."""
+        return self.keyboard(0, [])
+
     def close(self):
         """Close the connection."""
         if self.sock:
@@ -239,3 +267,9 @@ def is_connected():
 
 def close():
     return _kmbox.close()
+
+def keyboard(modifier=0, keys=None):
+    return _kmbox.keyboard(modifier, keys)
+
+def keyboard_release():
+    return _kmbox.keyboard_release()
