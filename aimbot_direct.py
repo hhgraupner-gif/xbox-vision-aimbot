@@ -603,9 +603,10 @@ def draw_overlay(frame, all_detections, target_dets, target_pos, fps, ads_active
 
 
 def main():
+    global ADS_MODE, SCUF_CONTROLLER_ID
     print("=" * 55)
-    print("  XBOX VISION AI - AIMBOT v3")
-    print("  FPS-KI Modell + ADS-Erkennung")
+    print("  XBOX VISION AI - AIMBOT v4")
+    print("  Scuf Passthrough + FPS-KI + ADS-Trigger")
     print("=" * 55)
     print()
 

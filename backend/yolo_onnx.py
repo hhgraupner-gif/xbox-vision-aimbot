@@ -98,26 +98,46 @@ class YOLODetector:
         out = self.session.get_outputs()[0]
         out_shape = out.shape
         # YOLOv8 output: [1, 4+num_classes, num_detections]
+        # For BO7 custom: [1, 6, N] -> 6-4 = 2 classes
         # For FPS model: [1, 14, N] -> 14-4 = 10 classes
         # For COCO: [1, 84, N] -> 84-4 = 80 classes
+        num_classes = -1
         if out_shape and len(out_shape) == 3:
             dim1 = out_shape[1]
             if isinstance(dim1, int):
                 num_classes = dim1 - 4
-                if num_classes == 2:
-                    self.is_fps_model = True
-                    self.names = BO7_NAMES
-                    logger.info(f"BO7 custom model detected ({num_classes} classes)")
-                elif num_classes == 10:
-                    self.is_fps_model = True
-                    self.names = FPS_NAMES
-                    logger.info(f"FPS aimbot model detected ({num_classes} classes)")
-                elif num_classes == 80:
-                    self.is_fps_model = False
-                    self.names = {i: name for i, name in enumerate(COCO_NAMES)}
-                    logger.info(f"COCO model detected ({num_classes} classes)")
-                else:
-                    logger.info(f"Unknown model with {num_classes} classes")
+
+        # If dim1 was dynamic/symbolic, run dummy inference to find actual shape
+        if num_classes <= 0:
+            try:
+                dummy = np.zeros((1, 3, self.input_size, self.input_size), dtype=np.float16 if self.use_fp16 else np.float32)
+                dummy_out = self.session.run(None, {self.input_name: dummy})[0]
+                num_classes = dummy_out.shape[1] - 4
+                logger.info(f"Dummy inference: output shape {dummy_out.shape}, {num_classes} classes")
+            except Exception as e:
+                logger.warning(f"Dummy inference failed: {e}")
+                # Fallback: check filename
+                import os
+                fname = os.path.basename(onnx_path).lower()
+                if "bo7" in fname or "custom" in fname:
+                    num_classes = 2
+                elif "sunxds" in fname or "fps" in fname:
+                    num_classes = 10
+
+        if num_classes == 2:
+            self.is_fps_model = True
+            self.names = BO7_NAMES
+            logger.info(f"BO7 custom model detected ({num_classes} classes)")
+        elif num_classes == 10:
+            self.is_fps_model = True
+            self.names = FPS_NAMES
+            logger.info(f"FPS aimbot model detected ({num_classes} classes)")
+        elif num_classes == 80:
+            self.is_fps_model = False
+            self.names = {i: name for i, name in enumerate(COCO_NAMES)}
+            logger.info(f"COCO model detected ({num_classes} classes)")
+        else:
+            logger.info(f"Unknown model with {num_classes} classes")
 
         model_type = "FPS" if self.is_fps_model else "COCO"
         logger.info(f"Model loaded: {model_type} {dtype_str} {self.input_size}x{self.input_size}")
