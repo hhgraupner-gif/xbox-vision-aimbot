@@ -393,10 +393,10 @@ def get_speed_curve_multiplier(dist, curve, is_locked=False):
 
 
 def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
-    """Direkte Korrektur mit Speed Curve — KEIN Smoothing, KEIN D-Gain.
+    """SIMPELSTE Korrektur — nur Richtung, gedeckelt auf 80px.
     
-    Smoothing und D-Gain haben die Werte so stark reduziert dass die
-    XIM Matrix nichts mehr registriert hat. Jetzt: Roh und direkt.
+    Diagnose hat gezeigt: move_auto(80, 0, 500ms) funktioniert.
+    Also: Richtung zum Ziel berechnen, auf max 80px deckeln, fertig.
     """
     cx = fw / 2.0
     cy = fh / 2.0
@@ -404,26 +404,14 @@ def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
     dy = ty - cy
     dist = (dx*dx + dy*dy) ** 0.5
 
-    dz = profile["deadzone"]
-    speed = profile["speed"]
-
-    if dist < dz:
+    if dist < profile["deadzone"]:
         return 0, 0
 
-    # Speed Curve Multiplikator
-    curve_mult = get_speed_curve_multiplier(dist, SPEED_CURVE_DEFAULT, is_locked=tracker.locked)
-
-    # Direkte Berechnung — keine Glaettung, kein Damping
-    mx = dx * KMBOX_SENSITIVITY * speed * curve_mult * SPEED_X_MULTIPLIER
-    my = dy * KMBOX_SENSITIVITY * speed * curve_mult * SPEED_Y_MULTIPLIER
-
-    # Max Speed begrenzen
-    max_mv = profile["max_move"]
-    mag = (mx*mx + my*my) ** 0.5
-    if mag > max_mv:
-        s = max_mv / mag
-        mx *= s
-        my *= s
+    # Normalisieren auf Einheitsvektor, dann * 80
+    # Ergebnis: Immer ~80px Bewegung in Richtung Ziel
+    scale = 80.0 / dist
+    mx = dx * scale
+    my = dy * scale
 
     return mx, my
 
@@ -465,7 +453,7 @@ class AimController:
         pass
 
 
-aim_controller = AimController(duration_ms=300)
+aim_controller = AimController(duration_ms=500)
 
 
 def move_aim(tracker, tx, ty, fw, fh, profile):
