@@ -133,7 +133,7 @@ MIN_MOUSE_MOVE = 1          # Nur sub-pixel Bewegungen ignorieren
 # ============================================================
 # KMBOX SENSITIVITY — Steuert wie stark die Maus pro Pixel Fehler bewegt wird
 # Taste 5/6 zum live anpassen
-KMBOX_SENSITIVITY = 1.20
+KMBOX_SENSITIVITY = 5.00
 # ============================================================
 
 # ============================================================
@@ -178,17 +178,17 @@ SPEED_Y_MULTIPLIER = 0.80   # Vertikal (weniger Bewegung noetig, praeziser)
 PROFILES = {
     "assist": {
         "name": "AIM-ASSIST",
-        "speed": 0.70,
-        "smoothing": 0.50,          # Mehr Smoothing = weniger Zittern
-        "max_move": 127,            # KMBox HID max
-        "deadzone": 25,             # Groesser = kein Zittern wenn fast drauf
+        "speed": 0.80,
+        "smoothing": 0.0,
+        "max_move": 500,            # Kein kuenstlicher Limiter mehr
+        "deadzone": 30,             # Groesser = kein Zittern wenn nah
     },
     "aimbot": {
         "name": "AIMBOT",
-        "speed": 0.90,
-        "smoothing": 0.35,
-        "max_move": 127,
-        "deadzone": 18,
+        "speed": 1.00,
+        "smoothing": 0.0,
+        "max_move": 500,
+        "deadzone": 20,
     },
 }
 ACTIVE_PROFILE = "assist"  # Standard: Aim-Assist (sanft, sicherer Start)
@@ -393,15 +393,10 @@ def get_speed_curve_multiplier(dist, curve, is_locked=False):
 
 
 def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
-    """Speed-Curve PD-Controller — Profi-Aimbot Tracking.
+    """Direkte Korrektur mit Speed Curve — KEIN Smoothing, KEIN D-Gain.
     
-    Kombiniert:
-    1. Speed Curves: Nicht-lineare Geschwindigkeit basierend auf Distanz
-       (weit = schnell snappen, nah = langsam + praezise = Magnet-Effekt)
-    2. PD-Controller: Proportional + Derivative fuer smooth Damping
-    3. Separate X/Y: Horizontale und vertikale Geschwindigkeit getrennt
-    
-    Das ist der Ansatz den professionelle Console-Aimbots nutzen.
+    Smoothing und D-Gain haben die Werte so stark reduziert dass die
+    XIM Matrix nichts mehr registriert hat. Jetzt: Roh und direkt.
     """
     cx = fw / 2.0
     cy = fh / 2.0
@@ -411,43 +406,24 @@ def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
 
     dz = profile["deadzone"]
     speed = profile["speed"]
-    smooth = profile["smoothing"]
-    max_mv = profile["max_move"]
 
     if dist < dz:
-        tracker.prev_mx *= 0.3
-        tracker.prev_my *= 0.3
         return 0, 0
 
-    # --- Speed Curve: Multiplikator basierend auf Distanz ---
+    # Speed Curve Multiplikator
     curve_mult = get_speed_curve_multiplier(dist, SPEED_CURVE_DEFAULT, is_locked=tracker.locked)
 
-    # --- P-Anteil: Proportional zum Fehler * Speed Curve ---
-    p_x = dx * KMBOX_SENSITIVITY * speed * curve_mult * SPEED_X_MULTIPLIER
-    p_y = dy * KMBOX_SENSITIVITY * speed * curve_mult * SPEED_Y_MULTIPLIER
-
-    # --- D-Anteil: Damping basierend auf Aenderung ---
-    d_gain = 0.08  # Reduziert: Weniger aggressives Damping = weniger Zittern
-    d_x = (p_x - tracker.prev_mx) * d_gain
-    d_y = (p_y - tracker.prev_my) * d_gain
-
-    # Kombiniert: P + D
-    mx = p_x + d_x
-    my = p_y + d_y
-
-    # Smoothing mit vorheriger Bewegung
-    mx = smooth * tracker.prev_mx + (1 - smooth) * mx
-    my = smooth * tracker.prev_my + (1 - smooth) * my
+    # Direkte Berechnung — keine Glaettung, kein Damping
+    mx = dx * KMBOX_SENSITIVITY * speed * curve_mult * SPEED_X_MULTIPLIER
+    my = dy * KMBOX_SENSITIVITY * speed * curve_mult * SPEED_Y_MULTIPLIER
 
     # Max Speed begrenzen
+    max_mv = profile["max_move"]
     mag = (mx*mx + my*my) ** 0.5
     if mag > max_mv:
         s = max_mv / mag
         mx *= s
         my *= s
-
-    tracker.prev_mx = mx
-    tracker.prev_my = my
 
     return mx, my
 
