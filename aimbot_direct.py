@@ -411,7 +411,7 @@ def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
     # ADS-Kompensation: Offset * 3.0, damit nach XIM-Reduktion genug ankommt
     ADS_BOOST = 3.0
     mx = dx * ADS_BOOST
-    my = dy * ADS_BOOST
+    my = dy * ADS_BOOST * 0.5  # Y reduziert: Vertikale Aim-Sens ist hoeher in CoD
 
     # Deckeln bei 600px (mehr brauchen wir nicht)
     mag = (mx*mx + my*my) ** 0.5
@@ -538,8 +538,13 @@ def pick_best_target(detections, center_x, center_y, prefer_head=False, frame=No
         cx_det = (x1 + x2) / 2.0
         cy_det = (y1 + y2) / 2.0
 
-        # Tote Koerper Filter: Liegende Bboxen ignorieren (Breite > 1.8x Hoehe)
-        if bw > bh * 1.8:
+        # Tote Koerper Filter: Liegende Bboxen ignorieren (Breite > 1.3x Hoehe)
+        # Verschaerft: Vorher 1.8x, jetzt 1.3x — erwischt mehr Leichen
+        if bw > bh * 1.3:
+            continue
+
+        # Sehr flache Boxen = definitiv Leiche (fast horizontal)
+        if bh < 40:
             continue
 
         # Obere 12% vom Bildschirm ignorieren (Himmel/HUD-Bereich)
