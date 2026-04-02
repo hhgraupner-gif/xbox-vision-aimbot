@@ -322,11 +322,12 @@ class TargetTracker:
         self.last_seen = now
 
     def get_predicted(self, lookahead=0.02):
+        """Gibt die aktuelle Zielposition zurueck. 
+        Keine Velocity-Prediction mehr — verursacht Himmel-Snapping."""
         if self.ema_x is None:
             return None
-        px = self.ema_x + self.vel_x * lookahead
-        py = self.ema_y + self.vel_y * lookahead
-        return (px, py)
+        # Direkt die EMA-Position verwenden, keine Vorhersage
+        return (self.ema_x, self.ema_y)
 
     def stable(self, n=1):
         return self.frames_seen >= n
@@ -410,19 +411,24 @@ def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
 
 
 def move_aim(tracker, tx, ty, fw, fh, profile):
-    """Bewegt das Fadenkreuz zum Ziel per KMBox move_auto (smooth, kein Paketverlust)."""
+    """Bewegt das Fadenkreuz zum Ziel per KMBox.
+    Nutzt move() statt move_auto() um Akkumulationsprobleme zu vermeiden.
+    """
     mx, my = calc_aim_correction(tracker, tx, ty, fw, fh, profile)
 
     # KMBOX_MULTIPLIER anwenden
     mx *= KMBOX_MULTIPLIER
     my *= KMBOX_MULTIPLIER
 
+    # Hard-Cap bei 100px pro Frame (verhindert wilde Spruenge)
+    mx = max(-100, min(100, mx))
+    my = max(-100, min(100, my))
+
     ix = int(round(mx))
     iy = int(round(my))
 
     if abs(ix) >= 1 or abs(iy) >= 1:
-        # move_auto: KMBox teilt die Bewegung intern auf (16ms = 1 Frame bei 60fps)
-        kmbox_net.move_auto(ix, iy, ms=16)
+        kmbox_net.move(ix, iy)
         return True
     return False
 
@@ -488,9 +494,17 @@ def pick_best_target(detections, center_x, center_y, prefer_head=False, frame=No
         cx_det = (x1 + x2) / 2.0
         cy_det = (y1 + y2) / 2.0
 
+        # Tote Koerper Filter: Liegende Bboxen ignorieren (Breite > 1.8x Hoehe)
+        if bw > bh * 1.8:
+            continue
+
         # Obere 12% vom Bildschirm ignorieren (Himmel/HUD-Bereich)
         frame_height = center_y * 2
         if cy_det < frame_height * 0.12:
+            continue
+
+        # Untere 10% ignorieren (HUD/Killfeed)
+        if cy_det > frame_height * 0.90:
             continue
 
         # MAX_AIM_RADIUS: Zu weit vom Fadenkreuz = ignorieren
@@ -864,13 +878,15 @@ def main():
                         if pos:
                             tracker.locked = True
                             move_aim(tracker, pos[0], pos[1], fw, fh, profile)
+                else:
+                    # Confidence zu niedrig: Nicht aimen, Tracker beibehalten
+                    pass
             else:
-                if not ads_active:
+                if not best_target:
+                    # Sofort stoppen wenn kein Ziel — keine Geister-Bewegungen!
                     tracker.reset()
-                elif tracker.frames_seen > 0:
-                    tracker.frames_seen = max(0, tracker.frames_seen - 1)
-                    if tracker.frames_seen == 0:
-                        tracker.reset()
+                elif not ads_active:
+                    tracker.reset()
 
         # Screenshots sammeln
         now = time.monotonic()
