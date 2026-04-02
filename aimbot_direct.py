@@ -602,7 +602,7 @@ def draw_overlay(frame, all_detections, target_dets, target_pos, fps, ads_active
     color = (0, 255, 255) if ads_active else (0, 255, 0)
     cv2.line(frame, (w//2-25, h//2), (w//2+25, h//2), color, 2)
     cv2.line(frame, (w//2, h//2-25), (w//2, h//2+25), color, 2)
-    cv2.circle(frame, (w//2, h//2), DEADZONE, (50, 50, 50), 1)
+    cv2.circle(frame, (w//2, h//2), PROFILES[ACTIVE_PROFILE]["deadzone"], (50, 50, 50), 1)
 
     # Alle Erkennungen zeichnen
     for det in all_detections:
