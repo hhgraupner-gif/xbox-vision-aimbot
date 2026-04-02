@@ -133,7 +133,7 @@ MIN_MOUSE_MOVE = 1          # Nur sub-pixel Bewegungen ignorieren
 # ============================================================
 # KMBOX SENSITIVITY — Steuert wie stark die Maus pro Pixel Fehler bewegt wird
 # Taste 5/6 zum live anpassen
-KMBOX_SENSITIVITY = 0.70
+KMBOX_SENSITIVITY = 1.00
 # ============================================================
 
 # ============================================================
@@ -453,41 +453,37 @@ def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
 
 
 class AimController:
-    """Einfacher Zeit-basierter Aim Controller.
+    """Einfachster Aim Controller — direktes move() mit Cooldown.
     
-    KEIN Akkumulieren! Jede Korrektur basiert nur auf dem AKTUELLEN Frame.
-    Nach jeder Korrektur: Warten bis der Video-Feed die Aenderung zeigt.
-    
-    Das verhindert den Feedback-Loop der das Zittern verursacht hat:
-    - Korrektur senden → Warten → Neues Bild sehen → Neu berechnen
+    Kein move_auto, kein move_beizer — nur das simpelste KMBox-Kommando.
+    move() ist sofort, zuverlaessig, kein Timing-Problem.
     """
-    def __init__(self, cooldown_ms=120):
-        self.cooldown = cooldown_ms / 1000.0  # Warte-Zeit nach jeder Korrektur
+    def __init__(self, cooldown_ms=80):
+        self.cooldown = cooldown_ms / 1000.0
         self.last_send_time = 0.0
 
     def try_correct(self, mx, my):
-        """Sende Korrektur wenn Cooldown abgelaufen. Keine Akkumulation."""
+        """Sende Korrektur per direktem move() wenn Cooldown abgelaufen."""
         now = time.monotonic()
         if now - self.last_send_time < self.cooldown:
             return False
 
         ix = int(round(mx))
         iy = int(round(my))
-        mag = (ix*ix + iy*iy) ** 0.5
 
-        if mag < 3:
+        if abs(ix) < 2 and abs(iy) < 2:
             return False
 
-        # Kurzes move_auto (40ms) — fertig bevor naechste Korrektur kommt
-        kmbox_net.move_auto(ix, iy, ms=40)
+        # Direktes move — simpelstes KMBox Kommando, kein Timing-Problem
+        kmbox_net.move(ix, iy)
         self.last_send_time = now
         return True
 
     def reset(self):
-        pass  # Kein State zum resetten
+        pass
 
 
-aim_controller = AimController(cooldown_ms=120)
+aim_controller = AimController(cooldown_ms=80)
 
 
 def move_aim(tracker, tx, ty, fw, fh, profile):
@@ -1042,23 +1038,23 @@ def main():
                 KMBOX_SENSITIVITY = min(1.0, KMBOX_SENSITIVITY + 0.02)
                 print(f"KMBOX Sensitivity: {KMBOX_SENSITIVITY:.2f}")
             elif key == ord('7'):
-                # Kalibrierungs-Test mit Bezier-Kurven
+                # Kalibrierungs-Test mit direktem move()
                 test_val = int(100 * KMBOX_SENSITIVITY * 10)
                 if test_val < 10:
                     test_val = 10
-                print(f"=== KALIBRIERUNGS-TEST BEZIER (Sens: {KMBOX_SENSITIVITY:.2f}, Wert: {test_val}px) ===")
-                print("  RECHTS (Bezier-Kurve)...")
-                kmbox_net.move_beizer(test_val, 0, ms=200, cx1=test_val//3, cy1=-10, cx2=test_val*2//3, cy2=10)
-                time.sleep(0.8)
-                print("  LINKS (Bezier-Kurve)...")
-                kmbox_net.move_beizer(-test_val, 0, ms=200, cx1=-test_val//3, cy1=10, cx2=-test_val*2//3, cy2=-10)
-                time.sleep(0.8)
-                print("  UNTEN (Bezier-Kurve)...")
-                kmbox_net.move_beizer(0, test_val, ms=200, cx1=10, cy1=test_val//3, cx2=-10, cy2=test_val*2//3)
-                time.sleep(0.8)
-                print("  OBEN (Bezier-Kurve)...")
-                kmbox_net.move_beizer(0, -test_val, ms=200, cx1=-10, cy1=-test_val//3, cx2=10, cy2=-test_val*2//3)
-                print(f"=== Bezier-Test fertig! 5=weniger 6=mehr, dann 7 nochmal ===")
+                print(f"=== KALIBRIERUNGS-TEST DIREKT (Sens: {KMBOX_SENSITIVITY:.2f}, Wert: {test_val}px) ===")
+                print("  RECHTS...")
+                kmbox_net.move(test_val, 0)
+                time.sleep(0.5)
+                print("  LINKS...")
+                kmbox_net.move(-test_val, 0)
+                time.sleep(0.5)
+                print("  UNTEN...")
+                kmbox_net.move(0, test_val)
+                time.sleep(0.5)
+                print("  OBEN...")
+                kmbox_net.move(0, -test_val)
+                print(f"=== Test fertig! Ging es GERADE rechts/links/oben/unten? ===")
 
     cap.release()
     if scuf:
