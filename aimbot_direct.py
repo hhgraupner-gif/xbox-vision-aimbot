@@ -198,7 +198,7 @@ ACTIVE_PROFILE = "assist"  # Standard: Aim-Assist (sanft, sicherer Start)
 # "keyboard" = Halte Taste X am PC (zuverlaessig)
 # "kmbox"    = Halte rechte Maustaste an KMBox-Maus (zuverlaessig)
 # "visual"   = Automatisch per Zoom-Erkennung (unzuverlaessig)
-ADS_MODE = "always"         # Standard: Immer an (fuer Tests ohne Scuf)
+ADS_MODE = "visual"         # Automatisch per Zoom-Erkennung (erkennt ob ADS aktiv)
 ADS_KEY = 0x58              # 0x58 = X-Taste (Virtual Key Code)
 ADS_ZOOM_THRESHOLD = 12.0
 SCUF_CONTROLLER_ID = -1     # -1 = automatisch finden
