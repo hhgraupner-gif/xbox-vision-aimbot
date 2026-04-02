@@ -133,7 +133,7 @@ MIN_MOUSE_MOVE = 1          # Nur sub-pixel Bewegungen ignorieren
 # ============================================================
 # KMBOX SENSITIVITY — Steuert wie stark die Maus pro Pixel Fehler bewegt wird
 # Taste 5/6 zum live anpassen
-KMBOX_SENSITIVITY = 1.00
+KMBOX_SENSITIVITY = 2.50
 # ============================================================
 
 # ============================================================
@@ -1031,11 +1031,11 @@ def main():
                 print(f"ADS-Trigger: {mode_names.get(ADS_MODE, ADS_MODE)}")
             elif key == ord('5'):
                 # KMBOX Multiplier runter
-                KMBOX_SENSITIVITY = max(0.02, KMBOX_SENSITIVITY - 0.02)
+                KMBOX_SENSITIVITY = max(0.10, KMBOX_SENSITIVITY - 0.10)
                 print(f"KMBOX Sensitivity: {KMBOX_SENSITIVITY:.2f}")
             elif key == ord('6'):
                 # KMBOX Sensitivity rauf
-                KMBOX_SENSITIVITY = min(1.0, KMBOX_SENSITIVITY + 0.02)
+                KMBOX_SENSITIVITY = min(5.0, KMBOX_SENSITIVITY + 0.10)
                 print(f"KMBOX Sensitivity: {KMBOX_SENSITIVITY:.2f}")
             elif key == ord('7'):
                 # Kalibrierungs-Test mit direktem move()
