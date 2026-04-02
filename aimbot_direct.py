@@ -393,10 +393,14 @@ def get_speed_curve_multiplier(dist, curve, is_locked=False):
 
 
 def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
-    """SIMPELSTE Korrektur — nur Richtung, gedeckelt auf 80px.
+    """Richtung zum Ziel, mit ADS-Kompensation.
     
-    Diagnose hat gezeigt: move_auto(80, 0, 500ms) funktioniert.
-    Also: Richtung zum Ziel berechnen, auf max 80px deckeln, fertig.
+    WICHTIG: Waehrend ADS reduziert das Spiel + XIM die Maus-Empfindlichkeit
+    um ca. 60-70%. Deswegen: Korrekturen waehrend ADS 3x staerker senden!
+    
+    Diagnose-Test (Hip-Fire): move_auto(80, 0, 500ms) = kaum sichtbar
+    → Waehrend ADS: gleicher Befehl = fast nichts (ADS-Reduktion)
+    → Loesung: 250px statt 80px waehrend ADS senden
     """
     cx = fw / 2.0
     cy = fh / 2.0
@@ -407,9 +411,11 @@ def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
     if dist < profile["deadzone"]:
         return 0, 0
 
-    # Normalisieren auf Einheitsvektor, dann * 80
-    # Ergebnis: Immer ~80px Bewegung in Richtung Ziel
-    scale = 80.0 / dist
+    # ADS-Kompensation: 250px Magnitude (3x staerker als Hip-Fire Test)
+    # Die XIM ADS-Reduktion macht daraus effektiv ~80px = sichtbar
+    target_magnitude = 250.0
+
+    scale = target_magnitude / dist
     mx = dx * scale
     my = dy * scale
 
