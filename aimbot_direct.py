@@ -168,7 +168,7 @@ LOCK_FRAMES = PROFILES[ACTIVE_PROFILE]["lock_frames"]
 # "keyboard" = Halte Taste X am PC (zuverlaessig)
 # "kmbox"    = Halte rechte Maustaste an KMBox-Maus (zuverlaessig)
 # "visual"   = Automatisch per Zoom-Erkennung (unzuverlaessig)
-ADS_MODE = "scuf"           # Standard: Scuf Controller
+ADS_MODE = "always"         # Standard: Immer an (fuer Tests ohne Scuf)
 ADS_KEY = 0x58              # 0x58 = X-Taste (Virtual Key Code)
 ADS_ZOOM_THRESHOLD = 12.0
 SCUF_CONTROLLER_ID = -1     # -1 = automatisch finden
@@ -771,28 +771,34 @@ def main():
         aimbot_dx, aimbot_dy = 0, 0
 
         if ADS_MODE == "scuf" and scuf and scuf.is_available():
-            # Scuf-Modus: Passthrough liest den Controller
-            # Aimbot-Korrektur berechnen WENN Ziel vorhanden
-            if best_target:
-                tracker.update(best_target[0], best_target[1], alpha=profile["ema_alpha"])
-                if tracker.stable(profile["lock_frames"]):
-                    pos = tracker.get_predicted(lookahead=profile["lookahead"])
-                    if pos:
-                        aimbot_dx, aimbot_dy = calc_aim_correction(tracker, pos[0], pos[1], fw, fh, profile)
-                        tracker.locked = True
+            # Scuf-Modus: Pruefen ob noch verbunden
+            state = scuf.read_state()
+            if state is None:
+                print("Scuf getrennt! Wechsle zu IMMER AN")
+                ADS_MODE = "always"
+                ads_active = True
+            else:
+                # Aimbot-Korrektur berechnen WENN Ziel vorhanden
+                if best_target:
+                    tracker.update(best_target[0], best_target[1], alpha=profile["ema_alpha"])
+                    if tracker.stable(profile["lock_frames"]):
+                        pos = tracker.get_predicted(lookahead=profile["lookahead"])
+                        if pos:
+                            aimbot_dx, aimbot_dy = calc_aim_correction(tracker, pos[0], pos[1], fw, fh, profile)
+                            tracker.locked = True
 
-            # Passthrough sendet Stick+Buttons+Trigger UND addiert Aimbot-Korrektur
-            ads_active = scuf.update(
-                aimbot_override_x=aimbot_dx if best_target else 0,
-                aimbot_override_y=aimbot_dy if best_target else 0
-            )
+                # Passthrough sendet Stick+Buttons+Trigger UND addiert Aimbot-Korrektur
+                ads_active = scuf.update(
+                    aimbot_override_x=aimbot_dx if best_target else 0,
+                    aimbot_override_y=aimbot_dy if best_target else 0
+                )
 
-            # Wenn kein Ziel, Tracker zuruecksetzen
-            if not best_target:
-                if tracker.frames_seen > 0:
-                    tracker.frames_seen = max(0, tracker.frames_seen - 1)
-                    if tracker.frames_seen == 0:
-                        tracker.reset()
+                # Wenn kein Ziel, Tracker zuruecksetzen
+                if not best_target:
+                    if tracker.frames_seen > 0:
+                        tracker.frames_seen = max(0, tracker.frames_seen - 1)
+                        if tracker.frames_seen == 0:
+                            tracker.reset()
 
         else:
             # Nicht-Scuf Modi: Original-Logik
