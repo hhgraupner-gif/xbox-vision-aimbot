@@ -97,8 +97,28 @@ class KMBoxNet:
             return -1
 
     def move(self, x, y):
-        """Move mouse relative by (x, y) pixels."""
-        return self._send_mouse_cmd(CMD_MOUSE_MOVE, x=int(x), y=int(y))
+        """Move mouse relative by (x, y) pixels. 
+        Teilt grosse Bewegungen in kleinere Schritte auf (KMBox Firmware Limit).
+        """
+        MAX_STEP = 100  # Max Pixel pro Einzelbewegung
+        x = int(x)
+        y = int(y)
+        
+        # Kleine Bewegungen direkt senden
+        if abs(x) <= MAX_STEP and abs(y) <= MAX_STEP:
+            return self._send_mouse_cmd(CMD_MOUSE_MOVE, x=x, y=y)
+        
+        # Grosse Bewegungen in Schritte aufteilen
+        steps = max(abs(x) // MAX_STEP, abs(y) // MAX_STEP, 1)
+        step_x = x / steps
+        step_y = y / steps
+        
+        for i in range(steps):
+            sx = int(round(step_x * (i + 1))) - int(round(step_x * i))
+            sy = int(round(step_y * (i + 1))) - int(round(step_y * i))
+            self._send_mouse_cmd(CMD_MOUSE_MOVE, x=sx, y=sy)
+        
+        return 0
 
     def monitor(self, port=10000):
         """Enable physical mouse/keyboard monitoring on given port."""
