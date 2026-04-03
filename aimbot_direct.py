@@ -219,7 +219,7 @@ def get_model_path(mode):
     """Gibt den Modell-Pfad zurueck."""
     base = os.path.join(os.path.dirname(__file__), 'backend')
     if mode == "bo7":
-        path = os.path.join(base, 'bo7_custom_320.onnx')
+        path = os.path.join(base, 'bo7_v5_640.onnx')
         if os.path.exists(path):
             return path
     if mode == "nano" or mode == "bo7":
