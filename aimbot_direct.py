@@ -68,22 +68,23 @@ FOV_RADIUS = 250            # Aimbot FOV in Pixeln (nur Ziele innerhalb werden g
 # Nah = langsam/klebrig, Weit = schnell → Profi "Magnet-Effekt"
 
 SPEED_CURVE_NORMAL = [
-    (15,   0.06),   # Sehr nah: Kaum bewegen (anti-jitter)
-    (40,   0.20),   # Nah: Sanfte Mikro-Korrekturen
-    (80,   0.45),   # Mittel-nah: Kontrolliertes Nachfuehren
-    (140,  0.75),   # Mittel: Starkes Anziehen
-    (220,  1.00),   # Weit: Voller Pull
-    (9999, 1.20),   # Sehr weit: Maximaler Snap
+    # Sanftere Kurve — verhindert Overshoot und Spinning!
+    (15,   0.04),   # Sehr nah: Kaum bewegen
+    (40,   0.10),   # Nah: Minimale Korrektur
+    (80,   0.20),   # Mittel-nah: Sanft nachfuehren
+    (140,  0.35),   # Mittel: Kontrolliert anziehen
+    (220,  0.50),   # Weit: Moderater Pull
+    (9999, 0.65),   # Sehr weit: Kontrollierter Snap (KEIN Vollgas!)
 ]
 
 SPEED_CURVE_LOCKED = [
-    # Wenn bereits auf Ziel gelockt: Extra sanft halten
-    (12,   0.03),   # Minimal: Praktisch stillstehen
-    (30,   0.12),   # Sehr nah: Feinste Korrekturen
-    (60,   0.30),   # Nah: Sanftes Nachfuehren
-    (120,  0.55),   # Mittel: Kontrolliert folgen
-    (200,  0.80),   # Weit: Zuegig nachziehen
-    (9999, 1.00),   # Sehr weit: Volle Geschwindigkeit
+    # Wenn bereits auf Ziel: Extra sanft und stabil
+    (12,   0.02),   # Minimal: Stillstehen
+    (30,   0.06),   # Sehr nah: Feinste Korrekturen
+    (60,   0.14),   # Nah: Sanft halten
+    (120,  0.25),   # Mittel: Kontrolliert folgen
+    (200,  0.40),   # Weit: Nachziehen
+    (9999, 0.55),   # Sehr weit: Moderates Tempo
 ]
 
 # Achsen-Multiplikatoren (CoD: Y-Achse ist empfindlicher)
@@ -91,11 +92,12 @@ SPEED_X_MULTIPLIER = 1.00
 SPEED_Y_MULTIPLIER = 0.75
 
 # XIM Matrix ADS-Kompensation
-# XIM schluckt ~70-80% der Mausbewegung waehrend ADS
-# Muss hoch skaliert werden damit Korrekturen ankommen
-XIM_ADS_BOOST = 3.0
-XIM_MIN_MOVE = 25.0         # Minimum-Pixel damit XIM es registriert
-MAX_CORRECTION = 600.0      # Maximum pro Korrektur
+# ACHTUNG: XIM uebersetzt Mausbewegung in Analog-Stick!
+# Zu grosse Werte = Stick am Anschlag = wildes Drehen!
+# Korrekturen muessen KLEIN und KONTROLLIERT sein.
+XIM_ADS_BOOST = 1.0          # KEIN Extra-Boost (Speed Curves regeln alles!)
+XIM_MIN_MOVE = 20.0          # Minimum damit XIM es registriert
+MAX_CORRECTION = 120.0       # STRIKT begrenzt — verhindert Spinning!
 
 # Globaler Sensitivity-Multiplikator (Taste 5/6)
 KMBOX_SENSITIVITY = 1.00
@@ -273,13 +275,10 @@ class KalmanTracker:
         self.last_update = now
 
     def mark_lost(self):
-        """Ziel nicht erkannt — kurze Luecken per Vorhersage ueberbruecken."""
+        """Ziel nicht erkannt."""
         self.frames_lost += 1
-        if self.frames_lost > 8:
+        if self.frames_lost > 5:
             self.reset()
-        elif self.frames_lost <= 3 and self.frames_seen > 3:
-            # Kurze Luecke: Weiter vorhersagen anhand Geschwindigkeit!
-            self.predict()
         self.locked = False
 
     def is_stable(self, min_frames=2):
@@ -371,13 +370,13 @@ class AimController:
         return mx, my, dist
 
     def send_correction(self, mx, my, dist):
-        """Sendet move_auto an KMBox mit adaptiver Dauer."""
+        """Sendet move_auto an KMBox — FESTE 200ms Dauer fuer Stabilitaet."""
         if not KMBOX_AVAILABLE:
             return False
 
         now = time.monotonic()
-        # Cooldown = Dauer der letzten Bewegung (kein Command-Overlap!)
-        if now - self.last_send_time < self.last_duration_s:
+        # Fester Cooldown: 200ms (kein Command-Overlap!)
+        if now - self.last_send_time < 0.200:
             return False
 
         ix = int(round(mx))
@@ -385,15 +384,8 @@ class AimController:
         if abs(ix) < 3 and abs(iy) < 3:
             return False
 
-        # ADAPTIVE DAUER: Weit=kurz (schnelle Snaps), Nah=lang (smooth)
-        if dist > 150:
-            duration_ms = 80     # ~12 Korrekturen/Sek
-        elif dist > 80:
-            duration_ms = 120    # ~8 Korrekturen/Sek
-        elif dist > 40:
-            duration_ms = 160    # ~6 Korrekturen/Sek
-        else:
-            duration_ms = 200    # ~5 Korrekturen/Sek
+        # Feste 200ms Dauer — XIM verarbeitet das zuverlaessig
+        duration_ms = 200
 
         try:
             kmbox_net.move_auto(ix, iy, ms=duration_ms)
@@ -401,7 +393,7 @@ class AimController:
             return False
 
         self.last_send_time = now
-        self.last_duration_s = duration_ms / 1000.0
+        self.last_duration_s = 0.200
         self.correction_count += 1
         return True
 
@@ -656,9 +648,8 @@ def main():
                 tracker.update(tx, ty)
 
                 if tracker.is_stable(2):
-                    # PROFI-FEATURE: Predicted Position (wo Ziel SEIN WIRD)
-                    # Lookahead = 2 Frames fuer bewegende Gegner
-                    pos = tracker.get_predicted_position(lookahead_frames=2)
+                    # Aktuelle Position (KEINE Prediction — stabiler!)
+                    pos = tracker.get_position()
                     if pos:
                         target_pos = pos
 
@@ -674,18 +665,8 @@ def main():
                 tracker.update(tx, ty)
                 target_pos = tracker.get_position()
             else:
-                # Kein Ziel: Kalman ueberbrueckt kurze Luecken per Vorhersage
+                # Kein Ziel erkannt
                 tracker.mark_lost()
-                if tracker.frames_lost <= 3 and tracker.frames_seen > 3 and ads_active:
-                    # Kurze Luecke: Weiter aimen auf vorhergesagte Position
-                    pos = tracker.get_position()
-                    if pos:
-                        target_pos = pos
-                        mx, my, dist = aim_ctrl.calc_correction(
-                            pos[0], pos[1], fw, fh, profile, False
-                        )
-                        if mx != 0 or my != 0:
-                            aim_ctrl.send_correction(mx, my, dist)
 
             # --- Anzeige ---
             if SHOW_WINDOW:
