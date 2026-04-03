@@ -1,474 +1,295 @@
 """
-AIMBOT DIRECT v4 - Scuf Passthrough + FPS-KI + Multi-ADS-Trigger
-Scuf Envision Pro -> PC -> KMBox Net -> XIM Matrix -> Xbox
-Capture Card -> YOLO (FPS) -> Aim-Assist auf Stick-Bewegung
+AIMBOT VISION v6 — Profi-System
+================================
+Computer Vision Aimbot fuer Xbox RemotePlay via XIM Matrix.
 
-Features:
-- Scuf Envision Pro Passthrough (komplett ueber PC geroutet)
-- FPS-spezifisches YOLO-Modell (erkennt Spieler, Koepfe)
-- Multi-ADS-Trigger: Scuf LT, Tastatur, KMBox, Visuell
-- Aimbot-Korrektur wird auf Stick-Aim ADDIERT (natuerliches Gefuehl)
-- Headshot-Priorisierung + Teammate-Filter
-- Screenshot-Sammlung fuer Custom-Modell Training
+Hardware-Kette:
+  Capture Card (AVerMedia GC571) → OpenCV → YOLO11s (DirectML) → KMBox Net → XIM Matrix → Xbox
 
-Starten:     python aimbot_direct.py
-Beenden:     Q oder Strg+C
-Screenshots: S druecken zum Speichern ein/ausschalten
-Modell:      M druecken zum Wechseln (nano <-> standard)
+Aim-Algorithmus:
+  Speed Curves + PD-Controller + XIM ADS-Kompensation + Anti-Jitter EMA
+
+Steuerung:
+  A = ADS Toggle (Aimbot aktiv/inaktiv)
+  P = Profil wechseln (Assist / Aimbot)
+  M = Modell wechseln (COCO / FPS / Nano)
+  1/2 = FOV +/-
+  3/4 = Confidence +/-
+  5/6 = Sensitivity +/-
+  7/8 = Speed X +/-
+  9/0 = Speed Y +/-
+  ESC = Beenden
 """
-import cv2
-import numpy as np
-import time
-import sys
-import os
-import ctypes
-import random
 
+import os
+import sys
+import time
+import math
+
+# Backend-Pfad hinzufuegen
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'backend'))
 
-from yolo_onnx import YOLODetector, TARGET_CLASSES
-import kmbox_net
-from scuf_passthrough import ScufPassthrough, print_button_map
+import cv2
+import numpy as np
+from yolo_onnx import YOLODetector, TARGET_CLASSES, IGNORE_CLASSES
 
-# Windows API fuer Tastenerkennung (kein pip install noetig)
+# KMBox importieren (funktioniert nur auf Windows mit Netzwerk-Zugang)
 try:
-    user32 = ctypes.windll.user32
-    def is_key_pressed(vk_code):
-        """Prueft ob eine Taste gerade gedrueckt ist (Windows)."""
-        return (user32.GetAsyncKeyState(vk_code) & 0x8000) != 0
-    KEY_DETECTION_AVAILABLE = True
-except (AttributeError, OSError):
-    def is_key_pressed(vk_code):
-        return False
-    KEY_DETECTION_AVAILABLE = False
+    import kmbox_net
+    KMBOX_AVAILABLE = True
+except Exception:
+    KMBOX_AVAILABLE = False
 
 
 # ============================================================
-# SCUF / XINPUT CONTROLLER AUSLESEN (Windows, kein pip noetig)
+# HARDWARE-KONFIGURATION
 # ============================================================
-XINPUT_AVAILABLE = False
-try:
-    xinput_dll = ctypes.windll.xinput1_4
-    XINPUT_AVAILABLE = True
-except (AttributeError, OSError):
-    try:
-        xinput_dll = ctypes.windll.xinput1_3
-        XINPUT_AVAILABLE = True
-    except (AttributeError, OSError):
-        try:
-            xinput_dll = ctypes.windll.xinput9_1_0
-            XINPUT_AVAILABLE = True
-        except (AttributeError, OSError):
-            xinput_dll = None
-
-if XINPUT_AVAILABLE:
-    class XINPUT_GAMEPAD(ctypes.Structure):
-        _fields_ = [
-            ("wButtons", ctypes.c_ushort),
-            ("bLeftTrigger", ctypes.c_ubyte),
-            ("bRightTrigger", ctypes.c_ubyte),
-            ("sThumbLX", ctypes.c_short),
-            ("sThumbLY", ctypes.c_short),
-            ("sThumbRX", ctypes.c_short),
-            ("sThumbRY", ctypes.c_short),
-        ]
-
-    class XINPUT_STATE(ctypes.Structure):
-        _fields_ = [
-            ("dwPacketNumber", ctypes.c_ulong),
-            ("Gamepad", XINPUT_GAMEPAD),
-        ]
-
-    # Button Konstanten
-    XINPUT_GAMEPAD_LB = 0x0100
-    XINPUT_GAMEPAD_RB = 0x0200
-    XINPUT_GAMEPAD_A  = 0x1000
-    XINPUT_GAMEPAD_B  = 0x2000
-    XINPUT_GAMEPAD_X  = 0x4000
-    XINPUT_GAMEPAD_Y  = 0x8000
-
-    def get_xinput_state(controller_id=0):
-        """Liest den XInput Controller Status. Returns None wenn nicht verbunden."""
-        state = XINPUT_STATE()
-        ret = xinput_dll.XInputGetState(controller_id, ctypes.byref(state))
-        if ret == 0:
-            return state
-        return None
-
-    def is_scuf_ads_pressed(controller_id=0, trigger_threshold=50):
-        """Prueft ob LT (Aim Down Sight) am Scuf gedrueckt ist."""
-        state = get_xinput_state(controller_id)
-        if state is None:
-            return False
-        # Left Trigger > threshold = ADS aktiv
-        return state.Gamepad.bLeftTrigger > trigger_threshold
-
-    def find_scuf_controller():
-        """Findet den Scuf Controller (durchsucht alle 4 XInput Slots)."""
-        for i in range(4):
-            state = get_xinput_state(i)
-            if state is not None:
-                return i
-        return -1
-
-# ============================================================
-# EINSTELLUNGEN
-# ============================================================
-CAPTURE_DEVICE = 0
 KMBOX_IP = "192.168.2.188"
-KMBOX_PORT = "32778"
+KMBOX_PORT = 32778
 KMBOX_UUID = "C14AE466"
-
-# Modell-Auswahl: "standard" (FPS 10-Klassen 640px), "nano" (FPS schnell 320px), "bo7" (custom 1-Klasse)
-MODEL_MODE = "standard"
-
-# Erkennung
-CONFIDENCE = 0.35           # Runter fuer bessere Erkennung (0.35 = gut fuer FPS-Modell)
-MIN_TARGET_SIZE = 500       # Kleine Boxen ignorieren (groesser = weniger Muell)
-AIM_POINT_BODY = 0.40       # Zielpunkt am Koerper (0.40 = obere Brust)
-PREFER_HEADSHOTS = False    # AUS: Verhindert Springen zwischen Kopf/Koerper
-MAX_AIM_RADIUS = 220        # Nur Ziele nah am Fadenkreuz (kleiner = weniger Fehlziele)
-MIN_MOUSE_MOVE = 1          # Nur sub-pixel Bewegungen ignorieren
+CAPTURE_DEVICE = 0
 
 # ============================================================
-# KMBOX SENSITIVITY — Globaler Multiplikator fuer alle Aim-Korrekturen
-# Taste 5/6 zum live anpassen (Schritte: 0.10)
-# WICHTIG: Speed Curves steuern jetzt das meiste — das hier ist Feintuning!
-KMBOX_SENSITIVITY = 1.00
+# MODELL-KONFIGURATION
 # ============================================================
+# "coco" = YOLO11s 80-Klassen (Primaer, beste Person-Erkennung)
+# "fps"  = SunOner 10-Klassen (FPS-spezifisch)
+# "nano" = SunOner 320px (schnell, weniger genau)
+MODEL_MODE = "coco"
+
+CONFIDENCE = 0.35           # Mindest-Confidence (0.20 - 0.80)
+FOV_RADIUS = 250            # Aimbot FOV in Pixeln (nur Ziele innerhalb werden getrackt)
 
 # ============================================================
-# SPEED CURVES — Der Kern des Auto-Track Systems
-# Inspiriert von professionellen Console-Aimbots (Console Aimbot v1.1.3)
-#
-# Idee: Je naeher am Ziel, desto LANGSAMER und PRAEZISER die Korrektur.
-#       Je weiter weg, desto SCHNELLER der Snap.
-#       Erzeugt den "Magnet-Effekt" — Fadenkreuz klebt am Gegner.
-#
-# Format: Liste von (Distanz-Schwelle, Speed-Multiplikator)
-# Distanz = Pixel vom Fadenkreuz zum Ziel
+# AIM-KONFIGURATION — SPEED CURVES (Magnet-Effekt)
 # ============================================================
-SPEED_CURVE_DEFAULT = [
-    # (max_distanz, multiplikator) — Steuert den "Magnet-Effekt"
-    # Weit weg = schneller Snap, nah dran = klebrig langsam
-    (15,   0.08),   # Sehr nah: Kaum bewegen (anti-jitter)
-    (40,   0.25),   # Nah: Sanfte Mikro-Korrekturen
-    (80,   0.50),   # Mittel-nah: Kontrolliertes Nachfuehren
-    (140,  0.80),   # Mittel: Starkes Anziehen
+# Format: (max_distanz_pixel, multiplikator)
+# Nah = langsam/klebrig, Weit = schnell → Profi "Magnet-Effekt"
+
+SPEED_CURVE_NORMAL = [
+    (15,   0.06),   # Sehr nah: Kaum bewegen (anti-jitter)
+    (40,   0.20),   # Nah: Sanfte Mikro-Korrekturen
+    (80,   0.45),   # Mittel-nah: Kontrolliertes Nachfuehren
+    (140,  0.75),   # Mittel: Starkes Anziehen
     (220,  1.00),   # Weit: Voller Pull
     (9999, 1.20),   # Sehr weit: Maximaler Snap
 ]
 
-SPEED_CURVE_ON_TARGET = [
-    # Wenn bereits gelockt: Extra praezise + ruhig halten
+SPEED_CURVE_LOCKED = [
+    # Wenn bereits auf Ziel gelockt: Extra sanft halten
     (12,   0.03),   # Minimal: Praktisch stillstehen
-    (30,   0.15),   # Sehr nah: Feinste Korrekturen
-    (60,   0.35),   # Nah: Sanftes Nachfuehren
-    (120,  0.60),   # Mittel: Kontrolliert folgen
-    (200,  0.85),   # Weit: Zuegig nachziehen
-    (9999, 1.05),   # Sehr weit: Volle Geschwindigkeit
+    (30,   0.12),   # Sehr nah: Feinste Korrekturen
+    (60,   0.30),   # Nah: Sanftes Nachfuehren
+    (120,  0.55),   # Mittel: Kontrolliert folgen
+    (200,  0.80),   # Weit: Zuegig nachziehen
+    (9999, 1.00),   # Sehr weit: Volle Geschwindigkeit
 ]
 
-# Separate X/Y Sensitivitaet (wie im Profi-Aimbot Video)
-SPEED_X_MULTIPLIER = 1.0    # Horizontal (Strafing = oft schneller noetig)
-SPEED_Y_MULTIPLIER = 0.80   # Vertikal (weniger Bewegung noetig, praeziser)
-# ============================================================
+# Achsen-Multiplikatoren (CoD: Y-Achse ist empfindlicher)
+SPEED_X_MULTIPLIER = 1.00
+SPEED_Y_MULTIPLIER = 0.75
+
+# XIM Matrix ADS-Kompensation
+# XIM schluckt ~70-80% der Mausbewegung waehrend ADS
+# Muss hoch skaliert werden damit Korrekturen ankommen
+XIM_ADS_BOOST = 3.0
+XIM_MIN_MOVE = 25.0         # Minimum-Pixel damit XIM es registriert
+MAX_CORRECTION = 600.0      # Maximum pro Korrektur
+
+# Globaler Sensitivity-Multiplikator (Taste 5/6)
+KMBOX_SENSITIVITY = 1.00
 
 # ============================================================
-# AIMBOT PROFILE: Taste 1 = Aim-Assist, Taste 2 = Aimbot
+# PROFILE
 # ============================================================
 PROFILES = {
     "assist": {
         "name": "AIM-ASSIST",
-        "speed": 0.80,
-        "smoothing": 0.0,
-        "max_move": 500,            # Kein kuenstlicher Limiter mehr
-        "deadzone": 30,             # Groesser = kein Zittern wenn nah
+        "speed": 0.70,       # 70% der Speed Curve
+        "deadzone": 30,      # Groessere Deadzone = weniger Micro-Tracking
     },
     "aimbot": {
         "name": "AIMBOT",
-        "speed": 1.00,
-        "smoothing": 0.0,
-        "max_move": 500,
-        "deadzone": 20,
+        "speed": 1.00,       # 100% Speed Curve
+        "deadzone": 18,      # Kleinere Deadzone = praeziser
     },
 }
-ACTIVE_PROFILE = "assist"  # Standard: Aim-Assist (sanft, sicherer Start)
+PROFILE_ORDER = ["assist", "aimbot"]
 
-# ADS Erkennung / Trigger-Modus
-# "scuf"     = Halte LT am Scuf inVision Pro (zuverlaessig, bester Modus)
-# "keyboard" = Halte Taste X am PC (zuverlaessig)
-# "kmbox"    = Halte rechte Maustaste an KMBox-Maus (zuverlaessig)
-# "visual"   = Automatisch per Zoom-Erkennung (unzuverlaessig)
-ADS_MODE = "always"         # Immer an — Fehlerkennungen werden durch 3-Frame-Filter verhindert
-ADS_KEY = 0x58              # 0x58 = X-Taste (Virtual Key Code)
-ADS_ZOOM_THRESHOLD = 12.0
-SCUF_CONTROLLER_ID = -1     # -1 = automatisch finden
-SCUF_TRIGGER_THRESHOLD = 50 # LT Empfindlichkeit (0-255, niedriger = empfindlicher)
-
-# Screenshot Sammlung
-COLLECT_SCREENSHOTS = False
-SCREENSHOT_INTERVAL = 0.5
-SCREENSHOT_FOLDER = "training_data"
-
-# Anzeige
+# ============================================================
+# ANZEIGE
+# ============================================================
 SHOW_WINDOW = True
 WINDOW_SCALE = 0.5
+
+# ============================================================
+# FILTER
+# ============================================================
+# Leichen-Filter: Bounding Box breiter als hoch → wahrscheinlich liegend
+DEAD_BODY_RATIO = 1.2       # Breite > 1.2 * Hoehe → ignorieren
+# Himmel-Filter: Erkennungen in den oberen X% ignorieren
+SKY_FILTER_RATIO = 0.10     # Obere 10% = Himmel
+# Boden-Filter: Erkennungen in den unteren X% ignorieren
+GROUND_FILTER_RATIO = 0.88  # Untere 12% = Boden/HUD
+# Minimum-Hoehe: Zu kleine Boxen ignorieren
+MIN_BOX_HEIGHT = 25
+
+
+# ============================================================
+# HILFSFUNKTIONEN
 # ============================================================
 
-
 def get_model_path(mode):
-    """Gibt den Modell-Pfad zurueck. Probiert mehrere Fallbacks."""
-    base = os.path.join(os.path.dirname(__file__), 'backend')
-    
-    # Prioritaetsliste je nach Modus
-    if mode == "standard":
-        candidates = ['sunxds_640.onnx', 'bo7_v5_640.onnx', 'sunxds_nano_320.onnx']
-    elif mode == "nano":
-        candidates = ['sunxds_nano_320.onnx', 'sunxds_640.onnx', 'bo7_v5_640.onnx']
-    elif mode == "bo7":
-        candidates = ['bo7_v5_640.onnx', 'sunxds_640.onnx', 'sunxds_nano_320.onnx']
-    else:
-        candidates = ['sunxds_640.onnx', 'bo7_v5_640.onnx', 'sunxds_nano_320.onnx']
-    
+    """Gibt den besten verfuegbaren Modell-Pfad zurueck."""
+    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'backend')
+
+    priority = {
+        "coco": ['yolo11s.onnx', 'bo7_v5_640.onnx', 'sunxds_640.onnx'],
+        "fps":  ['sunxds_640.onnx', 'yolo11s.onnx', 'bo7_v5_640.onnx'],
+        "nano": ['sunxds_nano_320.onnx', 'sunxds_640.onnx', 'yolo11s.onnx'],
+    }
+
+    candidates = priority.get(mode, priority["coco"])
     for name in candidates:
         path = os.path.join(base, name)
         if os.path.exists(path):
             return path
-    
-    # Letzter Fallback: irgendein .onnx im backend
-    for f in os.listdir(base) if os.path.isdir(base) else []:
-        if f.endswith('.onnx'):
-            print(f"  WARNUNG: Nutze Fallback-Modell: {f}")
-            return os.path.join(base, f)
-    
+
+    # Letzter Fallback: Erstes .onnx im Ordner
+    if os.path.isdir(base):
+        for f in os.listdir(base):
+            if f.endswith('.onnx'):
+                return os.path.join(base, f)
     return None
 
 
-class ADSDetector:
-    """Erkennt ob der Spieler gerade ADS (Aim Down Sight) benutzt."""
-    def __init__(self):
-        self.prev_gray_center = None
-        self.ads_active = False
-        self.ads_confidence = 0.0
-        self.frame_count = 0
-        self.baseline_sharpness = None
-        self.sharpness_history = []
+def get_speed_multiplier(dist, curve):
+    """Interpoliert den Speed-Curve Multiplikator fuer eine gegebene Distanz."""
+    prev_dist, prev_mult = 0, curve[0][1]
+    for max_dist, mult in curve:
+        if dist <= max_dist:
+            # Lineare Interpolation zwischen Stufen
+            if max_dist == prev_dist:
+                return mult
+            t = (dist - prev_dist) / (max_dist - prev_dist)
+            return prev_mult + t * (mult - prev_mult)
+        prev_dist, prev_mult = max_dist, mult
+    return curve[-1][1]
 
-    def update(self, frame):
-        h, w = frame.shape[:2]
-        cx, cy = w // 2, h // 2
-        region_size = 200
-        center = frame[cy-region_size:cy+region_size, cx-region_size:cx+region_size]
 
-        if center.size == 0:
-            return self.ads_active
-
-        gray = cv2.cvtColor(center, cv2.COLOR_BGR2GRAY)
-        laplacian = cv2.Laplacian(gray, cv2.CV_64F)
-        sharpness = laplacian.var()
-
-        self.sharpness_history.append(sharpness)
-        if len(self.sharpness_history) > 30:
-            self.sharpness_history.pop(0)
-
-        if len(self.sharpness_history) >= 10 and self.baseline_sharpness is None:
-            self.baseline_sharpness = np.median(self.sharpness_history)
-
-        if self.baseline_sharpness is not None and self.baseline_sharpness > 0:
-            ratio = sharpness / self.baseline_sharpness
-            self.ads_confidence = ratio
-            if ratio > 1.3:
-                self.ads_active = True
-            elif ratio < 1.1:
-                self.ads_active = False
-
-        if self.prev_gray_center is not None and self.prev_gray_center.shape == gray.shape:
-            diff = cv2.absdiff(gray, self.prev_gray_center)
-            mean_diff = np.mean(diff)
-            if mean_diff > ADS_ZOOM_THRESHOLD:
-                self.ads_active = True
-                self.baseline_sharpness = None
-                self.sharpness_history.clear()
-
-        self.prev_gray_center = gray.copy()
-        self.frame_count += 1
-        return self.ads_active
-
+# ============================================================
+# TARGET TRACKER (EMA-basiert, anti-jitter)
+# ============================================================
 
 class TargetTracker:
-    """Verbessertes Target Tracking mit Prediction und Anti-Jitter."""
+    """Trackt ein einzelnes Ziel mit Exponential Moving Average."""
+
     def __init__(self):
-        self.ema_x = None
-        self.ema_y = None
-        self.vel_x = 0.0
-        self.vel_y = 0.0
-        self.frames_seen = 0
-        self.last_seen = 0
-        self.prev_mx = 0.0
-        self.prev_my = 0.0
-        self.locked = False
-        self.last_raw_x = 0.0
-        self.last_raw_y = 0.0
-
-    def update(self, rx, ry, alpha=0.4):
-        now = time.monotonic()
-        dt = now - self.last_seen if self.last_seen > 0 else 0.033
-
-        if self.ema_x is None or (now - self.last_seen) > 0.3:
-            # Neues Ziel oder zu lange kein Update
-            self.ema_x = float(rx)
-            self.ema_y = float(ry)
-            self.vel_x = 0.0
-            self.vel_y = 0.0
-            self.frames_seen = 1
-            self.locked = False
-        else:
-            # Target-Sprung erkennen: Wenn neue Position > 150px entfernt, 
-            # ist es wahrscheinlich ein anderes Ziel → Reset
-            jump = ((rx - self.ema_x)**2 + (ry - self.ema_y)**2) ** 0.5
-            if jump > 150:
-                self.ema_x = float(rx)
-                self.ema_y = float(ry)
-                self.vel_x = 0.0
-                self.vel_y = 0.0
-                self.frames_seen = 1
-                self.locked = False
-            else:
-                old_x, old_y = self.ema_x, self.ema_y
-                self.ema_x = alpha * rx + (1 - alpha) * self.ema_x
-                self.ema_y = alpha * ry + (1 - alpha) * self.ema_y
-                if dt > 0:
-                    new_vx = (self.ema_x - old_x) / dt
-                    new_vy = (self.ema_y - old_y) / dt
-                    self.vel_x = 0.8 * self.vel_x + 0.2 * new_vx
-                    self.vel_y = 0.8 * self.vel_y + 0.2 * new_vy
-                self.frames_seen += 1
-                # Nach 3 Frames stabiles Tracking → "locked" (On-Target Kurve)
-                if self.frames_seen >= 3:
-                    self.locked = True
-
-        self.last_raw_x = rx
-        self.last_raw_y = ry
-        self.last_seen = now
-
-    def get_predicted(self, lookahead=0.02):
-        """Gibt die aktuelle Zielposition zurueck. 
-        Keine Velocity-Prediction mehr — verursacht Himmel-Snapping."""
-        if self.ema_x is None:
-            return None
-        # Direkt die EMA-Position verwenden, keine Vorhersage
-        return (self.ema_x, self.ema_y)
-
-    def stable(self, n=1):
-        return self.frames_seen >= n
+        self.reset()
 
     def reset(self):
-        self.ema_x = None
-        self.ema_y = None
-        self.vel_x = 0.0
-        self.vel_y = 0.0
+        self.ema_x = 0.0
+        self.ema_y = 0.0
         self.frames_seen = 0
-        self.prev_mx = 0.0
-        self.prev_my = 0.0
+        self.frames_lost = 0
         self.locked = False
+        self.last_update = 0.0
+
+    def update(self, x, y, alpha=0.35):
+        """Update Position mit EMA-Glaettung."""
+        if self.frames_seen == 0:
+            self.ema_x = x
+            self.ema_y = y
+        else:
+            self.ema_x = alpha * x + (1.0 - alpha) * self.ema_x
+            self.ema_y = alpha * y + (1.0 - alpha) * self.ema_y
+        self.frames_seen += 1
+        self.frames_lost = 0
+        self.last_update = time.monotonic()
+
+    def mark_lost(self):
+        """Ziel nicht mehr erkannt."""
+        self.frames_lost += 1
+        if self.frames_lost > 5:
+            self.reset()
+
+    def is_stable(self, min_frames=2):
+        """Ziel mindestens N Frames hintereinander erkannt?"""
+        return self.frames_seen >= min_frames
+
+    def get_position(self):
+        """Gibt geglättete Position zurueck."""
+        if self.frames_seen == 0:
+            return None
+        return (self.ema_x, self.ema_y)
 
 
-def get_speed_curve_multiplier(dist, curve, is_locked=False):
-    """Liest den Speed-Multiplikator aus der Speed Curve.
-    
-    Sucht die passende Distanz-Stufe und interpoliert linear dazwischen.
-    Erzeugt den 'Magnet-Effekt': Weit weg = schnell, nah = langsam + praezise.
-    """
-    # Wenn bereits gelockt, benutze die praezisere On-Target Kurve
-    active_curve = SPEED_CURVE_ON_TARGET if is_locked else curve
-
-    prev_dist = 0
-    prev_mult = active_curve[0][1]
-
-    for threshold, multiplier in active_curve:
-        if dist <= threshold:
-            # Lineare Interpolation zwischen den Stufen
-            if threshold == prev_dist:
-                return multiplier
-            t = (dist - prev_dist) / (threshold - prev_dist)
-            return prev_mult + t * (multiplier - prev_mult)
-        prev_dist = threshold
-        prev_mult = multiplier
-
-    return active_curve[-1][1]
-
-
-def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
-    """Profi-Aimbot Korrektur: Speed Curves + XIM-Kompensation.
-    
-    Algorithmus (inspiriert von Console Aimbot v1.1.3):
-    1. Pixel-Fehler berechnen (Fadenkreuz → Ziel)
-    2. Speed Curve anwenden: Nah = langsam/klebrig, Weit = schnell (MAGNET-EFFEKT)
-    3. Profil-Speed + Achsen-Skalierung anwenden
-    4. XIM ADS-Boost: Hochskalieren damit XIM es durchlaesst
-    5. XIM Minimum-Clamp: Zu kleine Werte auf Minimum hochziehen
-    
-    Returns: (mx, my, dist) — Pixel-Korrektur + Distanz zum Ziel
-    """
-    cx = fw / 2.0
-    cy = fh / 2.0
-    dx = tx - cx
-    dy = ty - cy
-    dist = (dx*dx + dy*dy) ** 0.5
-
-    if dist < profile["deadzone"]:
-        return 0, 0, dist
-
-    # 1. SPEED CURVE — Das Herzstueck des Magnet-Effekts
-    speed_mult = get_speed_curve_multiplier(dist, SPEED_CURVE_DEFAULT, tracker.locked)
-
-    # 2. Korrektur = Fehler × SpeedCurve × ProfilSpeed × AchsenSkalierung × Sensitivity
-    mx = dx * speed_mult * profile["speed"] * SPEED_X_MULTIPLIER * KMBOX_SENSITIVITY
-    my = dy * speed_mult * profile["speed"] * SPEED_Y_MULTIPLIER * KMBOX_SENSITIVITY
-
-    # 3. XIM ADS-Kompensation: XIM Matrix schluckt ~70-80% waehrend ADS
-    #    Muss hoeher skaliert werden damit Bewegung beim Controller ankommt
-    XIM_ADS_BOOST = 3.0
-    mx *= XIM_ADS_BOOST
-    my *= XIM_ADS_BOOST
-
-    # 4. XIM Minimum-Clamp: Unter ~25px wird komplett verschluckt
-    #    → Auf Minimum hochziehen (Richtung bleibt gleich!)
-    mag = (mx*mx + my*my) ** 0.5
-    XIM_MIN_MOVE = 25.0
-    if 0 < mag < XIM_MIN_MOVE:
-        scale = XIM_MIN_MOVE / mag
-        mx *= scale
-        my *= scale
-
-    # 5. Maximum deckeln (verhindert wilde Snaps)
-    mag = (mx*mx + my*my) ** 0.5
-    MAX_CORRECTION = 650.0
-    if mag > MAX_CORRECTION:
-        s = MAX_CORRECTION / mag
-        mx *= s
-        my *= s
-
-    return mx, my, dist
-
+# ============================================================
+# AIM CONTROLLER (Sendet Korrekturen an KMBox)
+# ============================================================
 
 class AimController:
     """Profi Aim Controller fuer XIM Matrix.
-    
-    Sendet move_auto mit ADAPTIVER Dauer basierend auf Distanz:
-    - Weit vom Ziel: Kurze Dauer → schnelle Snaps, haeufige Re-Evaluierung
-    - Nah am Ziel: Laengere Dauer → sanfte, fliessende Bewegung
-    
-    Ergebnis: Bis zu 12 Korrekturen/Sek (weit) oder 5/Sek (nah = ultra smooth)
+
+    Features:
+    - Speed Curves fuer Magnet-Effekt
+    - Adaptive Dauer (weit=schnell, nah=sanft)
+    - XIM ADS-Kompensation + Minimum-Clamp
+    - Command-Overlap Schutz
     """
+
     def __init__(self):
         self.last_send_time = 0.0
         self.last_duration_s = 0.0
         self.correction_count = 0
 
-    def try_correct(self, mx, my, dist):
-        """Sende Korrektur per move_auto mit adaptiver Dauer."""
+    def calc_correction(self, tx, ty, fw, fh, profile, is_locked):
+        """Berechnet Aim-Korrektur mit Speed Curves.
+
+        Returns: (mx, my, dist) oder (0, 0, dist) wenn in Deadzone
+        """
+        cx = fw / 2.0
+        cy = fh / 2.0
+        dx = tx - cx
+        dy = ty - cy
+        dist = math.sqrt(dx * dx + dy * dy)
+
+        if dist < profile["deadzone"]:
+            return 0, 0, dist
+
+        # 1. SPEED CURVE — Magnet-Effekt
+        curve = SPEED_CURVE_LOCKED if is_locked else SPEED_CURVE_NORMAL
+        speed_mult = get_speed_multiplier(dist, curve)
+
+        # 2. Korrektur berechnen
+        mx = dx * speed_mult * profile["speed"] * SPEED_X_MULTIPLIER * KMBOX_SENSITIVITY
+        my = dy * speed_mult * profile["speed"] * SPEED_Y_MULTIPLIER * KMBOX_SENSITIVITY
+
+        # 3. XIM ADS-Boost (kompensiert XIM-Daempfung)
+        mx *= XIM_ADS_BOOST
+        my *= XIM_ADS_BOOST
+
+        # 4. XIM Minimum-Clamp (zu kleine Werte hochziehen)
+        mag = math.sqrt(mx * mx + my * my)
+        if 0 < mag < XIM_MIN_MOVE:
+            scale = XIM_MIN_MOVE / mag
+            mx *= scale
+            my *= scale
+
+        # 5. Maximum deckeln
+        mag = math.sqrt(mx * mx + my * my)
+        if mag > MAX_CORRECTION:
+            scale = MAX_CORRECTION / mag
+            mx *= scale
+            my *= scale
+
+        return mx, my, dist
+
+    def send_correction(self, mx, my, dist):
+        """Sendet move_auto an KMBox mit adaptiver Dauer."""
+        if not KMBOX_AVAILABLE:
+            return False
+
         now = time.monotonic()
         # Cooldown = Dauer der letzten Bewegung (kein Command-Overlap!)
         if now - self.last_send_time < self.last_duration_s:
@@ -476,642 +297,390 @@ class AimController:
 
         ix = int(round(mx))
         iy = int(round(my))
-
         if abs(ix) < 3 and abs(iy) < 3:
             return False
 
-        # ADAPTIVE DAUER basierend auf Distanz zum Ziel:
-        # Weit → kurze Dauer (schnelle Snaps, haeufige Korrektur)
-        # Nah → laengere Dauer (sanfter, kein Overshoot)
+        # ADAPTIVE DAUER: Weit=kurz (schnelle Snaps), Nah=lang (smooth)
         if dist > 150:
-            duration_ms = 80     # ~12 Korrekturen/Sek — aggressiv
+            duration_ms = 80     # ~12 Korrekturen/Sek
         elif dist > 80:
-            duration_ms = 120    # ~8 Korrekturen/Sek — zuegig
+            duration_ms = 120    # ~8 Korrekturen/Sek
         elif dist > 40:
-            duration_ms = 160    # ~6 Korrekturen/Sek — kontrolliert
+            duration_ms = 160    # ~6 Korrekturen/Sek
         else:
-            duration_ms = 200    # ~5 Korrekturen/Sek — ultra smooth
+            duration_ms = 200    # ~5 Korrekturen/Sek
 
-        kmbox_net.move_auto(ix, iy, ms=duration_ms)
+        try:
+            kmbox_net.move_auto(ix, iy, ms=duration_ms)
+        except Exception:
+            return False
+
         self.last_send_time = now
         self.last_duration_s = duration_ms / 1000.0
         self.correction_count += 1
-
-        # Konsolen-Output nur alle 5 Korrekturen (weniger Spam)
-        if self.correction_count % 5 == 0:
-            print(f"  >>> move_auto({ix}, {iy}, {duration_ms}ms) dist={int(dist)} [#{self.correction_count}]")
         return True
 
     def reset(self):
         self.correction_count = 0
 
 
-aim_controller = AimController()
+# ============================================================
+# ZIELAUSWAHL — Waehlt bestes Ziel aus allen Erkennungen
+# ============================================================
 
-
-def move_aim(tracker, tx, ty, fw, fh, profile):
-    """Berechnet Korrektur und sendet wenn Cooldown abgelaufen.
-    Nur wenn Ziel mindestens 2 Frames hintereinander erkannt wurde.
-    Verhindert Zucken bei Fehlerkennungen (Gegenstaende, Himmel).
-    """
-    # 2-Frame-Filter: Erst tracken wenn Ziel 2 Frames hintereinander erkannt
-    if tracker.frames_seen < 2:
-        return False
-
-    mx, my, dist = calc_aim_correction(tracker, tx, ty, fw, fh, profile)
-    if mx == 0 and my == 0:
-        return False
-    return aim_controller.try_correct(mx, my, dist)
-
-
-def is_teammate(frame, bbox):
-    """Prueft ob ein erkannter Spieler ein Teammate ist.
-    Teammates in CoD haben blaue/gruene Namenschilder ueber dem Kopf.
-    Gegner haben rote oder gar keine.
-    """
-    x1, y1, x2, y2 = bbox
-    bw = x2 - x1
-    fh, fw = frame.shape[:2]
-
-    # Bereich UEBER der Bounding Box pruefen (Namensschild)
-    check_h = max(20, int((y2 - y1) * 0.25))
-    check_top = max(0, y1 - check_h)
-    check_left = max(0, x1 - 10)
-    check_right = min(fw, x2 + 10)
-
-    if check_top >= y1 or check_right <= check_left:
-        return False
-
-    region = frame[check_top:y1, check_left:check_right]
-    if region.size == 0:
-        return False
-
-    # BGR: Blau und Gruen erkennen (Teammate-Farben)
-    hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
-
-    # Blau: H=90-130, S>80, V>80
-    blue_mask = cv2.inRange(hsv, (90, 80, 80), (130, 255, 255))
-    # Gruen: H=40-80, S>80, V>80
-    green_mask = cv2.inRange(hsv, (40, 80, 80), (80, 255, 255))
-    # Cyan/Tuerkis: H=80-95, S>80, V>80
-    cyan_mask = cv2.inRange(hsv, (80, 80, 80), (95, 255, 255))
-
-    teammate_pixels = cv2.countNonZero(blue_mask) + cv2.countNonZero(green_mask) + cv2.countNonZero(cyan_mask)
-    total_pixels = region.shape[0] * region.shape[1]
-
-    if total_pixels == 0:
-        return False
-
-    ratio = teammate_pixels / total_pixels
-    # Wenn mehr als 5% der Pixel ueber dem Spieler blau/gruen sind = Teammate
-    return ratio > 0.05
-
-
-def pick_best_target(detections, center_x, center_y, prefer_head=False, frame=None):
+def pick_best_target(detections, frame_w, frame_h):
     """Waehlt das beste Ziel aus den Erkennungen.
-    Nutzt NUR body-Erkennung fuer konsistenten Zielpunkt.
-    Head-Erkennung wird ignoriert (verhindert Springen).
+
+    Prioritaet:
+    1. Innerhalb FOV
+    2. Head-Shots haben Bonus
+    3. Naehestes zur Bildmitte
+
+    Returns: (target_x, target_y, detection) oder (None, None, None)
     """
-    bodies = []
+    cx = frame_w / 2.0
+    cy = frame_h / 2.0
+    best = None
+    best_score = float('inf')
 
     for det in detections:
         x1, y1, x2, y2 = det["bbox"]
         bw = x2 - x1
         bh = y2 - y1
-        if bw * bh < MIN_TARGET_SIZE:
-            continue
-
-        # Mittelpunkt der Box
-        cx_det = (x1 + x2) / 2.0
-        cy_det = (y1 + y2) / 2.0
-
-        # Tote Koerper Filter: Liegende Bboxen ignorieren (Breite > 1.2x Hoehe)
-        if bw > bh * 1.2:
-            continue
-
-        # Sehr flache oder kleine Boxen = Leiche oder Debris
-        if bh < 50:
-            continue
-
-        # Untere 15% vom Bildschirm ignorieren (Boden = Leichen)
-        frame_height_full = center_y * 2
-        if cy_det > frame_height_full * 0.85:
-            continue
-
-        # Obere 18% vom Bildschirm ignorieren (Himmel/HUD-Bereich)
-        frame_height = center_y * 2
-        if cy_det < frame_height * 0.18:
-            continue
-
-        # Untere 10% ignorieren (HUD/Killfeed)
-        if cy_det > frame_height * 0.90:
-            continue
-
-        # MAX_AIM_RADIUS: Zu weit vom Fadenkreuz = ignorieren
-        dist_from_center = ((cx_det - center_x)**2 + (cy_det - center_y)**2) ** 0.5
-        if dist_from_center > MAX_AIM_RADIUS:
-            continue
-
-        # Teammate-Check: Blaue/Gruene Markierung = ueberspringen
-        if frame is not None and is_teammate(frame, det["bbox"]):
-            det["_teammate"] = True
-            continue
-
         class_name = det["class_name"]
 
-        # NUR Body/Player Detections verwenden (konsistenter Zielpunkt)
-        if class_name in ("player", "bot", "person"):
-            target_y = y1 + int(bh * AIM_POINT_BODY)
-            d = ((cx_det - center_x)**2 + (target_y - center_y)**2) ** 0.5
-            bodies.append((cx_det, target_y, d, det))
-        elif class_name == "head":
-            # Head-Box in Body-aehnlichen Zielpunkt umrechnen
-            # (Mitte der Head-Box statt oben drueber zu aimen)
-            head_cy = (y1 + y2) / 2.0
-            # Etwas UNTER die Head-Mitte zielen (realistischer)
-            target_y = head_cy + bh * 0.3
-            d = ((cx_det - center_x)**2 + (target_y - center_y)**2) ** 0.5
-            # Head nur nehmen wenn kein Body da ist (niedriger Prio)
-            bodies.append((cx_det, target_y, d + 100, det))  # +100 = niedrigere Prio
+        # --- FILTER ---
 
-    # Naechstes Ziel zum Fadenkreuz nehmen
-    if bodies:
-        bodies.sort(key=lambda x: x[2])
-        best = bodies[0]
-        return (best[0], best[1]), best[3]
+        # Leichen-Filter (liegend = breiter als hoch)
+        if bw > bh * DEAD_BODY_RATIO:
+            continue
 
-    return None, None
+        # Minimum-Hoehe Filter
+        if bh < MIN_BOX_HEIGHT:
+            continue
+
+        # Himmel-Filter (obere 10%)
+        center_y = (y1 + y2) / 2.0
+        if center_y < frame_h * SKY_FILTER_RATIO:
+            continue
+
+        # Boden-Filter (untere 12%)
+        if center_y > frame_h * GROUND_FILTER_RATIO:
+            continue
+
+        # Ignorierte Klassen
+        if class_name in IGNORE_CLASSES:
+            continue
+
+        # --- ZIELPUNKT ---
+        if class_name == "head":
+            # Head: Mitte der Box
+            tx = (x1 + x2) / 2.0
+            ty = (y1 + y2) / 2.0
+        else:
+            # Body: Oberes Drittel (Schulter/Kopf-Bereich)
+            tx = (x1 + x2) / 2.0
+            ty = y1 + bh * 0.25
+
+        # FOV-Check
+        dx = tx - cx
+        dy = ty - cy
+        dist = math.sqrt(dx * dx + dy * dy)
+        if dist > FOV_RADIUS:
+            continue
+
+        # Score: Distanz (naeher = besser), Head-Bonus
+        score = dist
+        if class_name == "head":
+            score *= 0.6  # Head-Bonus: 40% naeher gewichtet
+
+        if score < best_score:
+            best_score = score
+            best = (tx, ty, det)
+
+    if best:
+        return best[0], best[1], best[2]
+    return None, None, None
 
 
-# Farben fuer verschiedene Klassen
-CLASS_COLORS = {
-    "player": (0, 0, 255),      # Rot
-    "bot": (0, 0, 255),         # Rot
-    "head": (0, 165, 255),      # Orange
-    "person": (0, 0, 255),      # Rot (COCO fallback)
-    "weapon": (128, 128, 128),  # Grau
-    "dead_body": (80, 80, 80),  # Dunkelgrau
-    "smoke": (200, 200, 200),   # Hellgrau
-    "fire": (0, 100, 255),      # Orange-Rot
-}
+# ============================================================
+# OVERLAY ZEICHNEN
+# ============================================================
 
-
-def draw_status_bar(frame, model_mode, collecting, screenshot_count, fps, ads_active, tracker, profile_name):
-    """Zeichnet eine gut sichtbare Statusleiste oben im Bild."""
+def draw_overlay(frame, all_dets, target_pos, tracker, fps, ads_active, profile_name, fov_radius):
+    """Zeichnet HUD-Overlay auf den Frame."""
     h, w = frame.shape[:2]
-    bar_h = 38
+    cx, cy = w // 2, h // 2
 
-    # Hintergrund: halbtransparenter schwarzer Balken oben
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (0, 0), (w, bar_h), (0, 0, 0), -1)
-    cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
-
-    x = 10
-    y = 27
-
-    # --- MODELL ---
-    if model_mode == "bo7":
-        tag = "BO7 CUSTOM"
-        tag_color = (0, 255, 0)     # Gruen
-    elif model_mode == "nano":
-        tag = "NANO 320"
-        tag_color = (0, 200, 255)   # Gelb-Orange
-    else:
-        tag = "STANDARD 640"
-        tag_color = (255, 180, 0)   # Blau-Cyan
-
-    (tw, th), _ = cv2.getTextSize(tag, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-    cv2.rectangle(frame, (x-4, 6), (x + tw + 8, 33), tag_color, -1)
-    cv2.putText(frame, tag, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
-    x += tw + 16
-
-    # --- PROFIL ---
-    if profile_name == "AIMBOT":
-        prof_color = (0, 0, 255)    # Rot
-    else:
-        prof_color = (0, 180, 0)    # Gruen
-
-    (tw_p, _), _ = cv2.getTextSize(profile_name, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-    cv2.rectangle(frame, (x-4, 6), (x + tw_p + 8, 33), prof_color, -1)
-    cv2.putText(frame, profile_name, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-    x += tw_p + 16
-
-    # --- SCREENSHOTS ---
-    if collecting:
-        scr_text = f"REC ({screenshot_count})"
-        scr_color = (0, 0, 255)     # Rot = Aufnahme laeuft
-        cv2.circle(frame, (x + 6, y - 6), 6, (0, 0, 255), -1)
-        x += 18
-    else:
-        scr_text = "REC: AUS"
-        scr_color = (120, 120, 120) # Grau = inaktiv
-
-    cv2.putText(frame, scr_text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, scr_color, 2)
-    (tw2, _), _ = cv2.getTextSize(scr_text, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
-    x += tw2 + 16
-
-    # --- FPS ---
-    fps_color = (0, 255, 0) if fps >= 30 else (0, 200, 255) if fps >= 15 else (0, 0, 255)
-    cv2.putText(frame, f"FPS: {fps}", (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, fps_color, 2)
-
-    # --- ADS / AIMBOT Status (rechte Seite) ---
-    if ads_active:
-        ads_text = "ADS: AN"
-        ads_color = (0, 255, 255)
-    else:
-        ads_text = "ADS: AUS"
-        ads_color = (100, 100, 100)
-
-    # Zeige aktuellen ADS-Modus
-    mode_short = {"scuf": "[LT]", "keyboard": "[X]", "kmbox": "[MAUS]", "visual": "[AUTO]", "always": "[ON]"}
-    ads_text += " " + mode_short.get(ADS_MODE, "")
-
-    (tw_ads, _), _ = cv2.getTextSize(ads_text, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
-    ads_x = w - tw_ads - 15
-    cv2.putText(frame, ads_text, (ads_x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, ads_color, 2)
-
-    if tracker.locked:
-        lock_text = "LOCKED"
-        (tw_lock, _), _ = cv2.getTextSize(lock_text, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
-        cv2.putText(frame, lock_text, (ads_x - tw_lock - 15, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2)
-
-
-def draw_overlay(frame, all_detections, target_dets, target_pos, fps, ads_active, collecting, tracker, model_mode, screenshot_count, profile_name):
-    h, w = frame.shape[:2]
-
-    # === STATUSLEISTE OBEN (gut sichtbar) ===
-    draw_status_bar(frame, model_mode, collecting, screenshot_count, fps, ads_active, tracker, profile_name)
+    # FOV Kreis
+    fov_color = (0, 255, 0) if ads_active else (100, 100, 100)
+    cv2.circle(frame, (cx, cy), fov_radius, fov_color, 1)
 
     # Fadenkreuz
-    color = (0, 255, 255) if ads_active else (0, 255, 0)
-    cv2.line(frame, (w//2-25, h//2), (w//2+25, h//2), color, 2)
-    cv2.line(frame, (w//2, h//2-25), (w//2, h//2+25), color, 2)
-    cv2.circle(frame, (w//2, h//2), PROFILES[ACTIVE_PROFILE]["deadzone"], (50, 50, 50), 1)
+    cv2.line(frame, (cx - 15, cy), (cx + 15, cy), (255, 255, 255), 1)
+    cv2.line(frame, (cx, cy - 15), (cx, cy + 15), (255, 255, 255), 1)
 
     # Alle Erkennungen zeichnen
-    for det in all_detections:
+    for det in all_dets:
         x1, y1, x2, y2 = det["bbox"]
-        conf = det["confidence"]
         cls = det["class_name"]
-        is_target = cls in TARGET_CLASSES or cls == "person"
-        is_tm = det.get("_teammate", False)
+        conf = det["confidence"]
 
-        if is_tm:
-            # Teammate: blau, durchgestrichen
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 150, 0), 2)
-            cv2.putText(frame, 'TEAM', (x1, y1-8),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 150, 0), 2)
-        elif is_target:
-            tgt_color = (0, 0, 255)  # Rot fuer Ziele
-            cv2.rectangle(frame, (x1, y1), (x2, y2), tgt_color, 2)
-            cv2.putText(frame, f'{cls} {conf:.0%}', (x1, y1-8),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, tgt_color, 2)
+        if cls in TARGET_CLASSES:
+            color = (0, 0, 255)  # Rot = Ziel
+        elif cls in IGNORE_CLASSES:
+            color = (128, 128, 128)  # Grau = ignoriert
         else:
-            other_color = (100, 100, 100)  # Grau fuer Nicht-Ziele
-            cv2.rectangle(frame, (x1, y1), (x2, y2), other_color, 1)
-            cv2.putText(frame, f'{cls}', (x1, y1-5),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, other_color, 1)
+            color = (255, 255, 0)  # Cyan = sonstige
 
-    # Ziel-Markierung
-    if target_pos:
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+        label = f"{cls} {conf:.0%}"
+        cv2.putText(frame, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+
+    # Tracker-Linie zum Ziel
+    if target_pos and ads_active:
         tx, ty = int(target_pos[0]), int(target_pos[1])
-        cv2.circle(frame, (tx, ty), 12, (0, 255, 255), 3)
-        cv2.line(frame, (w//2, h//2), (tx, ty), (0, 255, 255), 2)
+        cv2.line(frame, (cx, cy), (tx, ty), (0, 255, 255), 2)
+        cv2.circle(frame, (tx, ty), 8, (0, 255, 255), 2)
 
-    # Ziel-Anzahl links unter Statusleiste
-    cv2.putText(frame, f'Ziele: {len(target_dets)}', (10, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+    # Status-Text
+    status = f"FPS: {fps:.0f} | {profile_name} | ADS: {'ON' if ads_active else 'OFF'}"
+    if tracker.locked:
+        status += f" | LOCKED (#{tracker.frames_seen})"
+    cv2.putText(frame, status, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
-    # Tastenbelegung unten
-    cv2.putText(frame, f'1=Assist | 2=Aimbot | 3=ADS | 5/6=Sens({KMBOX_SENSITIVITY:.2f}) | 7=Test | Q=Quit', (10, h-12), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (160, 160, 160), 1)
+    # Sensitivity-Info
+    info = f"Sens: {KMBOX_SENSITIVITY:.2f} | FOV: {fov_radius} | Conf: {CONFIDENCE:.2f}"
+    cv2.putText(frame, info, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
 
     return frame
 
 
+# ============================================================
+# HAUPTPROGRAMM
+# ============================================================
+
 def main():
-    global ADS_MODE, SCUF_CONTROLLER_ID, KMBOX_SENSITIVITY
-    print("=" * 55)
-    print("  XBOX VISION AI - AIMBOT v4")
-    print("  Scuf Passthrough + FPS-KI + ADS-Trigger")
-    print("=" * 55)
-    print()
+    global CONFIDENCE, FOV_RADIUS, KMBOX_SENSITIVITY
+    global SPEED_X_MULTIPLIER, SPEED_Y_MULTIPLIER
+    global MODEL_MODE
 
-    screenshot_dir = os.path.join(os.path.dirname(__file__), SCREENSHOT_FOLDER)
-    os.makedirs(screenshot_dir, exist_ok=True)
+    print("=" * 60)
+    print("  AIMBOT VISION v6 — Profi-System")
+    print("=" * 60)
 
-    # 1. YOLO laden
-    current_mode = MODEL_MODE
-    onnx_path = get_model_path(current_mode)
-    if not onnx_path:
-        print("FEHLER: Kein YOLO-Modell gefunden!")
-        print("Erwartete Dateien:")
-        print("  backend/sunxds_nano_320.onnx (schnell)")
-        print("  backend/sunxds_640.onnx (genau)")
-        sys.exit(1)
-
-    print(f"[1/3] YOLO laden ({current_mode})...")
-    detector = YOLODetector(onnx_path, conf_threshold=CONFIDENCE)
-    model_info = f"{current_mode} {'FPS' if detector.is_fps_model else 'COCO'}"
-    print("      OK!")
-
-    # 2. KMBox
-    print(f"[2/3] KMBox verbinden: {KMBOX_IP}:{KMBOX_PORT}")
-    ret = kmbox_net.init(KMBOX_IP, KMBOX_PORT, KMBOX_UUID)
-    if ret == 0:
-        print("      KMBox verbunden!")
+    # --- 1. KMBox verbinden ---
+    print("\n[1/3] KMBox verbinden...")
+    if KMBOX_AVAILABLE:
+        try:
+            kmbox_net.init(KMBOX_IP, KMBOX_PORT, KMBOX_UUID)
+            print(f"  KMBox verbunden: {KMBOX_IP}:{KMBOX_PORT}")
+        except Exception as e:
+            print(f"  WARNUNG: KMBox nicht erreichbar ({e})")
+            print(f"  → Aimbot laeuft im Anzeige-Modus (keine Mausbewegung)")
     else:
-        print("      WARNUNG: KMBox nicht verbunden")
+        print("  KMBox Modul nicht verfuegbar (Windows erforderlich)")
+        print("  → Anzeige-Modus")
 
-    # 3. Capture Card
-    print(f"[3/3] Capture Card: Device {CAPTURE_DEVICE}")
-    import platform
-    if platform.system() == "Windows":
-        cap = cv2.VideoCapture(CAPTURE_DEVICE, cv2.CAP_DSHOW)
-    else:
+    # --- 2. YOLO Modell laden ---
+    print(f"\n[2/3] YOLO Modell laden (Modus: {MODEL_MODE})...")
+    model_path = get_model_path(MODEL_MODE)
+    if not model_path:
+        print("  FEHLER: Kein ONNX-Modell gefunden im backend/ Ordner!")
+        print("  Benoetigte Datei: backend/yolo11s.onnx")
+        return
+
+    print(f"  Datei: {os.path.basename(model_path)}")
+    detector = YOLODetector(model_path)
+
+    # --- 3. Capture Card oeffnen ---
+    print(f"\n[3/3] Capture Card oeffnen (Device {CAPTURE_DEVICE})...")
+    cap = cv2.VideoCapture(CAPTURE_DEVICE, cv2.CAP_DSHOW)
+    if not cap.isOpened():
+        # Fallback ohne DirectShow
         cap = cv2.VideoCapture(CAPTURE_DEVICE)
     if not cap.isOpened():
-        print(f"FEHLER: Device {CAPTURE_DEVICE} nicht verfuegbar!")
-        sys.exit(1)
+        print("  FEHLER: Capture Card nicht gefunden!")
+        return
+
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    print(f"      Capture: {w}x{h}")
-    print()
-    print("BEREIT!")
-    if detector.is_fps_model:
-        print("FPS-Modell geladen: Erkennt Spieler + Koepfe")
-        print("Ignoriert: Waffen, Tote, Rauch, Feuer")
-    else:
-        print("COCO-Modell geladen (Fallback)")
-    print()
-    print("1 = Aim-Assist (sanft)")
-    print("2 = Aimbot (aggressiv)")
-    print("3 = ADS-Trigger umschalten:")
-    print("    [scuf]     Halte LT am Scuf inVision Pro")
-    print("    [keyboard] Halte X-Taste am PC")
-    print("    [kmbox]    Halte rechte Maustaste (KMBox)")
-    print("    [visual]   Automatisch (Zoom-Erkennung)")
-    print("    [always]   Immer an")
-    print("5/6 = KMBox Sensitivity runter/rauf (WICHTIG!)")
-    print("7 = Kalibrierungs-Test (sendet Test-Bewegung)")
-    print("S = Screenshot-Sammlung an/aus")
-    print("M = Modell wechseln (nano/standard)")
-    print("Q = Beenden")
-    print(f"ADS-Trigger: {ADS_MODE.upper()}")
-    print(f"KMBox Sensitivity: {KMBOX_SENSITIVITY:.2f}")
-    print("=" * 55)
+    fw = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    fh = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    print(f"  Capture: {fw}x{fh}")
 
+    # --- Status ---
+    print("\n" + "=" * 60)
+    print("  SYSTEM BEREIT!")
+    print("=" * 60)
+    print(f"  Profil: {PROFILES[PROFILE_ORDER[0]]['name']}")
+    print(f"  Speed Curves: {len(SPEED_CURVE_NORMAL)} Stufen (Magnet-Effekt)")
+    print(f"  XIM ADS-Boost: {XIM_ADS_BOOST} | Min: {XIM_MIN_MOVE}px | Max: {MAX_CORRECTION}px")
+    print(f"  Sensitivity: {KMBOX_SENSITIVITY:.2f}")
+    print(f"  FOV: {FOV_RADIUS}px | Confidence: {CONFIDENCE:.2f}")
+    print(f"  Filter: Leichen(>{DEAD_BODY_RATIO}x), Himmel(<{SKY_FILTER_RATIO*100:.0f}%), Min-H({MIN_BOX_HEIGHT}px)")
+    print()
+    print("  Steuerung:")
+    print("    A = ADS Toggle | P = Profil | M = Modell")
+    print("    1/2 = FOV | 3/4 = Confidence | 5/6 = Sensitivity")
+    print("    7/8 = Speed X | 9/0 = Speed Y | ESC = Beenden")
+    print("=" * 60)
+
+    # --- Variablen ---
     tracker = TargetTracker()
-    ads_detector = ADSDetector()
-    collecting = COLLECT_SCREENSHOTS
-    last_screenshot = 0
-    screenshot_count = len([f for f in os.listdir(screenshot_dir) if f.endswith('.jpg')])
-    active_profile_key = ACTIVE_PROFILE
-    profile = PROFILES[active_profile_key]
-    print(f"Aktives Profil: {profile['name']}")
-    print(f"Aim-System: SPEED CURVES + ADAPTIVE COOLDOWN (Profi-Modus)")
-    print(f"Speed X: {SPEED_X_MULTIPLIER:.2f} | Speed Y: {SPEED_Y_MULTIPLIER:.2f}")
-    print(f"Speed Curve: {len(SPEED_CURVE_DEFAULT)} Stufen | On-Target: {len(SPEED_CURVE_ON_TARGET)} Stufen")
-    print(f"XIM ADS-Boost: 3.0 | XIM Minimum: 25px | Max: 650px")
-
-    # Scuf Controller suchen
-    global SCUF_CONTROLLER_ID
-    scuf = None
-    if XINPUT_AVAILABLE:
-        scuf = ScufPassthrough(kmbox_net)
-        scuf_id = scuf.find_controller()
-        if scuf_id >= 0:
-            SCUF_CONTROLLER_ID = scuf_id
-            print(f"Scuf Controller gefunden: Slot {scuf_id}")
-            print_button_map()
-        else:
-            print("Kein XInput Controller gefunden")
-            scuf = None
-            if ADS_MODE == "scuf":
-                ADS_MODE = "keyboard"
-                print("  -> Fallback: Tastatur-Modus (halte X)")
-    else:
-        print("XInput nicht verfuegbar (nur Windows)")
-        if ADS_MODE == "scuf":
-            ADS_MODE = "keyboard"
-
-    fps = 0
+    aim_ctrl = AimController()
+    profile_idx = 0
+    profile = PROFILES[PROFILE_ORDER[profile_idx]]
+    ads_active = False
     frame_count = 0
-    fps_time = time.monotonic()
+    fps = 0.0
+    fps_timer = time.monotonic()
 
-    while True:
-        ret_cap, frame = cap.read()
-        if not ret_cap:
-            continue
+    # --- Hauptschleife ---
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                continue
 
-        fh, fw = frame.shape[:2]
+            frame_count += 1
+            now = time.monotonic()
 
-        # YOLO Erkennung - ALLE Klassen (fuer Anzeige)
-        all_dets = detector.detect(frame, conf_threshold=CONFIDENCE)
+            # FPS berechnen (alle 30 Frames)
+            if frame_count % 30 == 0:
+                elapsed = now - fps_timer
+                fps = 30.0 / elapsed if elapsed > 0 else 0
+                fps_timer = now
 
-        # Nur Ziel-Klassen fuer Aimbot (player/bot/head/person)
-        target_dets = [d for d in all_dets if d["class_name"] in TARGET_CLASSES]
+            # --- YOLO Inference ---
+            all_dets = detector.detect(frame, conf_threshold=CONFIDENCE)
 
-        center_x = fw / 2.0
-        center_y = fh / 2.0
+            # --- Nur Target-Klassen fuer Aimbot ---
+            target_dets = [d for d in all_dets if d["class_name"] in TARGET_CLASSES]
 
-        # Bestes Ziel waehlen (mit Headshot-Priorisierung + Teammate-Filter)
-        best_target, target_det = pick_best_target(
-            target_dets, center_x, center_y, prefer_head=PREFER_HEADSHOTS, frame=frame
-        )
+            # --- Bestes Ziel waehlen ---
+            tx, ty, target_det = pick_best_target(target_dets, fw, fh)
 
-        # ADS erkennen (je nach Modus)
-        ads_active = False
-        aimbot_dx, aimbot_dy = 0, 0
+            # --- Tracking + Aim ---
+            target_pos = None
 
-        if ADS_MODE == "scuf" and scuf and scuf.is_available():
-            # Scuf-Modus: Pruefen ob noch verbunden
-            state = scuf.read_state()
-            if state is None:
-                print("Scuf getrennt! Wechsle zu IMMER AN")
-                ADS_MODE = "always"
-                ads_active = True
+            if tx is not None and ads_active:
+                # Adaptiver EMA: Schnell erfassen, sanft halten
+                alpha = 0.50 if tracker.frames_seen < 3 else 0.30
+                tracker.update(tx, ty, alpha=alpha)
+
+                if tracker.is_stable(2):
+                    pos = tracker.get_position()
+                    if pos:
+                        tracker.locked = True
+                        target_pos = pos
+
+                        # Korrektur berechnen + senden
+                        mx, my, dist = aim_ctrl.calc_correction(
+                            pos[0], pos[1], fw, fh, profile, tracker.locked
+                        )
+                        if mx != 0 or my != 0:
+                            aim_ctrl.send_correction(mx, my, dist)
+            elif tx is not None:
+                # Nicht ADS: Trotzdem tracken (fuer schnellen Lock beim ADS-Druecken)
+                alpha = 0.40 if tracker.frames_seen < 3 else 0.25
+                tracker.update(tx, ty, alpha=alpha)
+                target_pos = tracker.get_position()
+                tracker.locked = False
             else:
-                # Aimbot-Korrektur berechnen WENN Ziel vorhanden
-                if best_target:
-                    tracker.update(best_target[0], best_target[1], alpha=0.35)
-                    if tracker.stable(2):
-                        pos = tracker.get_predicted()
-                        if pos:
-                            aimbot_dx, aimbot_dy, _ = calc_aim_correction(tracker, pos[0], pos[1], fw, fh, profile)
-                            tracker.locked = True
+                tracker.mark_lost()
+                tracker.locked = False
 
-                # Passthrough sendet Stick+Buttons+Trigger UND addiert Aimbot-Korrektur
-                ads_active = scuf.update(
-                    aimbot_override_x=aimbot_dx if best_target else 0,
-                    aimbot_override_y=aimbot_dy if best_target else 0
+            # --- Anzeige ---
+            if SHOW_WINDOW:
+                display = draw_overlay(
+                    frame.copy(), all_dets, target_pos,
+                    tracker, fps, ads_active, profile["name"], FOV_RADIUS
                 )
 
-                # Wenn kein Ziel, Tracker zuruecksetzen
-                if not best_target:
-                    if tracker.frames_seen > 0:
-                        tracker.frames_seen = max(0, tracker.frames_seen - 1)
-                        if tracker.frames_seen == 0:
-                            tracker.reset()
+                if WINDOW_SCALE != 1.0:
+                    new_w = int(fw * WINDOW_SCALE)
+                    new_h = int(fh * WINDOW_SCALE)
+                    display = cv2.resize(display, (new_w, new_h))
 
-        else:
-            # Nicht-Scuf Modi: Original-Logik
-            if ADS_MODE == "keyboard":
-                ads_active = is_key_pressed(ADS_KEY)
-            elif ADS_MODE == "kmbox":
-                ads_active = kmbox_net.is_mouse_right_pressed()
-            elif ADS_MODE == "visual":
-                ads_active = ads_detector.update(frame)
-            else:
-                ads_active = True
+                cv2.imshow("AIMBOT v6", display)
 
-            # Aimbot - NUR wenn ADS aktiv
-            if best_target and ads_active:
-                # Confidence-Check
-                if target_det and target_det.get("confidence", 0) >= 0.50:
-                    # Adaptiver EMA-Alpha: Schnell erfassen, sanft halten
-                    alpha = 0.50 if tracker.frames_seen < 3 else 0.30
-                    tracker.update(best_target[0], best_target[1], alpha=alpha)
-                    if tracker.stable(1):
-                        pos = tracker.get_predicted()
-                        if pos:
-                            tracker.locked = True
-                            move_aim(tracker, pos[0], pos[1], fw, fh, profile)
-                else:
-                    # Confidence zu niedrig: Nicht aimen, Tracker beibehalten
-                    pass
-            else:
-                if not best_target:
-                    # Sofort stoppen wenn kein Ziel — keine Geister-Bewegungen!
-                    tracker.reset()
-                    aim_controller.reset()
-                elif not ads_active:
-                    tracker.reset()
-                    aim_controller.reset()
-
-        # Screenshots sammeln
-        now = time.monotonic()
-        if collecting and (now - last_screenshot) >= SCREENSHOT_INTERVAL:
-            fname = os.path.join(screenshot_dir, f'frame_{screenshot_count:05d}.jpg')
-            cv2.imwrite(fname, frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
-            screenshot_count += 1
-            last_screenshot = now
-
-        # FPS
-        frame_count += 1
-        if now - fps_time >= 1.0:
-            fps = frame_count
-            frame_count = 0
-            fps_time = now
-
-        # Anzeige
-        if SHOW_WINDOW:
-            display = draw_overlay(
-                frame.copy(), all_dets, target_dets, best_target,
-                fps, ads_active, collecting, tracker, current_mode, screenshot_count,
-                profile["name"]
-            )
-            if WINDOW_SCALE != 1.0:
-                display = cv2.resize(display, None, fx=WINDOW_SCALE, fy=WINDOW_SCALE)
-            cv2.imshow('AIMBOT v3 - FPS KI', display)
+            # --- Tastatur-Steuerung ---
             key = cv2.waitKey(1) & 0xFF
-            if key == ord('q') or key == 27:
+
+            if key == 27:  # ESC
+                print("Beende...")
                 break
-            elif key == ord('s'):
-                collecting = not collecting
-                status = "AN" if collecting else "AUS"
-                print(f"Screenshot-Sammlung: {status} ({screenshot_count} gespeichert)")
-            elif key == ord('1'):
-                active_profile_key = "assist"
-                profile = PROFILES[active_profile_key]
-                tracker.reset()
-                print(f"Profil: {profile['name']} (sanft)")
-            elif key == ord('2'):
-                active_profile_key = "aimbot"
-                profile = PROFILES[active_profile_key]
-                tracker.reset()
-                print(f"Profil: {profile['name']} (aggressiv)")
-            elif key == ord('m'):
-                # Modell wechseln: bo7 -> nano -> standard -> bo7
-                cycle = {"bo7": "nano", "nano": "standard", "standard": "bo7"}
-                new_mode = cycle.get(current_mode, "bo7")
-                new_path = get_model_path(new_mode)
-                if new_path:
-                    print(f"Lade Modell: {new_mode}...")
-                    detector = YOLODetector(new_path, conf_threshold=CONFIDENCE)
-                    current_mode = new_mode
+
+            elif key == ord('a'):
+                ads_active = not ads_active
+                state = "EIN" if ads_active else "AUS"
+                print(f"ADS: {state}")
+                if not ads_active:
                     tracker.reset()
-                    print(f"Modell gewechselt: {current_mode}")
+                    aim_ctrl.reset()
+
+            elif key == ord('p'):
+                profile_idx = (profile_idx + 1) % len(PROFILE_ORDER)
+                profile = PROFILES[PROFILE_ORDER[profile_idx]]
+                print(f"Profil: {profile['name']} (Speed: {profile['speed']}, DZ: {profile['deadzone']})")
+
+            elif key == ord('m'):
+                modes = ["coco", "fps", "nano"]
+                current_idx = modes.index(MODEL_MODE) if MODEL_MODE in modes else 0
+                MODEL_MODE = modes[(current_idx + 1) % len(modes)]
+                new_path = get_model_path(MODEL_MODE)
+                if new_path:
+                    print(f"Lade Modell: {MODEL_MODE} ({os.path.basename(new_path)})...")
+                    detector = YOLODetector(new_path)
+                    tracker.reset()
                 else:
-                    # Skip missing model
-                    new_mode2 = cycle.get(new_mode, "bo7")
-                    new_path2 = get_model_path(new_mode2)
-                    if new_path2:
-                        detector = YOLODetector(new_path2, conf_threshold=CONFIDENCE)
-                        current_mode = new_mode2
-                        tracker.reset()
-                        print(f"Modell '{new_mode}' nicht gefunden, nutze: {current_mode}")
-                    else:
-                        print(f"Kein alternatives Modell gefunden!")
+                    print(f"Modell '{MODEL_MODE}' nicht gefunden!")
+                    MODEL_MODE = modes[current_idx]  # Zurueck
+
+            elif key == ord('1'):
+                FOV_RADIUS = max(50, FOV_RADIUS - 25)
+                print(f"FOV: {FOV_RADIUS}px")
+            elif key == ord('2'):
+                FOV_RADIUS = min(500, FOV_RADIUS + 25)
+                print(f"FOV: {FOV_RADIUS}px")
             elif key == ord('3'):
-                # ADS-Trigger-Modus umschalten
-                ads_cycle = {"scuf": "keyboard", "keyboard": "kmbox", "kmbox": "visual", "visual": "always", "always": "scuf"}
-                ADS_MODE = ads_cycle.get(ADS_MODE, "scuf")
-                tracker.reset()
-                mode_names = {
-                    "scuf": "SCUF CONTROLLER (halte LT)",
-                    "keyboard": f"TASTATUR (halte X-Taste)",
-                    "kmbox": "KMBOX (rechte Maustaste)",
-                    "visual": "VISUELL (automatisch)",
-                    "always": "IMMER AN",
-                }
-                print(f"ADS-Trigger: {mode_names.get(ADS_MODE, ADS_MODE)}")
+                CONFIDENCE = max(0.15, round(CONFIDENCE - 0.05, 2))
+                print(f"Confidence: {CONFIDENCE:.2f}")
+            elif key == ord('4'):
+                CONFIDENCE = min(0.80, round(CONFIDENCE + 0.05, 2))
+                print(f"Confidence: {CONFIDENCE:.2f}")
             elif key == ord('5'):
-                # KMBOX Multiplier runter
-                KMBOX_SENSITIVITY = max(0.10, KMBOX_SENSITIVITY - 0.10)
-                print(f"KMBOX Sensitivity: {KMBOX_SENSITIVITY:.2f}")
+                KMBOX_SENSITIVITY = max(0.10, round(KMBOX_SENSITIVITY - 0.10, 2))
+                print(f"Sensitivity: {KMBOX_SENSITIVITY:.2f}")
             elif key == ord('6'):
-                # KMBOX Sensitivity rauf
-                KMBOX_SENSITIVITY = min(3.0, KMBOX_SENSITIVITY + 0.10)
-                print(f"KMBOX Sensitivity: {KMBOX_SENSITIVITY:.2f}")
+                KMBOX_SENSITIVITY = min(3.00, round(KMBOX_SENSITIVITY + 0.10, 2))
+                print(f"Sensitivity: {KMBOX_SENSITIVITY:.2f}")
             elif key == ord('7'):
-                print(f"")
-                print(f"=== ADS-DIAGNOSE ===")
-                print(f"GEH IN ADS (LT halten) und drueck dann 8, 9 oder 0!")
-                print(f"  Taste 8: move_auto(500, 0, 500ms) — Riesen-Wert")
-                print(f"  Taste 9: 10x move(50, 0) mit Pausen — Rapid-Fire")
-                print(f"  Taste 0: move_auto(500, 0, 50ms) — Schnell+Stark")
-                print(f"=== Welcher bewegt am meisten? ===")
-                print(f"")
-
+                SPEED_X_MULTIPLIER = max(0.10, round(SPEED_X_MULTIPLIER - 0.10, 2))
+                print(f"Speed X: {SPEED_X_MULTIPLIER:.2f}")
             elif key == ord('8'):
-                print(f"  [8] ADS-TEST: move_auto(500, 0, 500ms)...")
-                kmbox_net.move_auto(500, 0, ms=500)
-
+                SPEED_X_MULTIPLIER = min(3.00, round(SPEED_X_MULTIPLIER + 0.10, 2))
+                print(f"Speed X: {SPEED_X_MULTIPLIER:.2f}")
             elif key == ord('9'):
-                print(f"  [9] ADS-TEST: 10x move(50, 0) rapid-fire...")
-                for i in range(10):
-                    kmbox_net.move(50, 0)
-                    time.sleep(0.03)
-
+                SPEED_Y_MULTIPLIER = max(0.10, round(SPEED_Y_MULTIPLIER - 0.10, 2))
+                print(f"Speed Y: {SPEED_Y_MULTIPLIER:.2f}")
             elif key == ord('0'):
-                print(f"  [0] ADS-TEST: move_auto(500, 0, 50ms)...")
-                kmbox_net.move_auto(500, 0, ms=50)
+                SPEED_Y_MULTIPLIER = min(3.00, round(SPEED_Y_MULTIPLIER + 0.10, 2))
+                print(f"Speed Y: {SPEED_Y_MULTIPLIER:.2f}")
 
-    cap.release()
-    if scuf:
-        scuf.stop()
-    kmbox_net.close()
-    if SHOW_WINDOW:
+    except KeyboardInterrupt:
+        print("\nUnterbrochen.")
+    finally:
+        cap.release()
         cv2.destroyAllWindows()
-    print(f"\nBeendet. {screenshot_count} Screenshots in '{screenshot_dir}/'")
+        if KMBOX_AVAILABLE:
+            try:
+                kmbox_net.close()
+            except Exception:
+                pass
+        print("Beendet.")
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("\nBeendet (Strg+C).")
-        kmbox_net.close()
-        cv2.destroyAllWindows()
+    main()
