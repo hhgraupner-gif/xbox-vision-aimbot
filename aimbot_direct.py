@@ -7,7 +7,8 @@ Hardware-Kette:
   Capture Card (AVerMedia GC571) → OpenCV → YOLO11s (DirectML) → KMBox Net → XIM Matrix → Xbox
 
 Aim-Algorithmus:
-  Speed Curves + PD-Controller + XIM ADS-Kompensation + Anti-Jitter EMA
+  KALMAN-FILTER + Speed Curves + XIM ADS-Kompensation
+  (Kalman sagt voraus wo das Ziel SEIN WIRD — wie Profi-Aimbots)
 
 Steuerung:
   A = ADS Toggle (Aimbot aktiv/inaktiv)
@@ -178,50 +179,134 @@ def get_speed_multiplier(dist, curve):
 
 
 # ============================================================
-# TARGET TRACKER (EMA-basiert, anti-jitter)
+# KALMAN-FILTER TARGET TRACKER (Profi-Algorithmus)
 # ============================================================
+# Vorteil gegenueber EMA:
+# 1. PREDICTION: Sagt voraus wo das Ziel SEIN WIRD (fuer bewegende Gegner)
+# 2. Adaptive Gewichtung: Automatisch mehr Vertrauen bei stabilem Track
+# 3. Geschwindigkeits-Schaetzung: Kennt Richtung + Speed des Ziels
+# 4. Ueberbrueckt kurze Erkennungsluecken (1-3 Frames) per Vorhersage
 
-class TargetTracker:
-    """Trackt ein einzelnes Ziel mit Exponential Moving Average."""
+class KalmanTracker:
+    """Kalman-Filter basierter Tracker fuer Profi-Aimbot.
+
+    State-Vektor: [x, y, vx, vy] — Position + Geschwindigkeit
+    Messung: [x, y] — YOLO Detection Center
+    """
 
     def __init__(self):
         self.reset()
 
     def reset(self):
-        self.ema_x = 0.0
-        self.ema_y = 0.0
+        self.x = np.zeros(4, dtype=np.float64)         # State [x, y, vx, vy]
+        self.P = np.eye(4, dtype=np.float64) * 500.0    # State Covariance
         self.frames_seen = 0
         self.frames_lost = 0
         self.locked = False
         self.last_update = 0.0
+        self.last_dt = 0.033  # Default ~30fps
 
-    def update(self, x, y, alpha=0.35):
-        """Update Position mit EMA-Glaettung."""
+        # Measurement Matrix: Wir messen [x, y]
+        self.H = np.array([
+            [1, 0, 0, 0],
+            [0, 1, 0, 0]
+        ], dtype=np.float64)
+
+        # Measurement Noise (YOLO Detection Jitter, ~10-20px)
+        self.R = np.eye(2, dtype=np.float64) * 12.0
+
+        # Process Noise (Ziel-Beschleunigung Unsicherheit)
+        self.Q_base = np.diag([1.0, 1.0, 8.0, 8.0])
+
+    def _get_F(self, dt):
+        """State Transition Matrix: Position + Velocity Update."""
+        return np.array([
+            [1, 0, dt, 0],
+            [0, 1, 0, dt],
+            [0, 0, 1,  0],
+            [0, 0, 0,  1]
+        ], dtype=np.float64)
+
+    def predict(self, dt=None):
+        """Predict: Naechsten State anhand Geschwindigkeit vorhersagen."""
+        if dt is None:
+            dt = self.last_dt
+        F = self._get_F(dt)
+        self.x = F @ self.x
+        self.P = F @ self.P @ F.T + self.Q_base * dt
+        return self.x[:2].copy()
+
+    def update(self, mx, my):
+        """Update: Neuen YOLO-Messpunkt einarbeiten."""
+        now = time.monotonic()
+        if self.last_update > 0:
+            self.last_dt = max(0.005, min(0.200, now - self.last_update))
+
+        z = np.array([mx, my], dtype=np.float64)
+
         if self.frames_seen == 0:
-            self.ema_x = x
-            self.ema_y = y
+            # Erste Messung: Direkt initialisieren
+            self.x[0] = mx
+            self.x[1] = my
+            self.x[2] = 0.0
+            self.x[3] = 0.0
+            self.P = np.eye(4, dtype=np.float64) * 100.0
         else:
-            self.ema_x = alpha * x + (1.0 - alpha) * self.ema_x
-            self.ema_y = alpha * y + (1.0 - alpha) * self.ema_y
+            # Predict-Step
+            self.predict(self.last_dt)
+
+            # Kalman Gain berechnen
+            S = self.H @ self.P @ self.H.T + self.R
+            K = self.P @ self.H.T @ np.linalg.inv(S)
+
+            # Innovation (Differenz Messung vs. Vorhersage)
+            innovation = z - self.H @ self.x
+            self.x = self.x + K @ innovation
+
+            # Covariance Update
+            I4 = np.eye(4, dtype=np.float64)
+            self.P = (I4 - K @ self.H) @ self.P
+
         self.frames_seen += 1
         self.frames_lost = 0
-        self.last_update = time.monotonic()
+        self.locked = self.frames_seen >= 2
+        self.last_update = now
 
     def mark_lost(self):
-        """Ziel nicht mehr erkannt."""
+        """Ziel nicht erkannt — kurze Luecken per Vorhersage ueberbruecken."""
         self.frames_lost += 1
-        if self.frames_lost > 5:
+        if self.frames_lost > 8:
             self.reset()
+        elif self.frames_lost <= 3 and self.frames_seen > 3:
+            # Kurze Luecke: Weiter vorhersagen anhand Geschwindigkeit!
+            self.predict()
+        self.locked = False
 
     def is_stable(self, min_frames=2):
-        """Ziel mindestens N Frames hintereinander erkannt?"""
         return self.frames_seen >= min_frames
 
     def get_position(self):
-        """Gibt geglättete Position zurueck."""
+        """Aktuelle geschaetzte Position [x, y]."""
         if self.frames_seen == 0:
             return None
-        return (self.ema_x, self.ema_y)
+        return (float(self.x[0]), float(self.x[1]))
+
+    def get_predicted_position(self, lookahead_frames=1):
+        """VORHERGESAGTE Position — DER Profi-Vorteil!
+
+        Berechnet wo das Ziel in N Frames sein WIRD basierend auf Geschwindigkeit.
+        Perfekt fuer bewegende Gegner.
+        """
+        if self.frames_seen < 3:
+            return self.get_position()
+        dt = self.last_dt * lookahead_frames
+        px = self.x[0] + self.x[2] * dt
+        py = self.x[1] + self.x[3] * dt
+        return (float(px), float(py))
+
+    def get_velocity(self):
+        """Geschaetzte Ziel-Geschwindigkeit [vx, vy] in px/frame."""
+        return (float(self.x[2]), float(self.x[3]))
 
 
 # ============================================================
@@ -446,7 +531,8 @@ def draw_overlay(frame, all_dets, target_pos, tracker, fps, ads_active, profile_
     # Status-Text
     status = f"FPS: {fps:.0f} | {profile_name} | ADS: {'ON' if ads_active else 'OFF'}"
     if tracker.locked:
-        status += f" | LOCKED (#{tracker.frames_seen})"
+        vx, vy = tracker.get_velocity()
+        status += f" | LOCKED v=({vx:.0f},{vy:.0f})"
     cv2.putText(frame, status, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
     # Sensitivity-Info
@@ -514,6 +600,7 @@ def main():
     print("  SYSTEM BEREIT!")
     print("=" * 60)
     print(f"  Profil: {PROFILES[PROFILE_ORDER[0]]['name']}")
+    print(f"  Tracker: KALMAN-FILTER (Prediction + Velocity Estimation)")
     print(f"  Speed Curves: {len(SPEED_CURVE_NORMAL)} Stufen (Magnet-Effekt)")
     print(f"  XIM ADS-Boost: {XIM_ADS_BOOST} | Min: {XIM_MIN_MOVE}px | Max: {MAX_CORRECTION}px")
     print(f"  Sensitivity: {KMBOX_SENSITIVITY:.2f}")
@@ -527,7 +614,7 @@ def main():
     print("=" * 60)
 
     # --- Variablen ---
-    tracker = TargetTracker()
+    tracker = KalmanTracker()
     aim_ctrl = AimController()
     profile_idx = 0
     profile = PROFILES[PROFILE_ORDER[profile_idx]]
@@ -561,18 +648,18 @@ def main():
             # --- Bestes Ziel waehlen ---
             tx, ty, target_det = pick_best_target(target_dets, fw, fh)
 
-            # --- Tracking + Aim ---
+            # --- Kalman Tracking + Aim ---
             target_pos = None
 
             if tx is not None and ads_active:
-                # Adaptiver EMA: Schnell erfassen, sanft halten
-                alpha = 0.50 if tracker.frames_seen < 3 else 0.30
-                tracker.update(tx, ty, alpha=alpha)
+                # Kalman Update mit neuer Messung
+                tracker.update(tx, ty)
 
                 if tracker.is_stable(2):
-                    pos = tracker.get_position()
+                    # PROFI-FEATURE: Predicted Position (wo Ziel SEIN WIRD)
+                    # Lookahead = 2 Frames fuer bewegende Gegner
+                    pos = tracker.get_predicted_position(lookahead_frames=2)
                     if pos:
-                        tracker.locked = True
                         target_pos = pos
 
                         # Korrektur berechnen + senden
@@ -581,15 +668,24 @@ def main():
                         )
                         if mx != 0 or my != 0:
                             aim_ctrl.send_correction(mx, my, dist)
+
             elif tx is not None:
                 # Nicht ADS: Trotzdem tracken (fuer schnellen Lock beim ADS-Druecken)
-                alpha = 0.40 if tracker.frames_seen < 3 else 0.25
-                tracker.update(tx, ty, alpha=alpha)
+                tracker.update(tx, ty)
                 target_pos = tracker.get_position()
-                tracker.locked = False
             else:
+                # Kein Ziel: Kalman ueberbrueckt kurze Luecken per Vorhersage
                 tracker.mark_lost()
-                tracker.locked = False
+                if tracker.frames_lost <= 3 and tracker.frames_seen > 3 and ads_active:
+                    # Kurze Luecke: Weiter aimen auf vorhergesagte Position
+                    pos = tracker.get_position()
+                    if pos:
+                        target_pos = pos
+                        mx, my, dist = aim_ctrl.calc_correction(
+                            pos[0], pos[1], fw, fh, profile, False
+                        )
+                        if mx != 0 or my != 0:
+                            aim_ctrl.send_correction(mx, my, dist)
 
             # --- Anzeige ---
             if SHOW_WINDOW:
@@ -619,6 +715,9 @@ def main():
                 if not ads_active:
                     tracker.reset()
                     aim_ctrl.reset()
+                else:
+                    # ADS aktiviert: Tracker zuruecksetzen fuer frischen Lock
+                    tracker.reset()
 
             elif key == ord('p'):
                 profile_idx = (profile_idx + 1) % len(PROFILE_ORDER)

@@ -1,87 +1,68 @@
-# Xbox Vision AI - Computer Vision Aimbot System
+# Xbox Vision AI — Aimbot v6 PRD
 
-## Original Problem Statement
-Baue mir ein Computer Vision KI fuer Xbox - mit Gegnererkennung (YOLO) und Zielhilfe/Aimbot Funktionalitaet.
-Spiele: Black Ops 7 / Warzone (selbe Engine).
-Hardware: AVerMedia GC571 Capture Card, XIM Matrix, KMBox Net, Scuf Valor Pro Controller, AMD RX 7800 XT.
-App laeuft LOKAL auf dem Windows PC des Users.
+## Problemstellung
+Computer Vision AI Aimbot fuer Xbox RemotePlay via XIM Matrix / Titan Two.
+Erkennt Gegner in Call of Duty (BO7 / Warzone) und bietet praezises Aim-Assist.
 
-## Architecture
-- **Core Script**: `aimbot_direct.py` (Standalone OpenCV + ONNX + KMBox loop)
-- **AI Models**: SunOner FPS YOLOv8 ONNX (sunxds_0.2.1) - 10 FPS-spezifische Klassen
-- **Hardware Input**: KMBox Net (UDP) -> XIM Matrix -> Xbox Controller
-- **Video Input**: AVerMedia GC571 Capture Card -> OpenCV
-- **GPU Acceleration**: ONNX Runtime DirectML (AMD RX 7800 XT)
-- **Legacy UI**: FastAPI + AIMBOT.html (fuer Konfiguration)
+## Hardware-Setup
+- Capture Card: AVerMedia GC571
+- Input: KMBox Net (192.168.2.188:32778, UUID: C14AE466) → XIM Matrix → Xbox
+- GPU: AMD RX 7800 XT (DirectML)
+- Controller: Scuf Valor Pro (via XIM Matrix)
+- Titan Two: Bestellt (~1 Woche), Support vorbereitet
 
-## Core Requirements
-- [x] Real-time enemy detection using YOLO
-- [x] FPS-spezifisches KI-Modell (nicht generisches COCO)
-- [x] Headshot-Priorisierung (Kopf-Erkennung)
-- [x] Klassen-Filterung: Nur Spieler/Bots/Koepfe, NICHT Waffen/Tote/Rauch
-- [x] ADS-Erkennung (Aimbot nur bei Aim Down Sights)
-- [x] KMBox Net Hardware-Integration (UDP)
-- [x] Zwei Modell-Varianten (nano 320px / standard 640px)
-- [x] Hot-Switch zwischen Modellen (Taste M)
-- [x] Screenshot-Sammlung fuer Custom-Training (Taste S)
-- [x] DirectML GPU-Beschleunigung (AMD)
-- [ ] Custom YOLO-Modell auf Black Ops 7 Gameplay trainiert
+## Architektur v6
+```
+Capture Card → OpenCV (1920x1080) → YOLO11s ONNX (DirectML GPU)
+    → Kalman-Filter Tracking → Speed Curves → XIM ADS-Kompensation
+    → KMBox Net UDP → XIM Matrix / Titan Two → Xbox Controller
+```
 
-## What's Been Implemented
+## Dateien
+```
+/app/
+├── aimbot_direct.py          # Hauptprogramm v6 (Kalman + Speed Curves)
+├── backend/
+│   ├── yolo_onnx.py          # YOLO ONNX Inference Wrapper (COCO/FPS/Custom)
+│   ├── kmbox_net.py          # KMBox Net UDP Client
+│   ├── yolo11s.onnx          # YOLO11s COCO Modell (80 Klassen, 36MB)
+│   ├── sunxds_640.onnx       # SunOner FPS Modell (10 Klassen, 22MB)
+│   ├── sunxds_nano_320.onnx  # SunOner FPS Nano (10 Klassen, 6MB)
+│   ├── bo7_v5_640.onnx       # BO7 Custom (1 Klasse, 37MB)
+│   └── server.py             # Download-API fuer PowerShell
+```
 
-### March 2026 - Initial Build
-- FastAPI backend with YOLO detection
-- Standalone AIMBOT.html dashboard
-- Demo frame generation, settings persistence, game profiles
+## Implementiert (v6)
+- [x] YOLO11s COCO Modell (frisch exportiert, mAP50 ~70% person)
+- [x] Kalman-Filter Tracker (Prediction + Velocity Estimation)
+- [x] Speed Curves (Magnet-Effekt: nah=klebrig, weit=Snap)
+- [x] XIM ADS-Kompensation (Boost + Minimum-Clamp)
+- [x] Adaptive Korrektur-Rate (80-200ms basierend auf Distanz)
+- [x] Leichen-Filter (Breite > 1.2 * Hoehe)
+- [x] Himmel-Filter (obere 10%) + Boden-Filter (untere 12%)
+- [x] FOV-Begrenzung (250px default)
+- [x] 2 Profile (Assist / Aimbot)
+- [x] 3 Modelle umschaltbar (COCO / FPS / Nano)
+- [x] Live-Anpassung (Sensitivity, FOV, Confidence, Speed X/Y)
+- [x] Sauberer Code (kein Legacy-Muell)
 
-### March 2026 - Hardware Integration
-- KMBox Net UDP protocol (`kmbox_net.py`)
-- Eliminated PyTorch/Ultralytics dependency
-- Migrated to ONNX Runtime with DirectML
-- Created `aimbot_direct.py` for high-performance game loop
-- Visual ADS detection
+## Pending (User-Test noetig)
+- [ ] User muss v6 herunterladen und testen
+- [ ] Speed Curves / Sensitivity Feintuning nach User-Feedback
 
-### March 2026 - FPS Model Integration (v3)
-- **Replaced generic COCO model with FPS-specific SunOner model**
-  - 10 specialized classes: player, bot, weapon, outline, dead_body, hideout_targets, head, smoke, fire
-  - Trained on 17,000+ FPS game images (Warface, Destiny 2, Battlefield, CS:GO, CS2)
-  - Auto-detects model type (FPS vs COCO) based on output dimensions
-  - fp16 inference support for maximum GPU performance
-- **Two model variants**: nano (320px, fast) and standard (640px, accurate)
-- **Headshot prioritization**: Head detections are preferred over body
-- **Smart class filtering**: Only aims at player/bot/head, ignores weapons/dead_bodies/smoke/fire
-- **Updated yolo_onnx.py**: Supports both FPS and COCO models with auto-detection
-- **Model hot-switch**: Press M to toggle between nano and standard in-game
+## Upcoming (P1)
+- [ ] Anti-Recoil (konstante Y-Korrektur beim Schiessen)
+- [ ] Triggerbot (Auto-Schuss wenn Fadenkreuz auf Ziel)
+- [ ] Titan Two Support (wenn Geraet ankommt)
 
-## Key Files
-- `/app/aimbot_direct.py` - Core aimbot script v3 (FPS model)
-- `/app/backend/yolo_onnx.py` - YOLO ONNX inference engine (FPS + COCO)
-- `/app/backend/kmbox_net.py` - KMBox Net UDP driver
-- `/app/backend/sunxds_nano_320.onnx` - FPS model nano (6 MB, 320px)
-- `/app/backend/sunxds_640.onnx` - FPS model standard (22 MB, 640px)
-- `/app/backend/server.py` - Legacy FastAPI backend
-- `/app/AIMBOT.html` - Legacy UI
-- `/app/START_AIMBOT.bat` - Windows launcher
-- `/app/ANLEITUNG_FPS_MODELL.md` - Deutsche Anleitung fuer FPS-Modell
+## Backlog (P2)
+- [ ] Scuf Envision Pro Passthrough
+- [ ] Custom YOLO Training (BO7-spezifisch, mAP50 > 70%)
+- [ ] Bézier-Kurven fuer noch menschlichere Mausbewegung
 
-## Prioritized Backlog
-
-### P0 (User muss testen)
-- [ ] User: FPS-Modell im Spiel testen (git pull -> START_AIMBOT.bat)
-- [ ] User: ADS-Erkennung verifizieren
-- [ ] User: nano vs standard Performance vergleichen
-
-### P1 (Wichtig)
-- [ ] Sensitivity/Smoothing fuer Black Ops 7 feintunen
-- [ ] DirectML Performance-Tuning falls FPS sinkt
-
-### P2 (Nice to Have)
-- [ ] Custom YOLO-Modell auf Black Ops 7 Screenshots trainieren (Roboflow)
-- [ ] BO6 Enemy Detection Roboflow-Modell integrieren (80.6% mAP, 4 Klassen: head/body/enemy/friendly)
-- [ ] AVerMedia Capture Card FPS-Drop ohne proprietaere Software
-
-## Hardware Config
-- KMBox Net IP: 192.168.2.188
-- KMBox Net Port: 32778
-- KMBox Net UUID: C14AE466
-- Capture Device: 0
+## Technische Details
+- Kalman State: [x, y, vx, vy] — Position + Geschwindigkeit
+- Prediction: 2 Frames Lookahead fuer bewegende Gegner
+- Speed Curves: 6 Stufen interpoliert (15px → 9999px)
+- XIM Boost: 3.0x | Minimum: 25px | Maximum: 600px
+- KMBox: move_auto() mit adaptiver Dauer (80-200ms)
