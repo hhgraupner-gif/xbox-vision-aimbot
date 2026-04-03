@@ -88,7 +88,10 @@ class YOLODetector:
 
         # Detect input size from model shape
         if len(self.input_shape) == 4:
-            self.input_size = self.input_shape[2]
+            dim = self.input_shape[2]
+            if isinstance(dim, int) and dim > 0:
+                self.input_size = dim
+            # Sonst: Default 640 bleibt (fuer dynamische Modelle)
 
         # Detect fp16
         self.use_fp16 = 'float16' in inp.type
@@ -124,7 +127,11 @@ class YOLODetector:
                 elif "sunxds" in fname or "fps" in fname:
                     num_classes = 10
 
-        if num_classes == 2:
+        if num_classes == 1:
+            self.is_fps_model = True
+            self.names = {0: "person"}
+            logger.info(f"Single-class model detected (1 class: person/enemy)")
+        elif num_classes == 2:
             self.is_fps_model = True
             self.names = BO7_NAMES
             logger.info(f"BO7 custom model detected ({num_classes} classes)")

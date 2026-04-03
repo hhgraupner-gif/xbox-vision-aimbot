@@ -1194,6 +1194,7 @@ async def download_file(filename: str):
     """Download training files (notebook, labels, anleitung)"""
     allowed = {
         "BO7_GPU_Training.ipynb": Path("/app/BO7_GPU_Training.ipynb"),
+        "BO7_V5_Training.ipynb": Path("/app/BO7_V5_Training.ipynb"),
         "labels_only.zip": Path("/app/labels_only.zip"),
         "ANLEITUNG_GPU_TRAINING.md": Path("/app/ANLEITUNG_GPU_TRAINING.md"),
         "test_scuf.py": Path("/app/test_scuf.py"),
