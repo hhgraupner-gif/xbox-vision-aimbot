@@ -543,13 +543,17 @@ def pick_best_target(detections, center_x, center_y, prefer_head=False, frame=No
         cx_det = (x1 + x2) / 2.0
         cy_det = (y1 + y2) / 2.0
 
-        # Tote Koerper Filter: Liegende Bboxen ignorieren (Breite > 1.3x Hoehe)
-        # Verschaerft: Vorher 1.8x, jetzt 1.3x — erwischt mehr Leichen
-        if bw > bh * 1.3:
+        # Tote Koerper Filter: Liegende Bboxen ignorieren (Breite > 1.2x Hoehe)
+        if bw > bh * 1.2:
             continue
 
-        # Sehr flache Boxen = definitiv Leiche (fast horizontal)
-        if bh < 40:
+        # Sehr flache oder kleine Boxen = Leiche oder Debris
+        if bh < 50:
+            continue
+
+        # Untere 15% vom Bildschirm ignorieren (Boden = Leichen)
+        frame_height_full = center_y * 2
+        if cy_det > frame_height_full * 0.85:
             continue
 
         # Obere 18% vom Bildschirm ignorieren (Himmel/HUD-Bereich)
