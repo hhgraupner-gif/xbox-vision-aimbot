@@ -131,9 +131,10 @@ MAX_AIM_RADIUS = 220        # Nur Ziele nah am Fadenkreuz (kleiner = weniger Feh
 MIN_MOUSE_MOVE = 1          # Nur sub-pixel Bewegungen ignorieren
 
 # ============================================================
-# KMBOX SENSITIVITY — Steuert wie stark die Maus pro Pixel Fehler bewegt wird
-# Taste 5/6 zum live anpassen
-KMBOX_SENSITIVITY = 5.00
+# KMBOX SENSITIVITY — Globaler Multiplikator fuer alle Aim-Korrekturen
+# Taste 5/6 zum live anpassen (Schritte: 0.10)
+# WICHTIG: Speed Curves steuern jetzt das meiste — das hier ist Feintuning!
+KMBOX_SENSITIVITY = 1.00
 # ============================================================
 
 # ============================================================
@@ -148,23 +149,24 @@ KMBOX_SENSITIVITY = 5.00
 # Distanz = Pixel vom Fadenkreuz zum Ziel
 # ============================================================
 SPEED_CURVE_DEFAULT = [
-    # (max_distanz, multiplikator)
-    (20,   0.05),   # Sehr nah: Fast stillstehen (KEIN ZITTERN)
-    (50,   0.35),   # Nah: Sanfte Korrekturen
-    (100,  0.65),   # Mittel: Zuegiges Tracking
-    (180,  0.90),   # Mittel-weit: Starkes Anziehen
-    (300,  1.10),   # Weit: Aggressiver Pull
-    (9999, 1.30),   # Sehr weit: Maximaler Snap
+    # (max_distanz, multiplikator) — Steuert den "Magnet-Effekt"
+    # Weit weg = schneller Snap, nah dran = klebrig langsam
+    (15,   0.08),   # Sehr nah: Kaum bewegen (anti-jitter)
+    (40,   0.25),   # Nah: Sanfte Mikro-Korrekturen
+    (80,   0.50),   # Mittel-nah: Kontrolliertes Nachfuehren
+    (140,  0.80),   # Mittel: Starkes Anziehen
+    (220,  1.00),   # Weit: Voller Pull
+    (9999, 1.20),   # Sehr weit: Maximaler Snap
 ]
 
 SPEED_CURVE_ON_TARGET = [
-    # Wenn bereits auf dem Ziel (nach Lock): Praezise halten
-    (15,   0.02),   # Minimal: Praktisch stillstehen (anti-jitter)
-    (35,   0.20),   # Sehr nah: Feinste Korrekturen
-    (70,   0.45),   # Nah: Sanftes Nachfuehren
-    (130,  0.70),   # Mittel: Kontrolliert folgen
-    (250,  0.90),   # Weit: Schnell nachziehen
-    (9999, 1.10),   # Sehr weit: Volle Geschwindigkeit
+    # Wenn bereits gelockt: Extra praezise + ruhig halten
+    (12,   0.03),   # Minimal: Praktisch stillstehen
+    (30,   0.15),   # Sehr nah: Feinste Korrekturen
+    (60,   0.35),   # Nah: Sanftes Nachfuehren
+    (120,  0.60),   # Mittel: Kontrolliert folgen
+    (200,  0.85),   # Weit: Zuegig nachziehen
+    (9999, 1.05),   # Sehr weit: Volle Geschwindigkeit
 ]
 
 # Separate X/Y Sensitivitaet (wie im Profi-Aimbot Video)
@@ -393,11 +395,16 @@ def get_speed_curve_multiplier(dist, curve, is_locked=False):
 
 
 def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
-    """Korrektur mit ADS-Kompensation.
+    """Profi-Aimbot Korrektur: Speed Curves + XIM-Kompensation.
     
-    XIM Matrix ADS-Reduktion schluckt ~80% der Mausbewegung.
-    Diagnose: move_auto(500, 0, 500ms) funktioniert waehrend ADS.
-    → Korrekturen muessen im Bereich 300-600px sein!
+    Algorithmus (inspiriert von Console Aimbot v1.1.3):
+    1. Pixel-Fehler berechnen (Fadenkreuz → Ziel)
+    2. Speed Curve anwenden: Nah = langsam/klebrig, Weit = schnell (MAGNET-EFFEKT)
+    3. Profil-Speed + Achsen-Skalierung anwenden
+    4. XIM ADS-Boost: Hochskalieren damit XIM es durchlaesst
+    5. XIM Minimum-Clamp: Zu kleine Werte auf Minimum hochziehen
+    
+    Returns: (mx, my, dist) — Pixel-Korrektur + Distanz zum Ziel
     """
     cx = fw / 2.0
     cy = fh / 2.0
@@ -406,80 +413,110 @@ def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
     dist = (dx*dx + dy*dy) ** 0.5
 
     if dist < profile["deadzone"]:
-        return 0, 0
+        return 0, 0, dist
 
-    # ADS-Kompensation: Hoehere Werte wegen kuerzerer Dauer (200ms statt 500ms)
-    ADS_BOOST = 5.0
-    mx = dx * ADS_BOOST
-    my = dy * ADS_BOOST * 0.5  # Y reduziert: Vertikale Aim-Sens ist hoeher in CoD
+    # 1. SPEED CURVE — Das Herzstueck des Magnet-Effekts
+    speed_mult = get_speed_curve_multiplier(dist, SPEED_CURVE_DEFAULT, tracker.locked)
 
-    # Deckeln bei 1000px
+    # 2. Korrektur = Fehler × SpeedCurve × ProfilSpeed × AchsenSkalierung × Sensitivity
+    mx = dx * speed_mult * profile["speed"] * SPEED_X_MULTIPLIER * KMBOX_SENSITIVITY
+    my = dy * speed_mult * profile["speed"] * SPEED_Y_MULTIPLIER * KMBOX_SENSITIVITY
+
+    # 3. XIM ADS-Kompensation: XIM Matrix schluckt ~70-80% waehrend ADS
+    #    Muss hoeher skaliert werden damit Bewegung beim Controller ankommt
+    XIM_ADS_BOOST = 3.0
+    mx *= XIM_ADS_BOOST
+    my *= XIM_ADS_BOOST
+
+    # 4. XIM Minimum-Clamp: Unter ~25px wird komplett verschluckt
+    #    → Auf Minimum hochziehen (Richtung bleibt gleich!)
     mag = (mx*mx + my*my) ** 0.5
-    if mag > 1000:
-        s = 1000.0 / mag
+    XIM_MIN_MOVE = 25.0
+    if 0 < mag < XIM_MIN_MOVE:
+        scale = XIM_MIN_MOVE / mag
+        mx *= scale
+        my *= scale
+
+    # 5. Maximum deckeln (verhindert wilde Snaps)
+    mag = (mx*mx + my*my) ** 0.5
+    MAX_CORRECTION = 650.0
+    if mag > MAX_CORRECTION:
+        s = MAX_CORRECTION / mag
         mx *= s
         my *= s
 
-    return mx, my
+    return mx, my, dist
 
 
 class AimController:
-    """Aim Controller optimiert fuer XIM Matrix.
+    """Profi Aim Controller fuer XIM Matrix.
     
-    XIM braucht LANGSAME, KONTINUIERLICHE Mausbewegungen.
-    Kurze Bursts und direkte move() werden verschluckt.
+    Sendet move_auto mit ADAPTIVER Dauer basierend auf Distanz:
+    - Weit vom Ziel: Kurze Dauer → schnelle Snaps, haeufige Re-Evaluierung
+    - Nah am Ziel: Laengere Dauer → sanfte, fliessende Bewegung
     
-    Diagnose-Ergebnis: move_auto mit 300-500ms Dauer funktioniert am besten.
-    → ~2-3 Korrekturen pro Sekunde, aber jede kommt an!
+    Ergebnis: Bis zu 12 Korrekturen/Sek (weit) oder 5/Sek (nah = ultra smooth)
     """
-    def __init__(self, duration_ms=300):
-        self.duration = duration_ms / 1000.0
+    def __init__(self):
         self.last_send_time = 0.0
+        self.last_duration_s = 0.0
+        self.correction_count = 0
 
-    def try_correct(self, mx, my):
-        """Sende Korrektur per move_auto mit langer Dauer."""
+    def try_correct(self, mx, my, dist):
+        """Sende Korrektur per move_auto mit adaptiver Dauer."""
         now = time.monotonic()
-        # Cooldown = Dauer der letzten Bewegung (kein Overlap)
-        if now - self.last_send_time < self.duration:
+        # Cooldown = Dauer der letzten Bewegung (kein Command-Overlap!)
+        if now - self.last_send_time < self.last_duration_s:
             return False
 
         ix = int(round(mx))
         iy = int(round(my))
 
-        if abs(ix) < 2 and abs(iy) < 2:
+        if abs(ix) < 3 and abs(iy) < 3:
             return False
 
-        # move_auto mit langer Dauer — XIM versteht das!
-        ms = int(self.duration * 1000)
-        kmbox_net.move_auto(ix, iy, ms=ms)
+        # ADAPTIVE DAUER basierend auf Distanz zum Ziel:
+        # Weit → kurze Dauer (schnelle Snaps, haeufige Korrektur)
+        # Nah → laengere Dauer (sanfter, kein Overshoot)
+        if dist > 150:
+            duration_ms = 80     # ~12 Korrekturen/Sek — aggressiv
+        elif dist > 80:
+            duration_ms = 120    # ~8 Korrekturen/Sek — zuegig
+        elif dist > 40:
+            duration_ms = 160    # ~6 Korrekturen/Sek — kontrolliert
+        else:
+            duration_ms = 200    # ~5 Korrekturen/Sek — ultra smooth
+
+        kmbox_net.move_auto(ix, iy, ms=duration_ms)
         self.last_send_time = now
-        print(f"  >>> GESENDET: move_auto({ix}, {iy}, {ms}ms)")
+        self.last_duration_s = duration_ms / 1000.0
+        self.correction_count += 1
+
+        # Konsolen-Output nur alle 5 Korrekturen (weniger Spam)
+        if self.correction_count % 5 == 0:
+            print(f"  >>> move_auto({ix}, {iy}, {duration_ms}ms) dist={int(dist)} [#{self.correction_count}]")
         return True
 
     def reset(self):
-        pass
+        self.correction_count = 0
 
 
-aim_controller = AimController(duration_ms=200)
+aim_controller = AimController()
 
 
 def move_aim(tracker, tx, ty, fw, fh, profile):
     """Berechnet Korrektur und sendet wenn Cooldown abgelaufen.
-    Nur wenn Ziel mindestens 3 Frames hintereinander erkannt wurde.
+    Nur wenn Ziel mindestens 2 Frames hintereinander erkannt wurde.
     Verhindert Zucken bei Fehlerkennungen (Gegenstaende, Himmel).
     """
     # 2-Frame-Filter: Erst tracken wenn Ziel 2 Frames hintereinander erkannt
     if tracker.frames_seen < 2:
         return False
 
-    mx, my = calc_aim_correction(tracker, tx, ty, fw, fh, profile)
-    cx = fw / 2.0
-    cy = fh / 2.0
-    dx = tx - cx
-    dy = ty - cy
-    dist = (dx*dx + dy*dy) ** 0.5
-    print(f"  AIM: Offset={int(dx)},{int(dy)} Dist={int(dist)} → Korr={mx:.0f},{my:.0f}")
-    return aim_controller.try_correct(mx, my)
+    mx, my, dist = calc_aim_correction(tracker, tx, ty, fw, fh, profile)
+    if mx == 0 and my == 0:
+        return False
+    return aim_controller.try_correct(mx, my, dist)
 
 
 def is_teammate(frame, bbox):
@@ -828,10 +865,10 @@ def main():
     active_profile_key = ACTIVE_PROFILE
     profile = PROFILES[active_profile_key]
     print(f"Aktives Profil: {profile['name']}")
-    print(f"Aim-System: SPEED CURVES + COOLDOWN (kein Overlap)")
-    print(f"Controller: PD (Proportional + Derivative Damping)")
+    print(f"Aim-System: SPEED CURVES + ADAPTIVE COOLDOWN (Profi-Modus)")
     print(f"Speed X: {SPEED_X_MULTIPLIER:.2f} | Speed Y: {SPEED_Y_MULTIPLIER:.2f}")
-    print(f"Speed Curve: {len(SPEED_CURVE_DEFAULT)} Stufen (nah=langsam, weit=schnell)")
+    print(f"Speed Curve: {len(SPEED_CURVE_DEFAULT)} Stufen | On-Target: {len(SPEED_CURVE_ON_TARGET)} Stufen")
+    print(f"XIM ADS-Boost: 3.0 | XIM Minimum: 25px | Max: 650px")
 
     # Scuf Controller suchen
     global SCUF_CONTROLLER_ID
@@ -896,11 +933,11 @@ def main():
             else:
                 # Aimbot-Korrektur berechnen WENN Ziel vorhanden
                 if best_target:
-                    tracker.update(best_target[0], best_target[1], alpha=profile["ema_alpha"])
-                    if tracker.stable(profile["lock_frames"]):
-                        pos = tracker.get_predicted(lookahead=profile["lookahead"])
+                    tracker.update(best_target[0], best_target[1], alpha=0.35)
+                    if tracker.stable(2):
+                        pos = tracker.get_predicted()
                         if pos:
-                            aimbot_dx, aimbot_dy = calc_aim_correction(tracker, pos[0], pos[1], fw, fh, profile)
+                            aimbot_dx, aimbot_dy, _ = calc_aim_correction(tracker, pos[0], pos[1], fw, fh, profile)
                             tracker.locked = True
 
                 # Passthrough sendet Stick+Buttons+Trigger UND addiert Aimbot-Korrektur
@@ -931,7 +968,9 @@ def main():
             if best_target and ads_active:
                 # Confidence-Check
                 if target_det and target_det.get("confidence", 0) >= 0.50:
-                    tracker.update(best_target[0], best_target[1], alpha=0.45)
+                    # Adaptiver EMA-Alpha: Schnell erfassen, sanft halten
+                    alpha = 0.50 if tracker.frames_seen < 3 else 0.30
+                    tracker.update(best_target[0], best_target[1], alpha=alpha)
                     if tracker.stable(1):
                         pos = tracker.get_predicted()
                         if pos:
@@ -1032,7 +1071,7 @@ def main():
                 print(f"KMBOX Sensitivity: {KMBOX_SENSITIVITY:.2f}")
             elif key == ord('6'):
                 # KMBOX Sensitivity rauf
-                KMBOX_SENSITIVITY = min(5.0, KMBOX_SENSITIVITY + 0.10)
+                KMBOX_SENSITIVITY = min(3.0, KMBOX_SENSITIVITY + 0.10)
                 print(f"KMBOX Sensitivity: {KMBOX_SENSITIVITY:.2f}")
             elif key == ord('7'):
                 print(f"")
