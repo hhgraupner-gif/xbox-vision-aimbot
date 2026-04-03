@@ -408,15 +408,15 @@ def calc_aim_correction(tracker, tx, ty, fw, fh, profile):
     if dist < profile["deadzone"]:
         return 0, 0
 
-    # ADS-Kompensation: Offset * 3.0, damit nach XIM-Reduktion genug ankommt
-    ADS_BOOST = 3.0
+    # ADS-Kompensation: Hoehere Werte wegen kuerzerer Dauer (200ms statt 500ms)
+    ADS_BOOST = 5.0
     mx = dx * ADS_BOOST
     my = dy * ADS_BOOST * 0.5  # Y reduziert: Vertikale Aim-Sens ist hoeher in CoD
 
-    # Deckeln bei 600px (mehr brauchen wir nicht)
+    # Deckeln bei 1000px
     mag = (mx*mx + my*my) ** 0.5
-    if mag > 600:
-        s = 600.0 / mag
+    if mag > 1000:
+        s = 1000.0 / mag
         mx *= s
         my *= s
 
@@ -460,7 +460,7 @@ class AimController:
         pass
 
 
-aim_controller = AimController(duration_ms=500)
+aim_controller = AimController(duration_ms=200)
 
 
 def move_aim(tracker, tx, ty, fw, fh, profile):
