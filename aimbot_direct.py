@@ -905,11 +905,8 @@ def main():
         # YOLO Erkennung - ALLE Klassen (fuer Anzeige)
         all_dets = detector.detect(frame, conf_threshold=CONFIDENCE)
 
-        # Nur Ziel-Klassen fuer Aimbot
-        if detector.is_fps_model:
-            target_dets = [d for d in all_dets if d["class_name"] in TARGET_CLASSES]
-        else:
-            target_dets = [d for d in all_dets if d["class_name"] == "person"]
+        # Nur Ziel-Klassen fuer Aimbot (player/bot/head/person)
+        target_dets = [d for d in all_dets if d["class_name"] in TARGET_CLASSES]
 
         center_x = fw / 2.0
         center_y = fh / 2.0

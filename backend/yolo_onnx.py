@@ -33,7 +33,8 @@ FPS_NAMES = {
 }
 
 # Target classes for aimbot (only aim at these)
-TARGET_CLASSES = {"player", "bot", "head"}
+# "person" = COCO / Single-Class Modell, "player"/"bot"/"head" = FPS-spezifische Modelle
+TARGET_CLASSES = {"player", "bot", "head", "person"}
 
 # COCO class names (YOLOv8 default)
 COCO_NAMES = [
