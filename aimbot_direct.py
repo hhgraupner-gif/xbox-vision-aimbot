@@ -123,7 +123,7 @@ KMBOX_UUID = "C14AE466"
 MODEL_MODE = "bo7"
 
 # Erkennung
-CONFIDENCE = 0.60           # Hoeher = weniger falsche Erkennungen (Gegenstaende etc.)
+CONFIDENCE = 0.45           # Runter fuer bessere Erkennung (war 0.60 = zu streng)
 MIN_TARGET_SIZE = 500       # Kleine Boxen ignorieren (groesser = weniger Muell)
 AIM_POINT_BODY = 0.40       # Zielpunkt am Koerper (0.40 = obere Brust)
 PREFER_HEADSHOTS = False    # AUS: Verhindert Springen zwischen Kopf/Koerper
@@ -468,8 +468,8 @@ def move_aim(tracker, tx, ty, fw, fh, profile):
     Nur wenn Ziel mindestens 3 Frames hintereinander erkannt wurde.
     Verhindert Zucken bei Fehlerkennungen (Gegenstaende, Himmel).
     """
-    # 3-Frame-Filter: Erst tracken wenn Ziel stabil erkannt
-    if tracker.frames_seen < 3:
+    # 2-Frame-Filter: Erst tracken wenn Ziel 2 Frames hintereinander erkannt
+    if tracker.frames_seen < 2:
         return False
 
     mx, my = calc_aim_correction(tracker, tx, ty, fw, fh, profile)
