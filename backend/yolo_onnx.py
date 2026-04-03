@@ -91,6 +91,14 @@ class YOLODetector:
         self.input_shape = self.session.get_inputs()[0].shape
         self.output_shape = self.session.get_outputs()[0].shape
 
+        # Input-Datentyp erkennen (float32 oder float16)
+        input_type = self.session.get_inputs()[0].type
+        self.use_fp16 = 'float16' in input_type or 'Half' in input_type
+        if self.use_fp16:
+            print(f"  Datentyp: float16 (Half Precision)")
+        else:
+            print(f"  Datentyp: float32")
+
         # Input-Groesse aus Modell lesen (falls statisch)
         if len(self.input_shape) == 4:
             dim = self.input_shape[2]
@@ -187,12 +195,14 @@ class YOLODetector:
         return detections
 
     def _preprocess(self, frame):
-        """Resize + Normalize + NCHW Konvertierung."""
+        """Resize + Normalize + NCHW Konvertierung. Auto float16/float32."""
         import cv2
         resized = cv2.resize(frame, (self.input_size, self.input_size))
         blob = resized.astype(np.float32) / 255.0
         blob = blob.transpose(2, 0, 1)  # HWC → CHW
         blob = np.expand_dims(blob, 0)   # → NCHW
+        if self.use_fp16:
+            blob = blob.astype(np.float16)
         return blob
 
     def _postprocess(self, output, orig_w, orig_h, conf_threshold):
