@@ -119,11 +119,11 @@ KMBOX_IP = "192.168.2.188"
 KMBOX_PORT = "32778"
 KMBOX_UUID = "C14AE466"
 
-# Modell-Auswahl: "bo7" (custom), "nano" (schnell, 320px) oder "standard" (genauer, 640px)
-MODEL_MODE = "bo7"
+# Modell-Auswahl: "standard" (FPS 10-Klassen 640px), "nano" (FPS schnell 320px), "bo7" (custom 1-Klasse)
+MODEL_MODE = "standard"
 
 # Erkennung
-CONFIDENCE = 0.45           # Runter fuer bessere Erkennung (war 0.60 = zu streng)
+CONFIDENCE = 0.35           # Runter fuer bessere Erkennung (0.35 = gut fuer FPS-Modell)
 MIN_TARGET_SIZE = 500       # Kleine Boxen ignorieren (groesser = weniger Muell)
 AIM_POINT_BODY = 0.40       # Zielpunkt am Koerper (0.40 = obere Brust)
 PREFER_HEADSHOTS = False    # AUS: Verhindert Springen zwischen Kopf/Koerper
@@ -218,25 +218,30 @@ WINDOW_SCALE = 0.5
 
 
 def get_model_path(mode):
-    """Gibt den Modell-Pfad zurueck."""
+    """Gibt den Modell-Pfad zurueck. Probiert mehrere Fallbacks."""
     base = os.path.join(os.path.dirname(__file__), 'backend')
-    if mode == "bo7":
-        path = os.path.join(base, 'bo7_v5_640.onnx')
+    
+    # Prioritaetsliste je nach Modus
+    if mode == "standard":
+        candidates = ['sunxds_640.onnx', 'bo7_v5_640.onnx', 'sunxds_nano_320.onnx']
+    elif mode == "nano":
+        candidates = ['sunxds_nano_320.onnx', 'sunxds_640.onnx', 'bo7_v5_640.onnx']
+    elif mode == "bo7":
+        candidates = ['bo7_v5_640.onnx', 'sunxds_640.onnx', 'sunxds_nano_320.onnx']
+    else:
+        candidates = ['sunxds_640.onnx', 'bo7_v5_640.onnx', 'sunxds_nano_320.onnx']
+    
+    for name in candidates:
+        path = os.path.join(base, name)
         if os.path.exists(path):
             return path
-    if mode == "nano" or mode == "bo7":
-        path = os.path.join(base, 'sunxds_nano_320.onnx')
-        if os.path.exists(path):
-            return path
-    elif mode == "standard":
-        path = os.path.join(base, 'sunxds_640.onnx')
-        if os.path.exists(path):
-            return path
-    # Fallback: altes COCO-Modell
-    fallback = os.path.join(base, 'yolov8n.onnx')
-    if os.path.exists(fallback):
-        print(f"  WARNUNG: FPS-Modell nicht gefunden, nutze COCO-Fallback")
-        return fallback
+    
+    # Letzter Fallback: irgendein .onnx im backend
+    for f in os.listdir(base) if os.path.isdir(base) else []:
+        if f.endswith('.onnx'):
+            print(f"  WARNUNG: Nutze Fallback-Modell: {f}")
+            return os.path.join(base, f)
+    
     return None
 
 

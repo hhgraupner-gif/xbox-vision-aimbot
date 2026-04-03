@@ -1203,6 +1203,8 @@ async def download_file(filename: str):
         "kmbox_net.py": Path("/app/backend/kmbox_net.py"),
         "yolo_onnx.py": Path("/app/backend/yolo_onnx.py"),
         "bo7_v5_640.onnx": Path("/app/backend/bo7_v5_640.onnx"),
+        "sunxds_640.onnx": Path("/app/backend/sunxds_640.onnx"),
+        "sunxds_nano_320.onnx": Path("/app/backend/sunxds_nano_320.onnx"),
     }
     if filename not in allowed:
         raise HTTPException(status_code=404, detail="Datei nicht gefunden")
