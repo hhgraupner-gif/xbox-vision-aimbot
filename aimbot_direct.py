@@ -53,12 +53,12 @@ CAPTURE_DEVICE = 0
 # ============================================================
 # MODELL-KONFIGURATION
 # ============================================================
-# "coco" = YOLO11s 80-Klassen (Primaer, beste Person-Erkennung)
-# "fps"  = SunOner 10-Klassen (FPS-spezifisch)
+# "fps"  = SunOner FPS 10-Klassen (30K FPS-Game Bilder, BESTE fuer CoD/Warzone!)
+# "coco" = YOLO11s 80-Klassen (echte Fotos — NICHT fuer Games geeignet!)
 # "nano" = SunOner 320px (schnell, weniger genau)
-MODEL_MODE = "coco"
+MODEL_MODE = "fps"
 
-CONFIDENCE = 0.35           # Mindest-Confidence (0.20 - 0.80)
+CONFIDENCE = 0.30           # Etwas niedriger fuer FPS-Modell (0.20 - 0.80)
 FOV_RADIUS = 250            # Aimbot FOV in Pixeln (nur Ziele innerhalb werden getrackt)
 
 # ============================================================
@@ -145,8 +145,8 @@ def get_model_path(mode):
     base = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'backend')
 
     priority = {
-        "coco": ['yolo11s.onnx', 'bo7_v5_640.onnx', 'sunxds_640.onnx'],
-        "fps":  ['sunxds_640.onnx', 'yolo11s.onnx', 'bo7_v5_640.onnx'],
+        "fps":  ['sunxds_640.onnx', 'bo7_v5_640.onnx', 'yolo11s.onnx'],
+        "coco": ['yolo11s.onnx', 'sunxds_640.onnx', 'bo7_v5_640.onnx'],
         "nano": ['sunxds_nano_320.onnx', 'sunxds_640.onnx', 'yolo11s.onnx'],
     }
 
