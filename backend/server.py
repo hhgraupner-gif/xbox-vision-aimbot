@@ -1203,6 +1203,7 @@ async def download_file(filename: str):
         "kmbox_net.py": Path("/app/backend/kmbox_net.py"),
         "yolo_onnx.py": Path("/app/backend/yolo_onnx.py"),
         "bo7_v5_640.onnx": Path("/app/backend/bo7_v5_640.onnx"),
+        "sunxds_0.5.6.onnx": Path("/app/backend/sunxds_0.5.6.onnx"),
         "sunxds_640.onnx": Path("/app/backend/sunxds_640.onnx"),
         "sunxds_nano_320.onnx": Path("/app/backend/sunxds_nano_320.onnx"),
         "yolo11s.onnx": Path("/app/backend/yolo11s.onnx"),
