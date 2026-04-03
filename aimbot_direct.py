@@ -328,9 +328,14 @@ class AimController:
         self.correction_count = 0
 
     def calc_correction(self, tx, ty, fw, fh, profile, is_locked):
-        """Berechnet Aim-Korrektur mit Speed Curves.
+        """Berechnet Aim-Korrektur: KONSTANTE GESCHWINDIGKEIT in Richtung Ziel.
 
-        Returns: (mx, my, dist) oder (0, 0, dist) wenn in Deadzone
+        NEUER ANSATZ (Anti-Oszillation):
+        - Richtung: Immer genau zum Ziel (normalisiert)
+        - Geschwindigkeit: Von Speed Curve (distanzabhaengig) — aber BEGRENZT
+        - Wie ein Analog-Stick: Zeigt in die Richtung, Staerke = Entfernung
+
+        Verhindert Overshoot weil die Magnitude NICHT proportional zum Fehler ist!
         """
         cx = fw / 2.0
         cy = fh / 2.0
@@ -341,31 +346,30 @@ class AimController:
         if dist < profile["deadzone"]:
             return 0, 0, dist
 
-        # 1. SPEED CURVE — Magnet-Effekt
+        # 1. RICHTUNG zum Ziel (normalisiert)
+        dir_x = dx / dist
+        dir_y = dy / dist
+
+        # 2. GESCHWINDIGKEIT aus Speed Curve
         curve = SPEED_CURVE_LOCKED if is_locked else SPEED_CURVE_NORMAL
         speed_mult = get_speed_multiplier(dist, curve)
 
-        # 2. Korrektur berechnen
-        mx = dx * speed_mult * profile["speed"] * SPEED_X_MULTIPLIER * KMBOX_SENSITIVITY
-        my = dy * speed_mult * profile["speed"] * SPEED_Y_MULTIPLIER * KMBOX_SENSITIVITY
+        # 3. Magnitude = Speed Curve × Basis-Geschwindigkeit × Sensitivity
+        #    Basis: 60px → bei vollem Speed Curve (0.65) = 39px pro Korrektur
+        BASE_SPEED = 60.0
+        mag = speed_mult * BASE_SPEED * profile["speed"] * KMBOX_SENSITIVITY
 
-        # 3. XIM ADS-Boost (kompensiert XIM-Daempfung)
-        mx *= XIM_ADS_BOOST
-        my *= XIM_ADS_BOOST
-
-        # 4. XIM Minimum-Clamp (zu kleine Werte hochziehen)
-        mag = math.sqrt(mx * mx + my * my)
-        if 0 < mag < XIM_MIN_MOVE:
-            scale = XIM_MIN_MOVE / mag
-            mx *= scale
-            my *= scale
+        # 4. XIM Minimum-Clamp
+        if mag < XIM_MIN_MOVE:
+            mag = XIM_MIN_MOVE
 
         # 5. Maximum deckeln
-        mag = math.sqrt(mx * mx + my * my)
         if mag > MAX_CORRECTION:
-            scale = MAX_CORRECTION / mag
-            mx *= scale
-            my *= scale
+            mag = MAX_CORRECTION
+
+        # 6. Y-Achse reduziert (CoD: vertikale Sens ist hoeher)
+        mx = dir_x * mag * SPEED_X_MULTIPLIER
+        my = dir_y * mag * SPEED_Y_MULTIPLIER
 
         return mx, my, dist
 
