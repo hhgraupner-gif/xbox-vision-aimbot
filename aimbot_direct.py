@@ -198,7 +198,7 @@ ACTIVE_PROFILE = "assist"  # Standard: Aim-Assist (sanft, sicherer Start)
 # "keyboard" = Halte Taste X am PC (zuverlaessig)
 # "kmbox"    = Halte rechte Maustaste an KMBox-Maus (zuverlaessig)
 # "visual"   = Automatisch per Zoom-Erkennung (unzuverlaessig)
-ADS_MODE = "visual"         # Automatisch per Zoom-Erkennung (erkennt ob ADS aktiv)
+ADS_MODE = "always"         # Immer an — Fehlerkennungen werden durch 3-Frame-Filter verhindert
 ADS_KEY = 0x58              # 0x58 = X-Taste (Virtual Key Code)
 ADS_ZOOM_THRESHOLD = 12.0
 SCUF_CONTROLLER_ID = -1     # -1 = automatisch finden
@@ -464,16 +464,21 @@ aim_controller = AimController(duration_ms=500)
 
 
 def move_aim(tracker, tx, ty, fw, fh, profile):
-    """Berechnet Korrektur und sendet sofort wenn Cooldown abgelaufen.
-    Keine Akkumulation — nur aktuelle Frame-Daten.
+    """Berechnet Korrektur und sendet wenn Cooldown abgelaufen.
+    Nur wenn Ziel mindestens 3 Frames hintereinander erkannt wurde.
+    Verhindert Zucken bei Fehlerkennungen (Gegenstaende, Himmel).
     """
+    # 3-Frame-Filter: Erst tracken wenn Ziel stabil erkannt
+    if tracker.frames_seen < 3:
+        return False
+
     mx, my = calc_aim_correction(tracker, tx, ty, fw, fh, profile)
     cx = fw / 2.0
     cy = fh / 2.0
     dx = tx - cx
     dy = ty - cy
     dist = (dx*dx + dy*dy) ** 0.5
-    print(f"  AIM: Ziel={int(tx)},{int(ty)} Mitte={int(cx)},{int(cy)} Offset={int(dx)},{int(dy)} Dist={int(dist)} → Korr={mx:.1f},{my:.1f}")
+    print(f"  AIM: Offset={int(dx)},{int(dy)} Dist={int(dist)} → Korr={mx:.0f},{my:.0f}")
     return aim_controller.try_correct(mx, my)
 
 
