@@ -1,14 +1,22 @@
 """
-AIMBOT VISION v6 — Profi-System
-================================
+AIMBOT VISION v7 — Profi-Methode
+=================================
 Computer Vision Aimbot fuer Xbox RemotePlay via XIM Matrix.
 
-Hardware-Kette:
-  Capture Card (AVerMedia GC571) → OpenCV → YOLO11s (DirectML) → KMBox Net → XIM Matrix → Xbox
+NEUER ANSATZ (wie DMA/Profi-Aimbots):
+  Jeden Frame: delta = (ziel - mitte) / SMOOTH
+  → kmbox_net.move(dx, dy) — einfacher relativer Move
+  → KEIN move_auto, KEIN Cooldown, KEIN Speed Curve
 
-Aim-Algorithmus:
-  KALMAN-FILTER + Speed Curves + XIM ADS-Kompensation
-  (Kalman sagt voraus wo das Ziel SEIN WIRD — wie Profi-Aimbots)
+Hardware-Kette:
+  Capture Card → OpenCV → YOLO (ONNX/DirectML) → KMBox Net → XIM Matrix → Xbox
+
+XIM Matrix Einstellungen (WICHTIG!):
+  - Synch: 0 (Off)
+  - Smoothing: 0
+  - Inner Deadzone: 0
+  - Aiming Curve: Linear
+  - Velocity Calibration durchfuehren!
 
 Steuerung:
   A = ADS Toggle (Aimbot aktiv/inaktiv)
@@ -16,7 +24,7 @@ Steuerung:
   M = Modell wechseln (COCO / FPS / Nano)
   1/2 = FOV +/-
   3/4 = Confidence +/-
-  5/6 = Sensitivity +/-
+  5/6 = Smooth-Faktor +/-
   7/8 = Speed X +/-
   9/0 = Speed Y +/-
   ESC = Beenden
@@ -53,54 +61,29 @@ CAPTURE_DEVICE = 0
 # ============================================================
 # MODELL-KONFIGURATION
 # ============================================================
-# "fps"  = SunOner v0.5.6 End2End (30K FPS-Game Bilder, BESTE fuer CoD!)
-# "coco" = YOLO11s 80-Klassen (echte Fotos — NICHT fuer Games!)
-# "nano" = SunOner 320px (schnell, weniger genau)
 MODEL_MODE = "fps"
-
-CONFIDENCE = 0.25           # SunOner empfiehlt 0.20-0.30 (niedrig = mehr Erkennungen)
-FOV_RADIUS = 250            # Aimbot FOV in Pixeln (nur Ziele innerhalb werden getrackt)
+CONFIDENCE = 0.25
+FOV_RADIUS = 250
 
 # ============================================================
-# AIM-KONFIGURATION — SPEED CURVES (Magnet-Effekt)
+# AIM-KONFIGURATION — PROFI-METHODE
 # ============================================================
-# Format: (max_distanz_pixel, multiplikator)
-# Nah = langsam/klebrig, Weit = schnell → Profi "Magnet-Effekt"
+# So machen es DMA-Aimbots und SunOner:
+#   move_x = (ziel_x - mitte_x) / SMOOTH_FACTOR
+#   move_y = (ziel_y - mitte_y) / SMOOTH_FACTOR
+# Fertig. Kein Speed Curve, kein move_auto, kein Cooldown.
 
-SPEED_CURVE_NORMAL = [
-    # Sanftere Kurve — verhindert Overshoot und Spinning!
-    (15,   0.04),   # Sehr nah: Kaum bewegen
-    (40,   0.10),   # Nah: Minimale Korrektur
-    (80,   0.20),   # Mittel-nah: Sanft nachfuehren
-    (140,  0.35),   # Mittel: Kontrolliert anziehen
-    (220,  0.50),   # Weit: Moderater Pull
-    (9999, 0.65),   # Sehr weit: Kontrollierter Snap (KEIN Vollgas!)
-]
+SMOOTH_FACTOR = 5.0         # Teilungsfaktor (hoeher = sanfter, niedriger = aggressiver)
+                             # Profi-Bereich: 3-8
 
-SPEED_CURVE_LOCKED = [
-    # Wenn bereits auf Ziel: Extra sanft und stabil
-    (12,   0.02),   # Minimal: Stillstehen
-    (30,   0.06),   # Sehr nah: Feinste Korrekturen
-    (60,   0.14),   # Nah: Sanft halten
-    (120,  0.25),   # Mittel: Kontrolliert folgen
-    (200,  0.40),   # Weit: Nachziehen
-    (9999, 0.55),   # Sehr weit: Moderates Tempo
-]
+SPEED_X = 1.0               # X-Achsen Multiplikator
+SPEED_Y = 0.80              # Y-Achse etwas reduziert (CoD: vertikale Sens hoeher)
 
-# Achsen-Multiplikatoren (CoD: Y-Achse ist empfindlicher)
-SPEED_X_MULTIPLIER = 1.00
-SPEED_Y_MULTIPLIER = 0.75
+# Deadzone: Wenn Ziel naeher als X Pixel an Mitte → nicht bewegen
+DEADZONE = 5                # In Pixeln (klein! XIM soll feinjustieren)
 
-# XIM Matrix ADS-Kompensation
-# ACHTUNG: XIM uebersetzt Mausbewegung in Analog-Stick!
-# Zu grosse Werte = Stick am Anschlag = wildes Drehen!
-# Korrekturen muessen KLEIN und KONTROLLIERT sein.
-XIM_ADS_BOOST = 1.0          # KEIN Extra-Boost (Speed Curves regeln alles!)
-XIM_MIN_MOVE = 20.0          # Minimum damit XIM es registriert
-MAX_CORRECTION = 120.0       # STRIKT begrenzt — verhindert Spinning!
-
-# Globaler Sensitivity-Multiplikator (Taste 5/6)
-KMBOX_SENSITIVITY = 1.00
+# Max Pixel pro Frame (Sicherheit gegen Spinning)
+MAX_MOVE_PER_FRAME = 80     # Mehr als 80px/Frame = verdaechtig, begrenzen
 
 # ============================================================
 # PROFILE
@@ -108,13 +91,13 @@ KMBOX_SENSITIVITY = 1.00
 PROFILES = {
     "assist": {
         "name": "AIM-ASSIST",
-        "speed": 0.70,       # 70% der Speed Curve
-        "deadzone": 30,      # Groessere Deadzone = weniger Micro-Tracking
+        "smooth": 7.0,      # Sanfter
+        "deadzone": 8,
     },
     "aimbot": {
         "name": "AIMBOT",
-        "speed": 1.00,       # 100% Speed Curve
-        "deadzone": 18,      # Kleinere Deadzone = praeziser
+        "smooth": 4.0,      # Aggressiver
+        "deadzone": 4,
     },
 }
 PROFILE_ORDER = ["assist", "aimbot"]
@@ -128,13 +111,9 @@ WINDOW_SCALE = 0.5
 # ============================================================
 # FILTER
 # ============================================================
-# Leichen-Filter: Bounding Box breiter als hoch → wahrscheinlich liegend
-DEAD_BODY_RATIO = 1.2       # Breite > 1.2 * Hoehe → ignorieren
-# Himmel-Filter: Erkennungen in den oberen X% ignorieren
+DEAD_BODY_RATIO = 1.2       # Breite > 1.2 * Hoehe → Leiche
 SKY_FILTER_RATIO = 0.10     # Obere 10% = Himmel
-# Boden-Filter: Erkennungen in den unteren X% ignorieren
 GROUND_FILTER_RATIO = 0.88  # Untere 12% = Boden/HUD
-# Minimum-Hoehe: Zu kleine Boxen ignorieren
 MIN_BOX_HEIGHT = 25
 
 
@@ -145,20 +124,16 @@ MIN_BOX_HEIGHT = 25
 def get_model_path(mode):
     """Gibt den besten verfuegbaren Modell-Pfad zurueck."""
     base = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'backend')
-
     priority = {
         "fps":  ['sunxds_0.5.6.onnx', 'sunxds_640.onnx', 'bo7_v5_640.onnx', 'yolo11s.onnx'],
         "coco": ['yolo11s.onnx', 'sunxds_0.5.6.onnx', 'sunxds_640.onnx'],
         "nano": ['sunxds_nano_320.onnx', 'sunxds_0.5.6.onnx', 'sunxds_640.onnx'],
     }
-
     candidates = priority.get(mode, priority["coco"])
     for name in candidates:
         path = os.path.join(base, name)
         if os.path.exists(path):
             return path
-
-    # Letzter Fallback: Erstes .onnx im Ordner
     if os.path.isdir(base):
         for f in os.listdir(base):
             if f.endswith('.onnx'):
@@ -166,80 +141,44 @@ def get_model_path(mode):
     return None
 
 
-def get_speed_multiplier(dist, curve):
-    """Interpoliert den Speed-Curve Multiplikator fuer eine gegebene Distanz."""
-    prev_dist, prev_mult = 0, curve[0][1]
-    for max_dist, mult in curve:
-        if dist <= max_dist:
-            # Lineare Interpolation zwischen Stufen
-            if max_dist == prev_dist:
-                return mult
-            t = (dist - prev_dist) / (max_dist - prev_dist)
-            return prev_mult + t * (mult - prev_mult)
-        prev_dist, prev_mult = max_dist, mult
-    return curve[-1][1]
-
-
 # ============================================================
-# KALMAN-FILTER TARGET TRACKER (Profi-Algorithmus)
+# KALMAN-FILTER TRACKER (glaettet YOLO-Jitter)
 # ============================================================
-# Vorteil gegenueber EMA:
-# 1. PREDICTION: Sagt voraus wo das Ziel SEIN WIRD (fuer bewegende Gegner)
-# 2. Adaptive Gewichtung: Automatisch mehr Vertrauen bei stabilem Track
-# 3. Geschwindigkeits-Schaetzung: Kennt Richtung + Speed des Ziels
-# 4. Ueberbrueckt kurze Erkennungsluecken (1-3 Frames) per Vorhersage
+# Der Kalman-Filter ist NICHT fuer die Aim-Mathematik!
+# Er glaettet nur die YOLO-Erkennungen (die von Frame zu Frame wackeln).
+# Die eigentliche Aim-Berechnung ist simpel: delta / smooth.
 
 class KalmanTracker:
-    """Kalman-Filter basierter Tracker fuer Profi-Aimbot.
-
-    State-Vektor: [x, y, vx, vy] — Position + Geschwindigkeit
-    Messung: [x, y] — YOLO Detection Center
-    """
-
     def __init__(self):
         self.reset()
 
     def reset(self):
-        self.x = np.zeros(4, dtype=np.float64)         # State [x, y, vx, vy]
-        self.P = np.eye(4, dtype=np.float64) * 500.0    # State Covariance
+        self.x = np.zeros(4, dtype=np.float64)         # [x, y, vx, vy]
+        self.P = np.eye(4, dtype=np.float64) * 500.0
         self.frames_seen = 0
         self.frames_lost = 0
         self.locked = False
         self.last_update = 0.0
-        self.last_dt = 0.033  # Default ~30fps
+        self.last_dt = 0.033
 
-        # Measurement Matrix: Wir messen [x, y]
-        self.H = np.array([
-            [1, 0, 0, 0],
-            [0, 1, 0, 0]
-        ], dtype=np.float64)
-
-        # Measurement Noise (YOLO Detection Jitter, ~10-20px)
+        self.H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], dtype=np.float64)
         self.R = np.eye(2, dtype=np.float64) * 12.0
-
-        # Process Noise (Ziel-Beschleunigung Unsicherheit)
         self.Q_base = np.diag([1.0, 1.0, 8.0, 8.0])
 
-    def _get_F(self, dt):
-        """State Transition Matrix: Position + Velocity Update."""
-        return np.array([
+    def predict(self, dt=None):
+        if dt is None:
+            dt = self.last_dt
+        F = np.array([
             [1, 0, dt, 0],
             [0, 1, 0, dt],
             [0, 0, 1,  0],
             [0, 0, 0,  1]
         ], dtype=np.float64)
-
-    def predict(self, dt=None):
-        """Predict: Naechsten State anhand Geschwindigkeit vorhersagen."""
-        if dt is None:
-            dt = self.last_dt
-        F = self._get_F(dt)
         self.x = F @ self.x
         self.P = F @ self.P @ F.T + self.Q_base * dt
         return self.x[:2].copy()
 
     def update(self, mx, my):
-        """Update: Neuen YOLO-Messpunkt einarbeiten."""
         now = time.monotonic()
         if self.last_update > 0:
             self.last_dt = max(0.005, min(0.200, now - self.last_update))
@@ -247,27 +186,15 @@ class KalmanTracker:
         z = np.array([mx, my], dtype=np.float64)
 
         if self.frames_seen == 0:
-            # Erste Messung: Direkt initialisieren
-            self.x[0] = mx
-            self.x[1] = my
-            self.x[2] = 0.0
-            self.x[3] = 0.0
+            self.x[:2] = [mx, my]
+            self.x[2:] = [0.0, 0.0]
             self.P = np.eye(4, dtype=np.float64) * 100.0
         else:
-            # Predict-Step
             self.predict(self.last_dt)
-
-            # Kalman Gain berechnen
             S = self.H @ self.P @ self.H.T + self.R
             K = self.P @ self.H.T @ np.linalg.inv(S)
-
-            # Innovation (Differenz Messung vs. Vorhersage)
-            innovation = z - self.H @ self.x
-            self.x = self.x + K @ innovation
-
-            # Covariance Update
-            I4 = np.eye(4, dtype=np.float64)
-            self.P = (I4 - K @ self.H) @ self.P
+            self.x = self.x + K @ (z - self.H @ self.x)
+            self.P = (np.eye(4) - K @ self.H) @ self.P
 
         self.frames_seen += 1
         self.frames_lost = 0
@@ -275,264 +202,110 @@ class KalmanTracker:
         self.last_update = now
 
     def mark_lost(self):
-        """Ziel nicht erkannt."""
         self.frames_lost += 1
         if self.frames_lost > 5:
             self.reset()
         self.locked = False
 
-    def is_stable(self, min_frames=2):
-        return self.frames_seen >= min_frames
-
     def get_position(self):
-        """Aktuelle geschaetzte Position [x, y]."""
         if self.frames_seen == 0:
             return None
         return (float(self.x[0]), float(self.x[1]))
 
-    def get_predicted_position(self, lookahead_frames=1):
-        """VORHERGESAGTE Position — DER Profi-Vorteil!
-
-        Berechnet wo das Ziel in N Frames sein WIRD basierend auf Geschwindigkeit.
-        Perfekt fuer bewegende Gegner.
-        """
-        if self.frames_seen < 3:
-            return self.get_position()
-        dt = self.last_dt * lookahead_frames
-        px = self.x[0] + self.x[2] * dt
-        py = self.x[1] + self.x[3] * dt
-        return (float(px), float(py))
-
     def get_velocity(self):
-        """Geschaetzte Ziel-Geschwindigkeit [vx, vy] in px/frame."""
         return (float(self.x[2]), float(self.x[3]))
 
 
 # ============================================================
-# AIM CONTROLLER (Sendet Korrekturen an KMBox)
-# ============================================================
-
-class AimController:
-    """Profi Aim Controller fuer XIM Matrix.
-
-    Features:
-    - Speed Curves fuer Magnet-Effekt
-    - Adaptive Dauer (weit=schnell, nah=sanft)
-    - XIM ADS-Kompensation + Minimum-Clamp
-    - Command-Overlap Schutz
-    """
-
-    def __init__(self):
-        self.last_send_time = 0.0
-        self.last_duration_s = 0.0
-        self.correction_count = 0
-
-    def calc_correction(self, tx, ty, fw, fh, profile, is_locked):
-        """Berechnet Aim-Korrektur: KONSTANTE GESCHWINDIGKEIT in Richtung Ziel.
-
-        NEUER ANSATZ (Anti-Oszillation):
-        - Richtung: Immer genau zum Ziel (normalisiert)
-        - Geschwindigkeit: Von Speed Curve (distanzabhaengig) — aber BEGRENZT
-        - Wie ein Analog-Stick: Zeigt in die Richtung, Staerke = Entfernung
-
-        Verhindert Overshoot weil die Magnitude NICHT proportional zum Fehler ist!
-        """
-        cx = fw / 2.0
-        cy = fh / 2.0
-        dx = tx - cx
-        dy = ty - cy
-        dist = math.sqrt(dx * dx + dy * dy)
-
-        if dist < profile["deadzone"]:
-            return 0, 0, dist
-
-        # 1. RICHTUNG zum Ziel (normalisiert)
-        dir_x = dx / dist
-        dir_y = dy / dist
-
-        # 2. GESCHWINDIGKEIT aus Speed Curve
-        curve = SPEED_CURVE_LOCKED if is_locked else SPEED_CURVE_NORMAL
-        speed_mult = get_speed_multiplier(dist, curve)
-
-        # 3. Magnitude = Speed Curve × Basis-Geschwindigkeit × Sensitivity
-        #    Basis: 60px → bei vollem Speed Curve (0.65) = 39px pro Korrektur
-        BASE_SPEED = 60.0
-        mag = speed_mult * BASE_SPEED * profile["speed"] * KMBOX_SENSITIVITY
-
-        # 4. XIM Minimum-Clamp
-        if mag < XIM_MIN_MOVE:
-            mag = XIM_MIN_MOVE
-
-        # 5. Maximum deckeln
-        if mag > MAX_CORRECTION:
-            mag = MAX_CORRECTION
-
-        # 6. Y-Achse reduziert (CoD: vertikale Sens ist hoeher)
-        mx = dir_x * mag * SPEED_X_MULTIPLIER
-        my = dir_y * mag * SPEED_Y_MULTIPLIER
-
-        return mx, my, dist
-
-    def send_correction(self, mx, my, dist):
-        """Sendet move_auto an KMBox — FESTE 200ms Dauer fuer Stabilitaet."""
-        if not KMBOX_AVAILABLE:
-            return False
-
-        now = time.monotonic()
-        # Fester Cooldown: 200ms (kein Command-Overlap!)
-        if now - self.last_send_time < 0.200:
-            return False
-
-        ix = int(round(mx))
-        iy = int(round(my))
-        if abs(ix) < 3 and abs(iy) < 3:
-            return False
-
-        # Feste 200ms Dauer — XIM verarbeitet das zuverlaessig
-        duration_ms = 200
-
-        try:
-            kmbox_net.move_auto(ix, iy, ms=duration_ms)
-        except Exception:
-            return False
-
-        self.last_send_time = now
-        self.last_duration_s = 0.200
-        self.correction_count += 1
-        return True
-
-    def reset(self):
-        self.correction_count = 0
-
-
-# ============================================================
-# ZIELAUSWAHL — Waehlt bestes Ziel aus allen Erkennungen
+# ZIELAUSWAHL
 # ============================================================
 
 def pick_best_target(detections, frame_w, frame_h):
-    """Waehlt das beste Ziel aus den Erkennungen.
-
-    Prioritaet:
-    1. Innerhalb FOV
-    2. Head-Shots haben Bonus
-    3. Naehestes zur Bildmitte
-
-    Returns: (target_x, target_y, detection) oder (None, None, None)
-    """
-    cx = frame_w / 2.0
-    cy = frame_h / 2.0
+    cx, cy = frame_w / 2.0, frame_h / 2.0
     best = None
     best_score = float('inf')
 
     for det in detections:
         x1, y1, x2, y2 = det["bbox"]
-        bw = x2 - x1
-        bh = y2 - y1
+        bw, bh = x2 - x1, y2 - y1
         class_name = det["class_name"]
 
-        # --- FILTER ---
-
-        # Leichen-Filter (liegend = breiter als hoch)
+        # Filter
         if bw > bh * DEAD_BODY_RATIO:
             continue
-
-        # Minimum-Hoehe Filter
         if bh < MIN_BOX_HEIGHT:
             continue
-
-        # Himmel-Filter (obere 10%)
         center_y = (y1 + y2) / 2.0
         if center_y < frame_h * SKY_FILTER_RATIO:
             continue
-
-        # Boden-Filter (untere 12%)
         if center_y > frame_h * GROUND_FILTER_RATIO:
             continue
-
-        # Ignorierte Klassen
         if class_name in IGNORE_CLASSES:
             continue
 
-        # --- ZIELPUNKT ---
+        # Zielpunkt
         if class_name == "head":
-            # Head: Mitte der Box
-            tx = (x1 + x2) / 2.0
-            ty = (y1 + y2) / 2.0
+            tx, ty = (x1 + x2) / 2.0, (y1 + y2) / 2.0
         else:
-            # Body: Oberes Drittel (Schulter/Kopf-Bereich)
-            tx = (x1 + x2) / 2.0
-            ty = y1 + bh * 0.25
+            tx, ty = (x1 + x2) / 2.0, y1 + bh * 0.25
 
         # FOV-Check
-        dx = tx - cx
-        dy = ty - cy
-        dist = math.sqrt(dx * dx + dy * dy)
+        dist = math.sqrt((tx - cx) ** 2 + (ty - cy) ** 2)
         if dist > FOV_RADIUS:
             continue
 
-        # Score: Distanz (naeher = besser), Head-Bonus
-        score = dist
-        if class_name == "head":
-            score *= 0.6  # Head-Bonus: 40% naeher gewichtet
-
+        score = dist * (0.6 if class_name == "head" else 1.0)
         if score < best_score:
             best_score = score
             best = (tx, ty, det)
 
-    if best:
-        return best[0], best[1], best[2]
-    return None, None, None
+    return best if best else (None, None, None)
 
 
 # ============================================================
-# OVERLAY ZEICHNEN
+# OVERLAY
 # ============================================================
 
-def draw_overlay(frame, all_dets, target_pos, tracker, fps, ads_active, profile_name, fov_radius):
-    """Zeichnet HUD-Overlay auf den Frame."""
+def draw_overlay(frame, all_dets, target_pos, tracker, fps, ads_active, profile, fov_radius, smooth):
     h, w = frame.shape[:2]
     cx, cy = w // 2, h // 2
 
     # FOV Kreis
-    fov_color = (0, 255, 0) if ads_active else (100, 100, 100)
-    cv2.circle(frame, (cx, cy), fov_radius, fov_color, 1)
+    color = (0, 255, 0) if ads_active else (100, 100, 100)
+    cv2.circle(frame, (cx, cy), fov_radius, color, 1)
 
     # Fadenkreuz
     cv2.line(frame, (cx - 15, cy), (cx + 15, cy), (255, 255, 255), 1)
     cv2.line(frame, (cx, cy - 15), (cx, cy + 15), (255, 255, 255), 1)
 
-    # Alle Erkennungen zeichnen
+    # Erkennungen
     for det in all_dets:
         x1, y1, x2, y2 = det["bbox"]
         cls = det["class_name"]
         conf = det["confidence"]
-
         if cls in TARGET_CLASSES:
-            color = (0, 0, 255)  # Rot = Ziel
+            c = (0, 0, 255)
         elif cls in IGNORE_CLASSES:
-            color = (128, 128, 128)  # Grau = ignoriert
+            c = (128, 128, 128)
         else:
-            color = (255, 255, 0)  # Cyan = sonstige
+            c = (255, 255, 0)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), c, 2)
+        cv2.putText(frame, f"{cls} {conf:.0%}", (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, c, 1)
 
-        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-        label = f"{cls} {conf:.0%}"
-        cv2.putText(frame, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
-
-    # Tracker-Linie zum Ziel
+    # Tracker-Linie
     if target_pos and ads_active:
         tx, ty = int(target_pos[0]), int(target_pos[1])
         cv2.line(frame, (cx, cy), (tx, ty), (0, 255, 255), 2)
         cv2.circle(frame, (tx, ty), 8, (0, 255, 255), 2)
 
-    # Status-Text
-    status = f"FPS: {fps:.0f} | {profile_name} | ADS: {'ON' if ads_active else 'OFF'}"
+    # Status
+    status = f"FPS: {fps:.0f} | {profile['name']} | ADS: {'ON' if ads_active else 'OFF'}"
     if tracker.locked:
         vx, vy = tracker.get_velocity()
         status += f" | LOCKED v=({vx:.0f},{vy:.0f})"
     cv2.putText(frame, status, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
-    # Sensitivity-Info
-    info = f"Sens: {KMBOX_SENSITIVITY:.2f} | FOV: {fov_radius} | Conf: {CONFIDENCE:.2f}"
+    info = f"Smooth: {smooth:.1f} | FOV: {fov_radius} | Conf: {CONFIDENCE:.2f} | SpeedXY: {SPEED_X:.2f}/{SPEED_Y:.2f}"
     cv2.putText(frame, info, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
 
     return frame
@@ -543,12 +316,12 @@ def draw_overlay(frame, all_dets, target_pos, tracker, fps, ads_active, profile_
 # ============================================================
 
 def main():
-    global CONFIDENCE, FOV_RADIUS, KMBOX_SENSITIVITY
-    global SPEED_X_MULTIPLIER, SPEED_Y_MULTIPLIER
-    global MODEL_MODE
+    global CONFIDENCE, FOV_RADIUS, SMOOTH_FACTOR
+    global SPEED_X, SPEED_Y, MODEL_MODE
 
     print("=" * 60)
-    print("  AIMBOT VISION v6 — Profi-System")
+    print("  AIMBOT VISION v7 — Profi-Methode")
+    print("  delta / smooth → move() → jeden Frame")
     print("=" * 60)
 
     # --- 1. KMBox verbinden ---
@@ -556,30 +329,25 @@ def main():
     if KMBOX_AVAILABLE:
         try:
             kmbox_net.init(KMBOX_IP, KMBOX_PORT, KMBOX_UUID)
-            print(f"  KMBox verbunden: {KMBOX_IP}:{KMBOX_PORT}")
+            print(f"  OK: {KMBOX_IP}:{KMBOX_PORT}")
         except Exception as e:
             print(f"  WARNUNG: KMBox nicht erreichbar ({e})")
-            print(f"  → Aimbot laeuft im Anzeige-Modus (keine Mausbewegung)")
     else:
-        print("  KMBox Modul nicht verfuegbar (Windows erforderlich)")
-        print("  → Anzeige-Modus")
+        print("  KMBox nicht verfuegbar — Anzeige-Modus")
 
     # --- 2. YOLO Modell laden ---
-    print(f"\n[2/3] YOLO Modell laden (Modus: {MODEL_MODE})...")
+    print(f"\n[2/3] Modell laden ({MODEL_MODE})...")
     model_path = get_model_path(MODEL_MODE)
     if not model_path:
-        print("  FEHLER: Kein ONNX-Modell gefunden im backend/ Ordner!")
-        print("  Benoetigte Datei: backend/yolo11s.onnx")
+        print("  FEHLER: Kein ONNX-Modell gefunden!")
         return
-
     print(f"  Datei: {os.path.basename(model_path)}")
     detector = YOLODetector(model_path)
 
-    # --- 3. Capture Card oeffnen ---
-    print(f"\n[3/3] Capture Card oeffnen (Device {CAPTURE_DEVICE})...")
+    # --- 3. Capture Card ---
+    print(f"\n[3/3] Capture Card (Device {CAPTURE_DEVICE})...")
     cap = cv2.VideoCapture(CAPTURE_DEVICE, cv2.CAP_DSHOW)
     if not cap.isOpened():
-        # Fallback ohne DirectShow
         cap = cv2.VideoCapture(CAPTURE_DEVICE)
     if not cap.isOpened():
         print("  FEHLER: Capture Card nicht gefunden!")
@@ -593,31 +361,31 @@ def main():
 
     # --- Status ---
     print("\n" + "=" * 60)
-    print("  SYSTEM BEREIT!")
+    print("  BEREIT!")
     print("=" * 60)
-    print(f"  Profil: {PROFILES[PROFILE_ORDER[0]]['name']}")
-    print(f"  Tracker: KALMAN-FILTER (Prediction + Velocity Estimation)")
-    print(f"  Speed Curves: {len(SPEED_CURVE_NORMAL)} Stufen (Magnet-Effekt)")
-    print(f"  XIM ADS-Boost: {XIM_ADS_BOOST} | Min: {XIM_MIN_MOVE}px | Max: {MAX_CORRECTION}px")
-    print(f"  Sensitivity: {KMBOX_SENSITIVITY:.2f}")
-    print(f"  FOV: {FOV_RADIUS}px | Confidence: {CONFIDENCE:.2f}")
-    print(f"  Filter: Leichen(>{DEAD_BODY_RATIO}x), Himmel(<{SKY_FILTER_RATIO*100:.0f}%), Min-H({MIN_BOX_HEIGHT}px)")
+    print(f"  Methode: delta / smooth → move() (wie Profi-Aimbots)")
+    print(f"  Smooth: {SMOOTH_FACTOR} | Deadzone: {DEADZONE}px | Max: {MAX_MOVE_PER_FRAME}px")
+    print(f"  Speed: X={SPEED_X} Y={SPEED_Y}")
+    print(f"  FOV: {FOV_RADIUS}px | Confidence: {CONFIDENCE}")
     print()
-    print("  Steuerung:")
-    print("    A = ADS Toggle | P = Profil | M = Modell")
-    print("    1/2 = FOV | 3/4 = Confidence | 5/6 = Sensitivity")
-    print("    7/8 = Speed X | 9/0 = Speed Y | ESC = Beenden")
+    print("  WICHTIG — XIM Matrix Settings:")
+    print("    Synch: 0 (Off) | Smoothing: 0 | Deadzone: 0 | Curve: Linear")
+    print()
+    print("  Tasten:")
+    print("    A=ADS  P=Profil  M=Modell  ESC=Beenden")
+    print("    1/2=FOV  3/4=Conf  5/6=Smooth  7/8=SpeedX  9/0=SpeedY")
     print("=" * 60)
 
     # --- Variablen ---
     tracker = KalmanTracker()
-    aim_ctrl = AimController()
     profile_idx = 0
     profile = PROFILES[PROFILE_ORDER[profile_idx]]
     ads_active = False
     frame_count = 0
     fps = 0.0
     fps_timer = time.monotonic()
+    smooth = profile["smooth"]
+    deadzone = profile["deadzone"]
 
     # --- Hauptschleife ---
     try:
@@ -629,7 +397,7 @@ def main():
             frame_count += 1
             now = time.monotonic()
 
-            # FPS berechnen (alle 30 Frames)
+            # FPS (alle 30 Frames)
             if frame_count % 30 == 0:
                 elapsed = now - fps_timer
                 fps = 30.0 / elapsed if elapsed > 0 else 0
@@ -637,90 +405,88 @@ def main():
 
             # --- YOLO Inference ---
             all_dets = detector.detect(frame, conf_threshold=CONFIDENCE)
-
-            # --- Nur Target-Klassen fuer Aimbot ---
             target_dets = [d for d in all_dets if d["class_name"] in TARGET_CLASSES]
-
-            # --- Bestes Ziel waehlen ---
             tx, ty, target_det = pick_best_target(target_dets, fw, fh)
 
-            # --- Kalman Tracking + Aim ---
+            # --- Tracking + Aim ---
             target_pos = None
+            cx, cy = fw / 2.0, fh / 2.0
 
-            if tx is not None and ads_active:
-                # Kalman Update mit neuer Messung
+            if tx is not None:
                 tracker.update(tx, ty)
+                pos = tracker.get_position()
+                if pos:
+                    target_pos = pos
 
-                if tracker.is_stable(2):
-                    # Aktuelle Position (KEINE Prediction — stabiler!)
-                    pos = tracker.get_position()
-                    if pos:
-                        target_pos = pos
+                    # ========================================
+                    # PROFI AIM-MATHEMATIK (simpel!)
+                    # ========================================
+                    if ads_active and tracker.locked:
+                        dx = pos[0] - cx
+                        dy = pos[1] - cy
+                        dist = math.sqrt(dx * dx + dy * dy)
 
-                        # Korrektur berechnen + senden
-                        mx, my, dist = aim_ctrl.calc_correction(
-                            pos[0], pos[1], fw, fh, profile, tracker.locked
-                        )
-                        if mx != 0 or my != 0:
-                            aim_ctrl.send_correction(mx, my, dist)
+                        if dist > deadzone:
+                            # Einfache Division — genau wie DMA-Aimbots
+                            move_x = (dx / smooth) * SPEED_X
+                            move_y = (dy / smooth) * SPEED_Y
 
-            elif tx is not None:
-                # Nicht ADS: Trotzdem tracken (fuer schnellen Lock beim ADS-Druecken)
-                tracker.update(tx, ty)
-                target_pos = tracker.get_position()
+                            # Sicherheits-Limit
+                            move_x = max(-MAX_MOVE_PER_FRAME, min(MAX_MOVE_PER_FRAME, move_x))
+                            move_y = max(-MAX_MOVE_PER_FRAME, min(MAX_MOVE_PER_FRAME, move_y))
+
+                            # Senden — jeden Frame, kein Cooldown!
+                            ix = int(round(move_x))
+                            iy = int(round(move_y))
+                            if (abs(ix) > 0 or abs(iy) > 0) and KMBOX_AVAILABLE:
+                                try:
+                                    kmbox_net.move(ix, iy)
+                                except Exception:
+                                    pass
             else:
-                # Kein Ziel erkannt
                 tracker.mark_lost()
 
             # --- Anzeige ---
             if SHOW_WINDOW:
                 display = draw_overlay(
                     frame.copy(), all_dets, target_pos,
-                    tracker, fps, ads_active, profile["name"], FOV_RADIUS
+                    tracker, fps, ads_active, profile, FOV_RADIUS, smooth
                 )
-
                 if WINDOW_SCALE != 1.0:
-                    new_w = int(fw * WINDOW_SCALE)
-                    new_h = int(fh * WINDOW_SCALE)
-                    display = cv2.resize(display, (new_w, new_h))
+                    display = cv2.resize(display, (int(fw * WINDOW_SCALE), int(fh * WINDOW_SCALE)))
+                cv2.imshow("AIMBOT v7", display)
 
-                cv2.imshow("AIMBOT v6", display)
-
-            # --- Tastatur-Steuerung ---
+            # --- Tastatur ---
             key = cv2.waitKey(1) & 0xFF
 
             if key == 27:  # ESC
-                print("Beende...")
                 break
 
             elif key == ord('a'):
                 ads_active = not ads_active
-                state = "EIN" if ads_active else "AUS"
-                print(f"ADS: {state}")
+                print(f"ADS: {'EIN' if ads_active else 'AUS'}")
                 if not ads_active:
-                    tracker.reset()
-                    aim_ctrl.reset()
-                else:
-                    # ADS aktiviert: Tracker zuruecksetzen fuer frischen Lock
                     tracker.reset()
 
             elif key == ord('p'):
                 profile_idx = (profile_idx + 1) % len(PROFILE_ORDER)
                 profile = PROFILES[PROFILE_ORDER[profile_idx]]
-                print(f"Profil: {profile['name']} (Speed: {profile['speed']}, DZ: {profile['deadzone']})")
+                smooth = profile["smooth"]
+                deadzone = profile["deadzone"]
+                print(f"Profil: {profile['name']} (Smooth: {smooth}, DZ: {deadzone})")
 
             elif key == ord('m'):
                 modes = ["coco", "fps", "nano"]
-                current_idx = modes.index(MODEL_MODE) if MODEL_MODE in modes else 0
-                MODEL_MODE = modes[(current_idx + 1) % len(modes)]
+                idx = modes.index(MODEL_MODE) if MODEL_MODE in modes else 0
+                MODEL_MODE = modes[(idx + 1) % len(modes)]
                 new_path = get_model_path(MODEL_MODE)
                 if new_path:
-                    print(f"Lade Modell: {MODEL_MODE} ({os.path.basename(new_path)})...")
+                    print(f"Lade: {MODEL_MODE} ({os.path.basename(new_path)})...")
                     detector = YOLODetector(new_path)
                     tracker.reset()
                 else:
                     print(f"Modell '{MODEL_MODE}' nicht gefunden!")
-                    MODEL_MODE = modes[current_idx]  # Zurueck
+                    MODEL_MODE = modes[idx]
 
             elif key == ord('1'):
                 FOV_RADIUS = max(50, FOV_RADIUS - 25)
@@ -735,23 +501,23 @@ def main():
                 CONFIDENCE = min(0.80, round(CONFIDENCE + 0.05, 2))
                 print(f"Confidence: {CONFIDENCE:.2f}")
             elif key == ord('5'):
-                KMBOX_SENSITIVITY = max(0.10, round(KMBOX_SENSITIVITY - 0.10, 2))
-                print(f"Sensitivity: {KMBOX_SENSITIVITY:.2f}")
+                smooth = max(1.0, round(smooth - 0.5, 1))
+                print(f"Smooth: {smooth}")
             elif key == ord('6'):
-                KMBOX_SENSITIVITY = min(3.00, round(KMBOX_SENSITIVITY + 0.10, 2))
-                print(f"Sensitivity: {KMBOX_SENSITIVITY:.2f}")
+                smooth = min(15.0, round(smooth + 0.5, 1))
+                print(f"Smooth: {smooth}")
             elif key == ord('7'):
-                SPEED_X_MULTIPLIER = max(0.10, round(SPEED_X_MULTIPLIER - 0.10, 2))
-                print(f"Speed X: {SPEED_X_MULTIPLIER:.2f}")
+                SPEED_X = max(0.10, round(SPEED_X - 0.10, 2))
+                print(f"Speed X: {SPEED_X:.2f}")
             elif key == ord('8'):
-                SPEED_X_MULTIPLIER = min(3.00, round(SPEED_X_MULTIPLIER + 0.10, 2))
-                print(f"Speed X: {SPEED_X_MULTIPLIER:.2f}")
+                SPEED_X = min(3.00, round(SPEED_X + 0.10, 2))
+                print(f"Speed X: {SPEED_X:.2f}")
             elif key == ord('9'):
-                SPEED_Y_MULTIPLIER = max(0.10, round(SPEED_Y_MULTIPLIER - 0.10, 2))
-                print(f"Speed Y: {SPEED_Y_MULTIPLIER:.2f}")
+                SPEED_Y = max(0.10, round(SPEED_Y - 0.10, 2))
+                print(f"Speed Y: {SPEED_Y:.2f}")
             elif key == ord('0'):
-                SPEED_Y_MULTIPLIER = min(3.00, round(SPEED_Y_MULTIPLIER + 0.10, 2))
-                print(f"Speed Y: {SPEED_Y_MULTIPLIER:.2f}")
+                SPEED_Y = min(3.00, round(SPEED_Y + 0.10, 2))
+                print(f"Speed Y: {SPEED_Y:.2f}")
 
     except KeyboardInterrupt:
         print("\nUnterbrochen.")

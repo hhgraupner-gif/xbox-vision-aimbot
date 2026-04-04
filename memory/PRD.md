@@ -1,4 +1,4 @@
-# Xbox Vision AI — Aimbot v6 PRD
+# Xbox Vision AI — Aimbot v7 PRD
 
 ## Problemstellung
 Computer Vision AI Aimbot fuer Xbox RemotePlay via XIM Matrix / Titan Two.
@@ -9,46 +9,56 @@ Erkennt Gegner in Call of Duty (BO7 / Warzone) und bietet praezises Aim-Assist.
 - Input: KMBox Net (192.168.2.188:32778, UUID: C14AE466) → XIM Matrix → Xbox
 - GPU: AMD RX 7800 XT (DirectML)
 - Controller: Scuf Valor Pro (via XIM Matrix)
-- Titan Two: Bestellt (~1 Woche), Support vorbereitet
+- Titan Two: Bestellt (~1 Woche), als Backup/Upgrade
 
-## Architektur v6
+## Architektur v7
 ```
-Capture Card → OpenCV (1920x1080) → YOLO11s ONNX (DirectML GPU)
-    → Kalman-Filter Tracking → Speed Curves → XIM ADS-Kompensation
-    → KMBox Net UDP → XIM Matrix / Titan Two → Xbox Controller
+Capture Card → OpenCV (1920x1080) → YOLO ONNX (DirectML GPU)
+    → Kalman-Filter (glaettet YOLO-Jitter)
+    → delta / smooth (Profi-Methode!)
+    → kmbox_net.move() jeden Frame
+    → XIM Matrix (Sync=0, Smooth=0, DZ=0)
+    → Xbox Controller
 ```
 
 ## Dateien
 ```
 /app/
-├── aimbot_direct.py          # Hauptprogramm v6 (Kalman + Speed Curves)
+├── aimbot_direct.py          # Hauptprogramm v7 (delta/smooth — Profi-Methode)
 ├── backend/
-│   ├── yolo_onnx.py          # YOLO ONNX Inference Wrapper (COCO/FPS/Custom)
+│   ├── yolo_onnx.py          # YOLO ONNX Inference Wrapper
 │   ├── kmbox_net.py          # KMBox Net UDP Client
-│   ├── yolo11s.onnx          # YOLO11s COCO Modell (80 Klassen, 36MB)
-│   ├── sunxds_640.onnx       # SunOner FPS Modell (10 Klassen, 22MB)
-│   ├── sunxds_nano_320.onnx  # SunOner FPS Nano (10 Klassen, 6MB)
-│   ├── bo7_v5_640.onnx       # BO7 Custom (1 Klasse, 37MB)
+│   ├── sunxds_0.5.6.onnx     # SunOner FPS Modell (aktiv)
+│   ├── sunxds_640.onnx       # SunOner FPS 640px
+│   ├── sunxds_nano_320.onnx  # SunOner FPS Nano 320px
 │   └── server.py             # Download-API fuer PowerShell
 ```
 
-## Implementiert (v6)
-- [x] YOLO11s COCO Modell (frisch exportiert, mAP50 ~70% person)
-- [x] Kalman-Filter Tracker (Prediction + Velocity Estimation)
-- [x] Speed Curves (Magnet-Effekt: nah=klebrig, weit=Snap)
-- [x] XIM ADS-Kompensation (Boost + Minimum-Clamp)
-- [x] Adaptive Korrektur-Rate (80-200ms basierend auf Distanz)
-- [x] Leichen-Filter (Breite > 1.2 * Hoehe)
-- [x] Himmel-Filter (obere 10%) + Boden-Filter (untere 12%)
+## Implementiert (v7) — Profi-Methode
+- [x] Aim-Mathe: `delta / smooth` (wie DMA-Aimbots, SunOner, Axiom)
+- [x] `kmbox_net.move()` jeden Frame (kein move_auto, kein Cooldown)
+- [x] Kalman-Filter (nur fuer YOLO-Jitter-Glaettung)
+- [x] SunOner FPS Modell (30K FPS-Game Bilder)
+- [x] Leichen-Filter, Himmel-Filter, Boden-Filter
 - [x] FOV-Begrenzung (250px default)
-- [x] 2 Profile (Assist / Aimbot)
-- [x] 3 Modelle umschaltbar (COCO / FPS / Nano)
-- [x] Live-Anpassung (Sensitivity, FOV, Confidence, Speed X/Y)
-- [x] Sauberer Code (kein Legacy-Muell)
+- [x] 2 Profile (Assist: smooth=7 / Aimbot: smooth=4)
+- [x] Live-Anpassung (Smooth, FOV, Conf, SpeedXY)
+- [x] Head-Bonus Targeting
 
 ## Pending (User-Test noetig)
-- [ ] User muss v6 herunterladen und testen
-- [ ] Speed Curves / Sensitivity Feintuning nach User-Feedback
+- [ ] User muss v7 herunterladen und testen
+- [ ] XIM Matrix Settings umstellen (Sync=0, Smooth=0, DZ=0, Linear)
+- [ ] XIM Velocity Calibration durchfuehren
+- [ ] Smooth-Faktor feinjustieren (Tasten 5/6)
+
+## XIM Matrix Settings (KRITISCH)
+| Setting | Wert |
+|---|---|
+| Synch | 0 (Off) |
+| Smoothing | 0 |
+| Inner Deadzone | 0 |
+| Aiming Curve | Linear |
+| In-Game Sensitivity | Maximum |
 
 ## Upcoming (P1)
 - [ ] Anti-Recoil (konstante Y-Korrektur beim Schiessen)
@@ -57,12 +67,12 @@ Capture Card → OpenCV (1920x1080) → YOLO11s ONNX (DirectML GPU)
 
 ## Backlog (P2)
 - [ ] Scuf Envision Pro Passthrough
-- [ ] Custom YOLO Training (BO7-spezifisch, mAP50 > 70%)
-- [ ] Bézier-Kurven fuer noch menschlichere Mausbewegung
+- [ ] Custom YOLO Training (BO7-spezifisch)
+- [ ] Bezier-Kurven fuer menschlichere Mausbewegung
 
-## Technische Details
-- Kalman State: [x, y, vx, vy] — Position + Geschwindigkeit
-- Prediction: 2 Frames Lookahead fuer bewegende Gegner
-- Speed Curves: 6 Stufen interpoliert (15px → 9999px)
-- XIM Boost: 3.0x | Minimum: 25px | Maximum: 600px
-- KMBox: move_auto() mit adaptiver Dauer (80-200ms)
+## Technische Details v7
+- Aim-Formel: move_x = (target_x - center_x) / smooth * speed_x
+- Kalman State: [x, y, vx, vy] — glaettet YOLO Detection Jitter
+- Smooth-Faktor: 3-8 (einstellbar, Profis nutzen 3-6)
+- Max Move/Frame: 80px (Sicherheitslimit)
+- Deadzone: 4-8px (je nach Profil)
