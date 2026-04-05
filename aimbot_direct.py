@@ -46,7 +46,7 @@ CAPTURE_DEVICE = 0
 # MODELL
 # ============================================================
 MODEL_MODE = "fps"
-CONFIDENCE = 0.30
+CONFIDENCE = 0.40
 FOV_RADIUS = 180
 
 # ============================================================
@@ -55,8 +55,8 @@ FOV_RADIUS = 180
 # STRENGTH niedrig! Wir UNTERSTUETZEN den XIM Aim Assist nur.
 # Der XIM mit Weichheit 50 + Sync 32 glaettet unsere Korrekturen.
 
-STRENGTH = 0.5              # Sehr sanft! (0.3 = kaum spuerbar, 1.0 = deutlich)
-DEADZONE = 20               # Grosser Deadzone: Nur korrigieren wenn wirklich daneben
+STRENGTH = 0.7              # Etwas staerker (0.3 = kaum, 1.0 = deutlich)
+DEADZONE = 12               # Kleiner = greift frueher ein
 MAX_MOVE = 40               # Kleine Moves — XIM macht den Rest
 
 # ============================================================
@@ -67,7 +67,7 @@ WINDOW_SCALE = 0.5
 DEAD_BODY_RATIO = 1.2
 SKY_FILTER_RATIO = 0.10
 GROUND_FILTER_RATIO = 0.88
-MIN_BOX_HEIGHT = 25
+MIN_BOX_HEIGHT = 40
 
 
 def get_model_path(mode):
