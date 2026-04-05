@@ -243,11 +243,11 @@ def pick_best_target(detections, frame_w, frame_h):
         if class_name in IGNORE_CLASSES:
             continue
 
-        # Zielpunkt
+        # Zielpunkt — BRUST-Mitte (0.40 = obere 40% der Box)
         if class_name == "head":
             tx, ty = (x1 + x2) / 2.0, (y1 + y2) / 2.0
         else:
-            tx, ty = (x1 + x2) / 2.0, y1 + bh * 0.25
+            tx, ty = (x1 + x2) / 2.0, y1 + bh * 0.40
 
         # FOV-Check
         dist = math.sqrt((tx - cx) ** 2 + (ty - cy) ** 2)
