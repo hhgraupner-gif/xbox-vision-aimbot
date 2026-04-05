@@ -86,7 +86,7 @@ DEADZONE = 5                # In Pixeln (klein! XIM soll feinjustieren)
 MAX_MOVE_PER_FRAME = 80     # Mehr als 80px/Frame = verdaechtig, begrenzen
 
 # Anti-Recoil: Konstanter Downward-Pull waehrend ADS (gleicht Rueckstoss aus)
-ANTI_RECOIL = 3.0           # Pixel nach unten pro Frame (0 = aus, 3-8 = typisch fuer CoD)
+ANTI_RECOIL = 6.0           # Pixel nach unten pro Frame (0 = aus, 5-10 = typisch fuer CoD)
 ANTI_RECOIL_ENABLED = True  # R-Taste zum Togglen
 
 # Kalman Prediction: Vorausberechnung fuer bewegende Gegner
@@ -461,7 +461,7 @@ def main():
                             move_x = (dx / smooth) * SPEED_X
                             move_y = (dy / smooth) * SPEED_Y
 
-                            # Anti-Recoil: Konstant nach unten ziehen
+                            # Anti-Recoil dazu
                             if ANTI_RECOIL_ENABLED and ANTI_RECOIL > 0:
                                 move_y += ANTI_RECOIL
 
@@ -477,16 +477,22 @@ def main():
                                     kmbox_net.move(ix, iy)
                                 except Exception:
                                     pass
-                        elif ANTI_RECOIL_ENABLED and ANTI_RECOIL > 0:
-                            # Auch in Deadzone: Anti-Recoil senden
-                            iy = int(round(ANTI_RECOIL))
-                            if iy > 0 and KMBOX_AVAILABLE:
-                                try:
-                                    kmbox_net.move(0, iy)
-                                except Exception:
-                                    pass
             else:
                 tracker.mark_lost()
+
+            # ========================================
+            # ANTI-RECOIL — IMMER bei ADS (auch ohne Gegner!)
+            # ========================================
+            if ads_active and ANTI_RECOIL_ENABLED and ANTI_RECOIL > 0:
+                # Nur senden wenn KEIN Aim-Korrektur stattfand (sonst doppelt)
+                no_aim_correction = (tx is None) or (not tracker.locked)
+                if no_aim_correction and KMBOX_AVAILABLE:
+                    iy = int(round(ANTI_RECOIL))
+                    if iy > 0:
+                        try:
+                            kmbox_net.move(0, iy)
+                        except Exception:
+                            pass
 
             # --- Anzeige ---
             if SHOW_WINDOW:
