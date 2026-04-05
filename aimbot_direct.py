@@ -59,9 +59,14 @@ SPEED_Y = 0.80
 DEADZONE = 3                # Kleiner = reagiert frueher
 MAX_MOVE_PER_FRAME = 120    # Erhoet fuer aggressiveres Tracking
 
+# ADS-BOOST: Kompensiert die niedrige In-Game ADS-Sensitivity!
+# Dein Spiel: ADS-Multiplikator = 1.0 (Standard)
+# Das Spiel reduziert Mausbewegungen im ADS um ca. 60-70%
+# Wir gleichen das hier aus, OHNE die In-Game-Settings zu aendern
+ADS_BOOST = 3.0             # Multipliziert alle Aim-Moves (2.0-4.0 empfohlen)
+
 # Minimum-Move: XIM ignoriert winzige Bewegungen (1-2px)
-# Wenn berechnete Bewegung > 0 aber < MIN_MOVE → auf MIN_MOVE hochsetzen
-MIN_MOVE = 4                # Mindestens 4px senden damit XIM es registriert
+MIN_MOVE = 4
 
 # Snap-Zone: Wenn Ziel naeher als SNAP_RADIUS Pixel → Smooth wird 1.0 (sofort drauf!)
 SNAP_RADIUS = 40            # Innerhalb 40px = Instant-Lock
@@ -272,7 +277,7 @@ def draw_overlay(frame, all_dets, target_pos, tracker, fps, ads_active, profile,
         status += f" | LOCKED v=({vx:.0f},{vy:.0f})"
     cv2.putText(frame, status, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
-    info = f"Smooth: {smooth:.1f} | FOV: {fov_radius} | Conf: {CONFIDENCE:.2f} | Speed: {SPEED_X:.1f}/{SPEED_Y:.1f}"
+    info = f"Smooth: {smooth:.1f} | FOV: {fov_radius} | ADS-Boost: {ADS_BOOST:.1f}x | Speed: {SPEED_X:.1f}/{SPEED_Y:.1f}"
     info2 = f"Recoil: {ANTI_RECOIL:.0f}px({'ON' if ANTI_RECOIL_ENABLED else 'OFF'}) | Pred: {PREDICTION_FRAMES}F | Snap: <{SNAP_RADIUS}px"
     cv2.putText(frame, info, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
     cv2.putText(frame, info2, (10, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
@@ -286,7 +291,7 @@ def draw_overlay(frame, all_dets, target_pos, tracker, fps, ads_active, profile,
 def main():
     global CONFIDENCE, FOV_RADIUS, SMOOTH_FACTOR
     global SPEED_X, SPEED_Y, MODEL_MODE
-    global ANTI_RECOIL, ANTI_RECOIL_ENABLED, PREDICTION_FRAMES
+    global ANTI_RECOIL, ANTI_RECOIL_ENABLED, PREDICTION_FRAMES, ADS_BOOST
 
     print("=" * 60)
     print("  AIMBOT VISION v8 — Aggressives Lock-On")
@@ -393,8 +398,8 @@ def main():
                             else:
                                 effective_smooth = smooth
 
-                            move_x = (dx / effective_smooth) * SPEED_X
-                            move_y = (dy / effective_smooth) * SPEED_Y
+                            move_x = (dx / effective_smooth) * SPEED_X * ADS_BOOST
+                            move_y = (dy / effective_smooth) * SPEED_Y * ADS_BOOST
 
                             # Anti-Recoil
                             if ANTI_RECOIL_ENABLED and ANTI_RECOIL > 0:
@@ -512,6 +517,11 @@ def main():
             elif key == ord('['):
                 PREDICTION_FRAMES = max(0, PREDICTION_FRAMES - 1)
                 print(f"Prediction: {PREDICTION_FRAMES} Frames")
+            elif key == ord('b'):
+                ADS_BOOST = round(ADS_BOOST + 0.5, 1)
+                if ADS_BOOST > 6.0:
+                    ADS_BOOST = 1.0
+                print(f"ADS-Boost: {ADS_BOOST}x")
 
     except KeyboardInterrupt:
         print("\nUnterbrochen.")
