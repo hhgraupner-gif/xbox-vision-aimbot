@@ -79,8 +79,11 @@ MAX_MOVE = 150              # Max Pixel pro Frame
 ANTI_RECOIL = 8.0           # Pixel nach unten pro Frame
 ANTI_RECOIL_ENABLED = True
 
-# Kalman Prediction fuer bewegende Gegner
-PREDICTION_FRAMES = 3
+# Kalman Prediction — DEFAULT AUS (verstaerkt Jitter!)
+PREDICTION_FRAMES = 0
+
+# Deadzone: Wenn Ziel naeher als X Pixel → NICHT bewegen (verhindert Mikro-Zittern)
+AIM_DEADZONE = 5
 
 # ============================================================
 # PROFILE
@@ -143,8 +146,10 @@ class KalmanTracker:
         self.last_update = 0.0
         self.last_dt = 0.033
         self.H = np.array([[1,0,0,0],[0,1,0,0]], dtype=np.float64)
-        self.R = np.eye(2, dtype=np.float64) * 4.0     # Niedrig = vertraut Messung mehr
-        self.Q_base = np.diag([2.0, 2.0, 15.0, 15.0])  # Hoch = reagiert schnell auf Bewegung
+        # R HOCH = glaettet YOLO-Jitter STARK (das war zu niedrig!)
+        self.R = np.eye(2, dtype=np.float64) * 30.0
+        # Q Position niedrig, Velocity moderat
+        self.Q_base = np.diag([1.0, 1.0, 6.0, 6.0])
 
     def predict(self, dt=None):
         if dt is None:
@@ -275,7 +280,7 @@ def draw_overlay(frame, dets, aim_pos, tracker, fps, ads, profile, strength):
     mode = "LOCKED" if tracker.locked and ads else "ADS ON" if ads else "ADS OFF"
     cv2.putText(frame, f"FPS:{fps:.0f} | {profile['name']} | {mode}",
                 (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-    cv2.putText(frame, f"STRENGTH: {strength:.1f} | Recoil: {ANTI_RECOIL:.0f} | Pred: {PREDICTION_FRAMES}F | FOV: {FOV_RADIUS}",
+    cv2.putText(frame, f"STRENGTH: {strength:.1f} | Recoil: {ANTI_RECOIL:.0f} | DZ: {AIM_DEADZONE}px | FOV: {FOV_RADIUS}",
                 (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
 
     return frame
@@ -360,49 +365,51 @@ def main():
                 tracker.update(tx, ty)
                 pos = tracker.get_position()
                 if pos:
-                    # Prediction fuer bewegende Gegner
-                    if PREDICTION_FRAMES > 0 and tracker.frames_seen >= 2:
-                        aim = tracker.get_predicted_position(PREDICTION_FRAMES)
-                    else:
-                        aim = pos
-                    aim_pos = aim
+                    aim_pos = pos
 
                     # ==========================================
-                    # FULL BODY LOCK — So simpel wie die Profis
+                    # FULL BODY LOCK — Mit Jitter-Schutz
                     # ==========================================
                     if ads and tracker.locked:
+                        # Prediction nur wenn eingeschaltet
+                        if PREDICTION_FRAMES > 0 and tracker.frames_seen >= 3:
+                            aim = tracker.get_predicted_position(PREDICTION_FRAMES)
+                        else:
+                            aim = pos
+                        aim_pos = aim
+
                         dx = aim[0] - cx
                         dy = aim[1] - cy
+                        dist = math.sqrt(dx * dx + dy * dy)
 
-                        # move = delta * STRENGTH
-                        mx = dx * strength
-                        my = dy * strength
+                        # DEADZONE: Wenn wir schon drauf sind → NICHT bewegen!
+                        if dist > AIM_DEADZONE:
+                            mx = dx * strength
+                            my = dy * strength
 
-                        # Anti-Recoil (konstant nach unten)
-                        if ANTI_RECOIL_ENABLED:
-                            my += ANTI_RECOIL
+                            # Anti-Recoil
+                            if ANTI_RECOIL_ENABLED:
+                                my += ANTI_RECOIL
 
-                        # Sicherheits-Limit
-                        mx = max(-MAX_MOVE, min(MAX_MOVE, mx))
-                        my = max(-MAX_MOVE, min(MAX_MOVE, my))
+                            # Limit
+                            mx = max(-MAX_MOVE, min(MAX_MOVE, mx))
+                            my = max(-MAX_MOVE, min(MAX_MOVE, my))
 
-                        ix = int(round(mx))
-                        iy = int(round(my))
-
-                        if (abs(ix) > 0 or abs(iy) > 0) and KMBOX_AVAILABLE:
-                            try:
-                                kmbox_net.move(ix, iy)
-                            except Exception:
-                                pass
-
-                    elif ads and ANTI_RECOIL_ENABLED:
-                        # Auf Gegner aber noch nicht locked → trotzdem Recoil
-                        iy = int(round(ANTI_RECOIL))
-                        if iy > 0 and KMBOX_AVAILABLE:
-                            try:
-                                kmbox_net.move(0, iy)
-                            except Exception:
-                                pass
+                            ix = int(round(mx))
+                            iy = int(round(my))
+                            if (abs(ix) > 0 or abs(iy) > 0) and KMBOX_AVAILABLE:
+                                try:
+                                    kmbox_net.move(ix, iy)
+                                except Exception:
+                                    pass
+                        elif ANTI_RECOIL_ENABLED:
+                            # In Deadzone: Nur Anti-Recoil
+                            iy = int(round(ANTI_RECOIL))
+                            if iy > 0 and KMBOX_AVAILABLE:
+                                try:
+                                    kmbox_net.move(0, iy)
+                                except Exception:
+                                    pass
             else:
                 tracker.mark_lost()
 
