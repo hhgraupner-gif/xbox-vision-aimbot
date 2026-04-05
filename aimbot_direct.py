@@ -1,25 +1,17 @@
 """
-AIMBOT VISION v9 — FULL BODY LOCK
-===================================
-Radikal vereinfacht nach Analyse der Profi-Aimbots.
+AIMBOT VISION v10 — SOFT ASSIST
+=================================
+Leichter AI-Assist der MIT dem XIM Matrix zusammenarbeitet.
+Gibt nur sanfte Schubser Richtung Gegner — der XIM glaettet den Rest.
 
-KERN-LOGIK (wie die TikTok-Aimbots):
-  move_x = delta_x * STRENGTH
-  move_y = delta_y * STRENGTH
-  → kmbox_net.move(mx, my) JEDEN FRAME
-
-Ein einziger Parameter: STRENGTH
-  - Zu schwach? STRENGTH hoch (Taste 2)
-  - Overshoot? STRENGTH runter (Taste 1)
-  - Perfekt wenn Fadenkreuz SOFORT auf Gegner springt und bleibt
+NICHT als voller Aimbot gedacht! Nur als Unterstuetzung zum XIM Aim Assist.
+Funktioniert perfekt mit: Weichheit 50, Sync 32, 10000 DPI, 15cm/360
 
 Steuerung:
-  A     = ADS an/aus
-  1/2   = STRENGTH runter/hoch (WICHTIGSTER WERT!)
+  A     = Assist an/aus (Toggle)
+  1/2   = STRENGTH runter/hoch (0.1-Schritte, fein!)
   3/4   = FOV kleiner/groesser
-  5/6   = Anti-Recoil schwaecher/staerker
-  R     = Anti-Recoil an/aus
-  P     = Profil (Lock / Assist)
+  7/8   = Confidence runter/hoch
   M     = Modell wechseln
   ESC   = Beenden
 """
@@ -55,50 +47,17 @@ CAPTURE_DEVICE = 0
 # ============================================================
 MODEL_MODE = "fps"
 CONFIDENCE = 0.30
-FOV_RADIUS = 200
+FOV_RADIUS = 180
 
 # ============================================================
-# AIM — EIN PARAMETER: STRENGTH
+# SOFT ASSIST — Sanfte Schubser, XIM glaettet
 # ============================================================
-# So machen es die Profi-Aimbots:
-#   move = delta * STRENGTH
-# STRENGTH = Pixel-zu-Maus Umrechnungsfaktor
-# Wenn STRENGTH richtig eingestellt ist:
-#   → Gegner 50px entfernt → Fadenkreuz springt GENAU 50px
-#   → PERFEKTER LOCK
+# STRENGTH niedrig! Wir UNTERSTUETZEN den XIM Aim Assist nur.
+# Der XIM mit Weichheit 50 + Sync 32 glaettet unsere Korrekturen.
 
-STRENGTH = 4.0              # START-WERT. User muss tunen!
-                             # Zu schwach → hoeher (Taste 2)
-                             # Overshoot → niedriger (Taste 1)
-                             # Profi-Bereich: 2.0 - 8.0
-
-# Sicherheits-Limit
-MAX_MOVE = 150              # Max Pixel pro Frame
-
-# Anti-Recoil: Zieht nach unten waehrend Lock (gegen Rueckstoss)
-ANTI_RECOIL = 8.0           # Pixel nach unten pro Frame
-ANTI_RECOIL_ENABLED = True
-
-# Kalman Prediction — DEFAULT AUS (verstaerkt Jitter!)
-PREDICTION_FRAMES = 0
-
-# Deadzone: Wenn Ziel naeher als X Pixel → NICHT bewegen (verhindert Mikro-Zittern)
-AIM_DEADZONE = 5
-
-# ============================================================
-# PROFILE
-# ============================================================
-PROFILES = {
-    "lock": {
-        "name": "FULL LOCK",
-        "strength": 4.0,
-    },
-    "assist": {
-        "name": "SOFT ASSIST",
-        "strength": 2.0,
-    },
-}
-PROFILE_ORDER = ["lock", "assist"]
+STRENGTH = 0.5              # Sehr sanft! (0.3 = kaum spuerbar, 1.0 = deutlich)
+DEADZONE = 20               # Grosser Deadzone: Nur korrigieren wenn wirklich daneben
+MAX_MOVE = 40               # Kleine Moves — XIM macht den Rest
 
 # ============================================================
 # FILTER
@@ -131,79 +90,45 @@ def get_model_path(mode):
 
 
 # ============================================================
-# KALMAN TRACKER — Schnell & Reaktiv
+# EINFACHER TRACKER (Kalman fuer Glaettung)
 # ============================================================
-class KalmanTracker:
+class SmoothTracker:
     def __init__(self):
         self.reset()
 
     def reset(self):
-        self.x = np.zeros(4, dtype=np.float64)
-        self.P = np.eye(4, dtype=np.float64) * 500.0
-        self.frames_seen = 0
-        self.frames_lost = 0
-        self.locked = False
-        self.last_update = 0.0
-        self.last_dt = 0.033
-        self.H = np.array([[1,0,0,0],[0,1,0,0]], dtype=np.float64)
-        # R HOCH = glaettet YOLO-Jitter STARK (das war zu niedrig!)
-        self.R = np.eye(2, dtype=np.float64) * 30.0
-        # Q Position niedrig, Velocity moderat
-        self.Q_base = np.diag([1.0, 1.0, 6.0, 6.0])
-
-    def predict(self, dt=None):
-        if dt is None:
-            dt = self.last_dt
-        F = np.array([[1,0,dt,0],[0,1,0,dt],[0,0,1,0],[0,0,0,1]], dtype=np.float64)
-        self.x = F @ self.x
-        self.P = F @ self.P @ F.T + self.Q_base * dt
+        self.x = None
+        self.y = None
+        self.alpha = 0.4  # EMA-Faktor: 0.3=sehr glatt, 0.6=reaktiv
+        self.frames = 0
+        self.lost = 0
 
     def update(self, mx, my):
-        now = time.monotonic()
-        if self.last_update > 0:
-            self.last_dt = max(0.005, min(0.200, now - self.last_update))
-        z = np.array([mx, my], dtype=np.float64)
-
-        if self.frames_seen == 0:
-            self.x[:2] = [mx, my]
-            self.x[2:] = [0.0, 0.0]
-            self.P = np.eye(4, dtype=np.float64) * 30.0
+        if self.x is None:
+            self.x, self.y = mx, my
         else:
-            self.predict(self.last_dt)
-            S = self.H @ self.P @ self.H.T + self.R
-            K = self.P @ self.H.T @ np.linalg.inv(S)
-            self.x = self.x + K @ (z - self.H @ self.x)
-            self.P = (np.eye(4) - K @ self.H) @ self.P
-
-        self.frames_seen += 1
-        self.frames_lost = 0
-        self.locked = True  # Sofort ab Frame 1!
-        self.last_update = now
+            self.x = self.x + self.alpha * (mx - self.x)
+            self.y = self.y + self.alpha * (my - self.y)
+        self.frames += 1
+        self.lost = 0
 
     def mark_lost(self):
-        self.frames_lost += 1
-        if self.frames_lost > 4:
+        self.lost += 1
+        if self.lost > 5:
             self.reset()
-        self.locked = False
 
     def get_position(self):
-        if self.frames_seen == 0:
+        if self.x is None:
             return None
-        return (float(self.x[0]), float(self.x[1]))
+        return (self.x, self.y)
 
-    def get_velocity(self):
-        return (float(self.x[2]), float(self.x[3]))
-
-    def get_predicted_position(self, frames=2):
-        if self.frames_seen < 2:
-            return self.get_position()
-        dt = self.last_dt * frames
-        return (float(self.x[0] + self.x[2] * dt),
-                float(self.x[1] + self.x[3] * dt))
+    @property
+    def locked(self):
+        return self.frames >= 1 and self.lost == 0
 
 
 # ============================================================
-# ZIELAUSWAHL — Naechster Gegner zur Mitte
+# ZIELAUSWAHL
 # ============================================================
 def pick_best_target(detections, frame_w, frame_h):
     cx, cy = frame_w / 2.0, frame_h / 2.0
@@ -227,7 +152,7 @@ def pick_best_target(detections, frame_w, frame_h):
         if cls in IGNORE_CLASSES:
             continue
 
-        # Zielpunkt: Brust (40% von oben)
+        # Brust-Mitte
         if cls == "head":
             tx, ty = (x1 + x2) / 2.0, (y1 + y2) / 2.0
         else:
@@ -237,7 +162,6 @@ def pick_best_target(detections, frame_w, frame_h):
         if dist > FOV_RADIUS:
             continue
 
-        # Kopf bevorzugen
         effective_dist = dist * (0.5 if cls == "head" else 1.0)
         if effective_dist < best_dist:
             best_dist = effective_dist
@@ -249,39 +173,34 @@ def pick_best_target(detections, frame_w, frame_h):
 # ============================================================
 # OVERLAY
 # ============================================================
-def draw_overlay(frame, dets, aim_pos, tracker, fps, ads, profile, strength):
+def draw_overlay(frame, dets, aim_pos, tracker, fps, active, strength):
     h, w = frame.shape[:2]
     cx, cy = w // 2, h // 2
 
-    # FOV
-    col = (0, 255, 0) if ads else (80, 80, 80)
+    col = (0, 200, 100) if active else (80, 80, 80)
     cv2.circle(frame, (cx, cy), FOV_RADIUS, col, 1)
+    cv2.line(frame, (cx-10, cy), (cx+10, cy), (255, 255, 255), 1)
+    cv2.line(frame, (cx, cy-10), (cx, cy+10), (255, 255, 255), 1)
 
-    # Fadenkreuz
-    cv2.line(frame, (cx-12, cy), (cx+12, cy), (255, 255, 255), 1)
-    cv2.line(frame, (cx, cy-12), (cx, cy+12), (255, 255, 255), 1)
-
-    # Boxen
     for d in dets:
         x1, y1, x2, y2 = d["bbox"]
         c = d["class_name"]
         cf = d["confidence"]
         color = (0, 0, 255) if c in TARGET_CLASSES else (128, 128, 128) if c in IGNORE_CLASSES else (255, 255, 0)
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-        cv2.putText(frame, f"{c} {cf:.0%}", (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+        cv2.putText(frame, f"{c} {cf:.0%}", (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
 
-    # Aim-Linie
-    if aim_pos and ads:
+    if aim_pos and active and tracker.locked:
         ax, ay = int(aim_pos[0]), int(aim_pos[1])
-        cv2.line(frame, (cx, cy), (ax, ay), (0, 255, 255), 2)
-        cv2.circle(frame, (ax, ay), 6, (0, 0, 255), -1)
+        cv2.line(frame, (cx, cy), (ax, ay), (0, 200, 100), 1)
+        cv2.circle(frame, (ax, ay), 5, (0, 200, 100), -1)
 
-    # Status
-    mode = "LOCKED" if tracker.locked and ads else "ADS ON" if ads else "ADS OFF"
-    cv2.putText(frame, f"FPS:{fps:.0f} | {profile['name']} | {mode}",
-                (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-    cv2.putText(frame, f"STRENGTH: {strength:.1f} | Recoil: {ANTI_RECOIL:.0f} | DZ: {AIM_DEADZONE}px | FOV: {FOV_RADIUS}",
-                (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+    mode = "ASSIST ON" if active else "ASSIST OFF"
+    lock = " | LOCKED" if tracker.locked and active else ""
+    cv2.putText(frame, f"FPS:{fps:.0f} | SOFT ASSIST | {mode}{lock}",
+                (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 200, 100) if active else (150, 150, 150), 2)
+    cv2.putText(frame, f"Strength: {strength:.1f} | DZ: {DEADZONE} | FOV: {FOV_RADIUS}",
+                (10, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
 
     return frame
 
@@ -290,25 +209,22 @@ def draw_overlay(frame, dets, aim_pos, tracker, fps, ads, profile, strength):
 # HAUPTPROGRAMM
 # ============================================================
 def main():
-    global CONFIDENCE, FOV_RADIUS, STRENGTH
-    global MODEL_MODE, ANTI_RECOIL, ANTI_RECOIL_ENABLED, PREDICTION_FRAMES
+    global CONFIDENCE, FOV_RADIUS, STRENGTH, DEADZONE, MODEL_MODE
 
-    print("=" * 60)
-    print("  AIMBOT v9 — FULL BODY LOCK")
-    print("  move = delta * STRENGTH (wie die Profis)")
-    print("=" * 60)
+    print("=" * 55)
+    print("  SOFT ASSIST v10 — XIM Unterstuetzung")
+    print("  Sanfte AI-Schubser + XIM Aim Assist = Klebrig!")
+    print("=" * 55)
 
-    # KMBox
     if KMBOX_AVAILABLE:
         try:
             kmbox_net.init(KMBOX_IP, KMBOX_PORT, KMBOX_UUID)
-            print(f"  KMBox: {KMBOX_IP}:{KMBOX_PORT} OK")
+            print(f"  KMBox: OK")
         except Exception as e:
-            print(f"  KMBox WARNUNG: {e}")
+            print(f"  KMBox: {e}")
     else:
-        print("  KMBox nicht da — Anzeige-Modus")
+        print("  KMBox nicht da")
 
-    # YOLO
     model_path = get_model_path(MODEL_MODE)
     if not model_path:
         print("FEHLER: Kein Modell!")
@@ -316,7 +232,6 @@ def main():
     print(f"  Modell: {os.path.basename(model_path)}")
     detector = YOLODetector(model_path)
 
-    # Capture
     cap = cv2.VideoCapture(CAPTURE_DEVICE, cv2.CAP_DSHOW)
     if not cap.isOpened():
         cap = cv2.VideoCapture(CAPTURE_DEVICE)
@@ -328,18 +243,15 @@ def main():
     fw = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     fh = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     print(f"  Capture: {fw}x{fh}")
+    print(f"\n  A=Assist an/aus | 1/2=Strength | ESC=Quit")
+    print("=" * 55)
 
-    print("\n  BEREIT! Taste A = ADS | 1/2 = STRENGTH | ESC = Quit")
-    print("=" * 60)
-
-    tracker = KalmanTracker()
-    prof_idx = 0
-    profile = PROFILES[PROFILE_ORDER[prof_idx]]
-    strength = profile["strength"]
-    ads = False
+    tracker = SmoothTracker()
+    active = True  # Standardmaessig AN
     fc = 0
     fps = 0.0
     fps_t = time.monotonic()
+    strength = STRENGTH
 
     try:
         while True:
@@ -353,7 +265,6 @@ def main():
                 fps = 30.0 / el if el > 0 else 0
                 fps_t = now
 
-            # Detect
             all_dets = detector.detect(frame, conf_threshold=CONFIDENCE)
             targets = [d for d in all_dets if d["class_name"] in TARGET_CLASSES]
             tx, ty, tdet = pick_best_target(targets, fw, fh)
@@ -367,95 +278,68 @@ def main():
                 if pos:
                     aim_pos = pos
 
-                    # ==========================================
-                    # FULL BODY LOCK — Mit Jitter-Schutz
-                    # ==========================================
-                    if ads and tracker.locked:
-                        # Prediction nur wenn eingeschaltet
-                        if PREDICTION_FRAMES > 0 and tracker.frames_seen >= 3:
-                            aim = tracker.get_predicted_position(PREDICTION_FRAMES)
-                        else:
-                            aim = pos
-                        aim_pos = aim
-
-                        dx = aim[0] - cx
-                        dy = aim[1] - cy
+                    if active and tracker.locked:
+                        dx = pos[0] - cx
+                        dy = pos[1] - cy
                         dist = math.sqrt(dx * dx + dy * dy)
 
-                        # DEADZONE: Wenn wir schon drauf sind → NICHT bewegen!
-                        if dist > AIM_DEADZONE:
+                        # Nur korrigieren wenn deutlich daneben
+                        if dist > DEADZONE:
                             mx = dx * strength
                             my = dy * strength
 
-                            # Anti-Recoil
-                            if ANTI_RECOIL_ENABLED:
-                                my += ANTI_RECOIL
-
-                            # Limit
                             mx = max(-MAX_MOVE, min(MAX_MOVE, mx))
                             my = max(-MAX_MOVE, min(MAX_MOVE, my))
 
                             ix = int(round(mx))
                             iy = int(round(my))
+
                             if (abs(ix) > 0 or abs(iy) > 0) and KMBOX_AVAILABLE:
                                 try:
                                     kmbox_net.move(ix, iy)
                                 except Exception:
                                     pass
-                        elif ANTI_RECOIL_ENABLED:
-                            # In Deadzone: Nur Anti-Recoil
-                            iy = int(round(ANTI_RECOIL))
-                            if iy > 0 and KMBOX_AVAILABLE:
-                                try:
-                                    kmbox_net.move(0, iy)
-                                except Exception:
-                                    pass
             else:
                 tracker.mark_lost()
 
-            # Anzeige
             if SHOW_WINDOW:
-                disp = draw_overlay(frame.copy(), all_dets, aim_pos, tracker, fps, ads, profile, strength)
+                disp = draw_overlay(frame.copy(), all_dets, aim_pos, tracker, fps, active, strength)
                 if WINDOW_SCALE != 1.0:
                     disp = cv2.resize(disp, (int(fw * WINDOW_SCALE), int(fh * WINDOW_SCALE)))
-                cv2.imshow("AIMBOT v9", disp)
+                cv2.imshow("SOFT ASSIST v10", disp)
 
-            # Tasten
             key = cv2.waitKey(1) & 0xFF
-
             if key == 27:
                 break
             elif key == ord('a'):
-                ads = not ads
-                print(f"ADS: {'EIN' if ads else 'AUS'}")
-                if not ads:
+                active = not active
+                print(f"Assist: {'EIN' if active else 'AUS'}")
+                if not active:
                     tracker.reset()
             elif key == ord('1'):
-                strength = max(0.5, round(strength - 0.5, 1))
-                print(f"STRENGTH: {strength}")
+                strength = max(0.1, round(strength - 0.1, 1))
+                print(f"Strength: {strength}")
             elif key == ord('2'):
-                strength = min(15.0, round(strength + 0.5, 1))
-                print(f"STRENGTH: {strength}")
+                strength = min(5.0, round(strength + 0.1, 1))
+                print(f"Strength: {strength}")
             elif key == ord('3'):
                 FOV_RADIUS = max(50, FOV_RADIUS - 25)
                 print(f"FOV: {FOV_RADIUS}px")
             elif key == ord('4'):
-                FOV_RADIUS = min(500, FOV_RADIUS + 25)
+                FOV_RADIUS = min(400, FOV_RADIUS + 25)
                 print(f"FOV: {FOV_RADIUS}px")
             elif key == ord('5'):
-                ANTI_RECOIL = max(0.0, round(ANTI_RECOIL - 1.0, 1))
-                print(f"Anti-Recoil: {ANTI_RECOIL}px")
+                DEADZONE = max(5, DEADZONE - 5)
+                print(f"Deadzone: {DEADZONE}px")
             elif key == ord('6'):
-                ANTI_RECOIL = min(25.0, round(ANTI_RECOIL + 1.0, 1))
-                print(f"Anti-Recoil: {ANTI_RECOIL}px")
-            elif key == ord('r'):
-                ANTI_RECOIL_ENABLED = not ANTI_RECOIL_ENABLED
-                print(f"Anti-Recoil: {'EIN' if ANTI_RECOIL_ENABLED else 'AUS'}")
-            elif key == ord('p'):
-                prof_idx = (prof_idx + 1) % len(PROFILE_ORDER)
-                profile = PROFILES[PROFILE_ORDER[prof_idx]]
-                strength = profile["strength"]
-                print(f"Profil: {profile['name']} (Strength: {strength})")
+                DEADZONE = min(60, DEADZONE + 5)
+                print(f"Deadzone: {DEADZONE}px")
+            elif key == ord('7'):
+                CONFIDENCE = max(0.15, round(CONFIDENCE - 0.05, 2))
+                print(f"Confidence: {CONFIDENCE}")
+            elif key == ord('8'):
+                CONFIDENCE = min(0.80, round(CONFIDENCE + 0.05, 2))
+                print(f"Confidence: {CONFIDENCE}")
             elif key == ord('m'):
                 modes = ["fps", "coco", "nano"]
                 idx = modes.index(MODEL_MODE) if MODEL_MODE in modes else 0
@@ -467,18 +351,6 @@ def main():
                     tracker.reset()
                 else:
                     MODEL_MODE = modes[idx]
-            elif key == ord('7'):
-                CONFIDENCE = max(0.15, round(CONFIDENCE - 0.05, 2))
-                print(f"Confidence: {CONFIDENCE}")
-            elif key == ord('8'):
-                CONFIDENCE = min(0.80, round(CONFIDENCE + 0.05, 2))
-                print(f"Confidence: {CONFIDENCE}")
-            elif key == ord('9'):
-                PREDICTION_FRAMES = max(0, PREDICTION_FRAMES - 1)
-                print(f"Prediction: {PREDICTION_FRAMES}F")
-            elif key == ord('0'):
-                PREDICTION_FRAMES = min(6, PREDICTION_FRAMES + 1)
-                print(f"Prediction: {PREDICTION_FRAMES}F")
 
     except KeyboardInterrupt:
         print("\nStop.")
