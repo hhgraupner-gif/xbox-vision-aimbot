@@ -85,6 +85,13 @@ DEADZONE = 5                # In Pixeln (klein! XIM soll feinjustieren)
 # Max Pixel pro Frame (Sicherheit gegen Spinning)
 MAX_MOVE_PER_FRAME = 80     # Mehr als 80px/Frame = verdaechtig, begrenzen
 
+# Anti-Recoil: Konstanter Downward-Pull waehrend ADS (gleicht Rueckstoss aus)
+ANTI_RECOIL = 3.0           # Pixel nach unten pro Frame (0 = aus, 3-8 = typisch fuer CoD)
+ANTI_RECOIL_ENABLED = True  # R-Taste zum Togglen
+
+# Kalman Prediction: Vorausberechnung fuer bewegende Gegner
+PREDICTION_FRAMES = 2       # Wie viele Frames vorausschauen (0 = aus, 1-3 = empfohlen)
+
 # ============================================================
 # PROFILE
 # ============================================================
@@ -215,6 +222,16 @@ class KalmanTracker:
     def get_velocity(self):
         return (float(self.x[2]), float(self.x[3]))
 
+    def get_predicted_position(self, lookahead_frames=2):
+        """VORHERGESAGTE Position — wo das Ziel in N Frames SEIN WIRD.
+        Perfekt fuer bewegende Gegner!"""
+        if self.frames_seen < 3:
+            return self.get_position()
+        dt = self.last_dt * lookahead_frames
+        px = self.x[0] + self.x[2] * dt
+        py = self.x[1] + self.x[3] * dt
+        return (float(px), float(py))
+
 
 # ============================================================
 # ZIELAUSWAHL
@@ -306,7 +323,9 @@ def draw_overlay(frame, all_dets, target_pos, tracker, fps, ads_active, profile,
     cv2.putText(frame, status, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
     info = f"Smooth: {smooth:.1f} | FOV: {fov_radius} | Conf: {CONFIDENCE:.2f} | SpeedXY: {SPEED_X:.2f}/{SPEED_Y:.2f}"
+    info2 = f"Anti-Recoil: {ANTI_RECOIL:.1f}px ({'ON' if ANTI_RECOIL_ENABLED else 'OFF'}) | Prediction: {PREDICTION_FRAMES}F"
     cv2.putText(frame, info, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+    cv2.putText(frame, info2, (10, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
 
     return frame
 
@@ -318,6 +337,7 @@ def draw_overlay(frame, all_dets, target_pos, tracker, fps, ads_active, profile,
 def main():
     global CONFIDENCE, FOV_RADIUS, SMOOTH_FACTOR
     global SPEED_X, SPEED_Y, MODEL_MODE
+    global ANTI_RECOIL, ANTI_RECOIL_ENABLED, PREDICTION_FRAMES
 
     print("=" * 60)
     print("  AIMBOT VISION v7 — Profi-Methode")
@@ -366,14 +386,17 @@ def main():
     print(f"  Methode: delta / smooth → move() (wie Profi-Aimbots)")
     print(f"  Smooth: {SMOOTH_FACTOR} | Deadzone: {DEADZONE}px | Max: {MAX_MOVE_PER_FRAME}px")
     print(f"  Speed: X={SPEED_X} Y={SPEED_Y}")
+    print(f"  Anti-Recoil: {ANTI_RECOIL}px/Frame ({'EIN' if ANTI_RECOIL_ENABLED else 'AUS'})")
+    print(f"  Prediction: {PREDICTION_FRAMES} Frames voraus")
     print(f"  FOV: {FOV_RADIUS}px | Confidence: {CONFIDENCE}")
     print()
     print("  WICHTIG — XIM Matrix Settings:")
     print("    Synch: 0 (Off) | Smoothing: 0 | Deadzone: 0 | Curve: Linear")
     print()
     print("  Tasten:")
-    print("    A=ADS  P=Profil  M=Modell  ESC=Beenden")
+    print("    A=ADS  P=Profil  M=Modell  R=Anti-Recoil  ESC=Beenden")
     print("    1/2=FOV  3/4=Conf  5/6=Smooth  7/8=SpeedX  9/0=SpeedY")
+    print("    +/-=Anti-Recoil Staerke  [/]=Prediction Frames")
     print("=" * 60)
 
     # --- Variablen ---
@@ -419,17 +442,28 @@ def main():
                     target_pos = pos
 
                     # ========================================
-                    # PROFI AIM-MATHEMATIK (simpel!)
+                    # PROFI AIM-MATHEMATIK mit PREDICTION
                     # ========================================
                     if ads_active and tracker.locked:
-                        dx = pos[0] - cx
-                        dy = pos[1] - cy
+                        # Prediction: Wo wird das Ziel in N Frames sein?
+                        if PREDICTION_FRAMES > 0 and tracker.frames_seen >= 3:
+                            pred = tracker.get_predicted_position(PREDICTION_FRAMES)
+                            aim_x, aim_y = pred[0], pred[1]
+                        else:
+                            aim_x, aim_y = pos[0], pos[1]
+
+                        dx = aim_x - cx
+                        dy = aim_y - cy
                         dist = math.sqrt(dx * dx + dy * dy)
 
                         if dist > deadzone:
                             # Einfache Division — genau wie DMA-Aimbots
                             move_x = (dx / smooth) * SPEED_X
                             move_y = (dy / smooth) * SPEED_Y
+
+                            # Anti-Recoil: Konstant nach unten ziehen
+                            if ANTI_RECOIL_ENABLED and ANTI_RECOIL > 0:
+                                move_y += ANTI_RECOIL
 
                             # Sicherheits-Limit
                             move_x = max(-MAX_MOVE_PER_FRAME, min(MAX_MOVE_PER_FRAME, move_x))
@@ -441,6 +475,14 @@ def main():
                             if (abs(ix) > 0 or abs(iy) > 0) and KMBOX_AVAILABLE:
                                 try:
                                     kmbox_net.move(ix, iy)
+                                except Exception:
+                                    pass
+                        elif ANTI_RECOIL_ENABLED and ANTI_RECOIL > 0:
+                            # Auch in Deadzone: Anti-Recoil senden
+                            iy = int(round(ANTI_RECOIL))
+                            if iy > 0 and KMBOX_AVAILABLE:
+                                try:
+                                    kmbox_net.move(0, iy)
                                 except Exception:
                                     pass
             else:
@@ -518,6 +560,26 @@ def main():
             elif key == ord('0'):
                 SPEED_Y = min(3.00, round(SPEED_Y + 0.10, 2))
                 print(f"Speed Y: {SPEED_Y:.2f}")
+
+            elif key == ord('r'):
+                ANTI_RECOIL_ENABLED = not ANTI_RECOIL_ENABLED
+                print(f"Anti-Recoil: {'EIN' if ANTI_RECOIL_ENABLED else 'AUS'} ({ANTI_RECOIL}px)")
+
+            elif key == ord('+') or key == ord('='):
+                ANTI_RECOIL = min(15.0, round(ANTI_RECOIL + 0.5, 1))
+                print(f"Anti-Recoil Staerke: {ANTI_RECOIL}px")
+
+            elif key == ord('-'):
+                ANTI_RECOIL = max(0.0, round(ANTI_RECOIL - 0.5, 1))
+                print(f"Anti-Recoil Staerke: {ANTI_RECOIL}px")
+
+            elif key == ord(']'):
+                PREDICTION_FRAMES = min(5, PREDICTION_FRAMES + 1)
+                print(f"Prediction: {PREDICTION_FRAMES} Frames")
+
+            elif key == ord('['):
+                PREDICTION_FRAMES = max(0, PREDICTION_FRAMES - 1)
+                print(f"Prediction: {PREDICTION_FRAMES} Frames")
 
     except KeyboardInterrupt:
         print("\nUnterbrochen.")
