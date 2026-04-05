@@ -1,33 +1,20 @@
 """
-AIMBOT VISION v7 — Profi-Methode
-=================================
+AIMBOT VISION v8 — Aggressives Lock-On
+========================================
 Computer Vision Aimbot fuer Xbox RemotePlay via XIM Matrix.
 
-NEUER ANSATZ (wie DMA/Profi-Aimbots):
-  Jeden Frame: delta = (ziel - mitte) / SMOOTH
-  → kmbox_net.move(dx, dy) — einfacher relativer Move
-  → KEIN move_auto, KEIN Cooldown, KEIN Speed Curve
-
-Hardware-Kette:
-  Capture Card → OpenCV → YOLO (ONNX/DirectML) → KMBox Net → XIM Matrix → Xbox
-
-XIM Matrix Einstellungen (WICHTIG!):
-  - Synch: 0 (Off)
-  - Smoothing: 0
-  - Inner Deadzone: 0
-  - Aiming Curve: Linear
-  - Velocity Calibration durchfuehren!
+AENDERUNGEN v8:
+  - Aimbot-Profil als Standard (nicht mehr Assist!)
+  - Smooth 2.0 default (war 7.0 — DESWEGEN war es so schwach!)
+  - Minimum-Move Clamp (kleine Korrekturen werden hochgeboostet)
+  - Snap-Zone: Nah am Ziel = sofort drauf (smooth=1)
+  - Sofortiger Lock ab Frame 1 (nicht mehr 2 Frames warten)
+  - Kalman Prediction fuer bewegende Gegner
 
 Steuerung:
-  A = ADS Toggle (Aimbot aktiv/inaktiv)
-  P = Profil wechseln (Assist / Aimbot)
-  M = Modell wechseln (COCO / FPS / Nano)
-  1/2 = FOV +/-
-  3/4 = Confidence +/-
-  5/6 = Smooth-Faktor +/-
-  7/8 = Speed X +/-
-  9/0 = Speed Y +/-
-  ESC = Beenden
+  A = ADS Toggle | P = Profil | M = Modell | R = Anti-Recoil
+  1/2 = FOV | 3/4 = Conf | 5/6 = Smooth | 7/8 = SpeedX | 9/0 = SpeedY
+  +/- = Anti-Recoil Staerke | [/] = Prediction Frames | ESC = Beenden
 """
 
 import os
@@ -35,14 +22,12 @@ import sys
 import time
 import math
 
-# Backend-Pfad hinzufuegen
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'backend'))
 
 import cv2
 import numpy as np
 from yolo_onnx import YOLODetector, TARGET_CLASSES, IGNORE_CLASSES
 
-# KMBox importieren (funktioniert nur auf Windows mit Netzwerk-Zugang)
 try:
     import kmbox_net
     KMBOX_AVAILABLE = True
@@ -51,7 +36,7 @@ except Exception:
 
 
 # ============================================================
-# HARDWARE-KONFIGURATION
+# HARDWARE
 # ============================================================
 KMBOX_IP = "192.168.2.188"
 KMBOX_PORT = 32778
@@ -59,77 +44,64 @@ KMBOX_UUID = "C14AE466"
 CAPTURE_DEVICE = 0
 
 # ============================================================
-# MODELL-KONFIGURATION
+# MODELL
 # ============================================================
 MODEL_MODE = "fps"
 CONFIDENCE = 0.25
 FOV_RADIUS = 250
 
 # ============================================================
-# AIM-KONFIGURATION — PROFI-METHODE
+# AIM-KONFIGURATION v8
 # ============================================================
-# So machen es DMA-Aimbots und SunOner:
-#   move_x = (ziel_x - mitte_x) / SMOOTH_FACTOR
-#   move_y = (ziel_y - mitte_y) / SMOOTH_FACTOR
-# Fertig. Kein Speed Curve, kein move_auto, kein Cooldown.
+SMOOTH_FACTOR = 2.0         # Default jetzt 2.0 (war 7.0 — das war das Problem!)
+SPEED_X = 1.0
+SPEED_Y = 0.80
+DEADZONE = 3                # Kleiner = reagiert frueher
+MAX_MOVE_PER_FRAME = 120    # Erhoet fuer aggressiveres Tracking
 
-SMOOTH_FACTOR = 5.0         # Teilungsfaktor (hoeher = sanfter, niedriger = aggressiver)
-                             # Profi-Bereich: 3-8
+# Minimum-Move: XIM ignoriert winzige Bewegungen (1-2px)
+# Wenn berechnete Bewegung > 0 aber < MIN_MOVE → auf MIN_MOVE hochsetzen
+MIN_MOVE = 4                # Mindestens 4px senden damit XIM es registriert
 
-SPEED_X = 1.0               # X-Achsen Multiplikator
-SPEED_Y = 0.80              # Y-Achse etwas reduziert (CoD: vertikale Sens hoeher)
+# Snap-Zone: Wenn Ziel naeher als SNAP_RADIUS Pixel → Smooth wird 1.0 (sofort drauf!)
+SNAP_RADIUS = 40            # Innerhalb 40px = Instant-Lock
 
-# Deadzone: Wenn Ziel naeher als X Pixel an Mitte → nicht bewegen
-DEADZONE = 5                # In Pixeln (klein! XIM soll feinjustieren)
+# Anti-Recoil (nur wenn auf Gegner gelockt)
+ANTI_RECOIL = 6.0
+ANTI_RECOIL_ENABLED = True
 
-# Max Pixel pro Frame (Sicherheit gegen Spinning)
-MAX_MOVE_PER_FRAME = 80     # Mehr als 80px/Frame = verdaechtig, begrenzen
-
-# Anti-Recoil: Konstanter Downward-Pull waehrend ADS (gleicht Rueckstoss aus)
-ANTI_RECOIL = 6.0           # Pixel nach unten pro Frame (0 = aus, 5-10 = typisch fuer CoD)
-ANTI_RECOIL_ENABLED = True  # R-Taste zum Togglen
-
-# Kalman Prediction: Vorausberechnung fuer bewegende Gegner
-PREDICTION_FRAMES = 4       # Wie viele Frames vorausschauen (0 = aus, 3-5 = aggressives Mitziehen)
+# Kalman Prediction
+PREDICTION_FRAMES = 4
 
 # ============================================================
-# PROFILE
+# PROFILE — Aimbot ist jetzt DEFAULT!
 # ============================================================
 PROFILES = {
-    "assist": {
-        "name": "AIM-ASSIST",
-        "smooth": 7.0,      # Sanfter
-        "deadzone": 8,
-    },
     "aimbot": {
         "name": "AIMBOT",
-        "smooth": 4.0,      # Aggressiver
-        "deadzone": 4,
+        "smooth": 2.0,      # Aggressiv!
+        "deadzone": 3,
+    },
+    "assist": {
+        "name": "AIM-ASSIST",
+        "smooth": 5.0,      # Sanfter
+        "deadzone": 8,
     },
 }
-PROFILE_ORDER = ["assist", "aimbot"]
+PROFILE_ORDER = ["aimbot", "assist"]
 
 # ============================================================
-# ANZEIGE
+# ANZEIGE / FILTER
 # ============================================================
 SHOW_WINDOW = True
 WINDOW_SCALE = 0.5
-
-# ============================================================
-# FILTER
-# ============================================================
-DEAD_BODY_RATIO = 1.2       # Breite > 1.2 * Hoehe → Leiche
-SKY_FILTER_RATIO = 0.10     # Obere 10% = Himmel
-GROUND_FILTER_RATIO = 0.88  # Untere 12% = Boden/HUD
+DEAD_BODY_RATIO = 1.2
+SKY_FILTER_RATIO = 0.10
+GROUND_FILTER_RATIO = 0.88
 MIN_BOX_HEIGHT = 25
 
 
-# ============================================================
-# HILFSFUNKTIONEN
-# ============================================================
-
 def get_model_path(mode):
-    """Gibt den besten verfuegbaren Modell-Pfad zurueck."""
     base = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'backend')
     priority = {
         "fps":  ['sunxds_0.5.6.onnx', 'sunxds_640.onnx', 'bo7_v5_640.onnx', 'yolo11s.onnx'],
@@ -149,38 +121,28 @@ def get_model_path(mode):
 
 
 # ============================================================
-# KALMAN-FILTER TRACKER (glaettet YOLO-Jitter)
+# KALMAN-FILTER TRACKER
 # ============================================================
-# Der Kalman-Filter ist NICHT fuer die Aim-Mathematik!
-# Er glaettet nur die YOLO-Erkennungen (die von Frame zu Frame wackeln).
-# Die eigentliche Aim-Berechnung ist simpel: delta / smooth.
-
 class KalmanTracker:
     def __init__(self):
         self.reset()
 
     def reset(self):
-        self.x = np.zeros(4, dtype=np.float64)         # [x, y, vx, vy]
+        self.x = np.zeros(4, dtype=np.float64)
         self.P = np.eye(4, dtype=np.float64) * 500.0
         self.frames_seen = 0
         self.frames_lost = 0
         self.locked = False
         self.last_update = 0.0
         self.last_dt = 0.033
-
         self.H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], dtype=np.float64)
-        self.R = np.eye(2, dtype=np.float64) * 12.0
-        self.Q_base = np.diag([1.0, 1.0, 8.0, 8.0])
+        self.R = np.eye(2, dtype=np.float64) * 8.0   # Weniger Rauschen = schnellere Reaktion
+        self.Q_base = np.diag([2.0, 2.0, 12.0, 12.0])  # Mehr Prozess-Rauschen = folgt schneller
 
     def predict(self, dt=None):
         if dt is None:
             dt = self.last_dt
-        F = np.array([
-            [1, 0, dt, 0],
-            [0, 1, 0, dt],
-            [0, 0, 1,  0],
-            [0, 0, 0,  1]
-        ], dtype=np.float64)
+        F = np.array([[1,0,dt,0],[0,1,0,dt],[0,0,1,0],[0,0,0,1]], dtype=np.float64)
         self.x = F @ self.x
         self.P = F @ self.P @ F.T + self.Q_base * dt
         return self.x[:2].copy()
@@ -189,13 +151,12 @@ class KalmanTracker:
         now = time.monotonic()
         if self.last_update > 0:
             self.last_dt = max(0.005, min(0.200, now - self.last_update))
-
         z = np.array([mx, my], dtype=np.float64)
 
         if self.frames_seen == 0:
             self.x[:2] = [mx, my]
             self.x[2:] = [0.0, 0.0]
-            self.P = np.eye(4, dtype=np.float64) * 100.0
+            self.P = np.eye(4, dtype=np.float64) * 50.0
         else:
             self.predict(self.last_dt)
             S = self.H @ self.P @ self.H.T + self.R
@@ -205,7 +166,8 @@ class KalmanTracker:
 
         self.frames_seen += 1
         self.frames_lost = 0
-        self.locked = self.frames_seen >= 2
+        # SOFORT locken ab Frame 1! (war vorher Frame 2)
+        self.locked = self.frames_seen >= 1
         self.last_update = now
 
     def mark_lost(self):
@@ -223,8 +185,6 @@ class KalmanTracker:
         return (float(self.x[2]), float(self.x[3]))
 
     def get_predicted_position(self, lookahead_frames=2):
-        """VORHERGESAGTE Position — wo das Ziel in N Frames SEIN WIRD.
-        Perfekt fuer bewegende Gegner!"""
         if self.frames_seen < 3:
             return self.get_position()
         dt = self.last_dt * lookahead_frames
@@ -236,7 +196,6 @@ class KalmanTracker:
 # ============================================================
 # ZIELAUSWAHL
 # ============================================================
-
 def pick_best_target(detections, frame_w, frame_h):
     cx, cy = frame_w / 2.0, frame_h / 2.0
     best = None
@@ -247,7 +206,6 @@ def pick_best_target(detections, frame_w, frame_h):
         bw, bh = x2 - x1, y2 - y1
         class_name = det["class_name"]
 
-        # Filter
         if bw > bh * DEAD_BODY_RATIO:
             continue
         if bh < MIN_BOX_HEIGHT:
@@ -260,13 +218,12 @@ def pick_best_target(detections, frame_w, frame_h):
         if class_name in IGNORE_CLASSES:
             continue
 
-        # Zielpunkt — BRUST-Mitte (0.40 = obere 40% der Box)
+        # Zielpunkt: Brust-Mitte
         if class_name == "head":
             tx, ty = (x1 + x2) / 2.0, (y1 + y2) / 2.0
         else:
             tx, ty = (x1 + x2) / 2.0, y1 + bh * 0.40
 
-        # FOV-Check
         dist = math.sqrt((tx - cx) ** 2 + (ty - cy) ** 2)
         if dist > FOV_RADIUS:
             continue
@@ -282,20 +239,15 @@ def pick_best_target(detections, frame_w, frame_h):
 # ============================================================
 # OVERLAY
 # ============================================================
-
 def draw_overlay(frame, all_dets, target_pos, tracker, fps, ads_active, profile, fov_radius, smooth):
     h, w = frame.shape[:2]
     cx, cy = w // 2, h // 2
 
-    # FOV Kreis
     color = (0, 255, 0) if ads_active else (100, 100, 100)
     cv2.circle(frame, (cx, cy), fov_radius, color, 1)
-
-    # Fadenkreuz
     cv2.line(frame, (cx - 15, cy), (cx + 15, cy), (255, 255, 255), 1)
     cv2.line(frame, (cx, cy - 15), (cx, cy + 15), (255, 255, 255), 1)
 
-    # Erkennungen
     for det in all_dets:
         x1, y1, x2, y2 = det["bbox"]
         cls = det["class_name"]
@@ -309,21 +261,19 @@ def draw_overlay(frame, all_dets, target_pos, tracker, fps, ads_active, profile,
         cv2.rectangle(frame, (x1, y1), (x2, y2), c, 2)
         cv2.putText(frame, f"{cls} {conf:.0%}", (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, c, 1)
 
-    # Tracker-Linie
     if target_pos and ads_active:
         tx, ty = int(target_pos[0]), int(target_pos[1])
         cv2.line(frame, (cx, cy), (tx, ty), (0, 255, 255), 2)
         cv2.circle(frame, (tx, ty), 8, (0, 255, 255), 2)
 
-    # Status
     status = f"FPS: {fps:.0f} | {profile['name']} | ADS: {'ON' if ads_active else 'OFF'}"
     if tracker.locked:
         vx, vy = tracker.get_velocity()
         status += f" | LOCKED v=({vx:.0f},{vy:.0f})"
     cv2.putText(frame, status, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
-    info = f"Smooth: {smooth:.1f} | FOV: {fov_radius} | Conf: {CONFIDENCE:.2f} | SpeedXY: {SPEED_X:.2f}/{SPEED_Y:.2f}"
-    info2 = f"Anti-Recoil: {ANTI_RECOIL:.1f}px ({'ON' if ANTI_RECOIL_ENABLED else 'OFF'}) | Prediction: {PREDICTION_FRAMES}F"
+    info = f"Smooth: {smooth:.1f} | FOV: {fov_radius} | Conf: {CONFIDENCE:.2f} | Speed: {SPEED_X:.1f}/{SPEED_Y:.1f}"
+    info2 = f"Recoil: {ANTI_RECOIL:.0f}px({'ON' if ANTI_RECOIL_ENABLED else 'OFF'}) | Pred: {PREDICTION_FRAMES}F | Snap: <{SNAP_RADIUS}px"
     cv2.putText(frame, info, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
     cv2.putText(frame, info2, (10, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
 
@@ -333,18 +283,16 @@ def draw_overlay(frame, all_dets, target_pos, tracker, fps, ads_active, profile,
 # ============================================================
 # HAUPTPROGRAMM
 # ============================================================
-
 def main():
     global CONFIDENCE, FOV_RADIUS, SMOOTH_FACTOR
     global SPEED_X, SPEED_Y, MODEL_MODE
     global ANTI_RECOIL, ANTI_RECOIL_ENABLED, PREDICTION_FRAMES
 
     print("=" * 60)
-    print("  AIMBOT VISION v7 — Profi-Methode")
-    print("  delta / smooth → move() → jeden Frame")
+    print("  AIMBOT VISION v8 — Aggressives Lock-On")
     print("=" * 60)
 
-    # --- 1. KMBox verbinden ---
+    # --- 1. KMBox ---
     print("\n[1/3] KMBox verbinden...")
     if KMBOX_AVAILABLE:
         try:
@@ -355,7 +303,7 @@ def main():
     else:
         print("  KMBox nicht verfuegbar — Anzeige-Modus")
 
-    # --- 2. YOLO Modell laden ---
+    # --- 2. YOLO ---
     print(f"\n[2/3] Modell laden ({MODEL_MODE})...")
     model_path = get_model_path(MODEL_MODE)
     if not model_path:
@@ -364,7 +312,7 @@ def main():
     print(f"  Datei: {os.path.basename(model_path)}")
     detector = YOLODetector(model_path)
 
-    # --- 3. Capture Card ---
+    # --- 3. Capture ---
     print(f"\n[3/3] Capture Card (Device {CAPTURE_DEVICE})...")
     cap = cv2.VideoCapture(CAPTURE_DEVICE, cv2.CAP_DSHOW)
     if not cap.isOpened():
@@ -372,36 +320,21 @@ def main():
     if not cap.isOpened():
         print("  FEHLER: Capture Card nicht gefunden!")
         return
-
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
     fw = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     fh = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     print(f"  Capture: {fw}x{fh}")
 
-    # --- Status ---
     print("\n" + "=" * 60)
-    print("  BEREIT!")
+    print("  BEREIT! Profil: AIMBOT (Smooth 2.0)")
     print("=" * 60)
-    print(f"  Methode: delta / smooth → move() (wie Profi-Aimbots)")
-    print(f"  Smooth: {SMOOTH_FACTOR} | Deadzone: {DEADZONE}px | Max: {MAX_MOVE_PER_FRAME}px")
-    print(f"  Speed: X={SPEED_X} Y={SPEED_Y}")
-    print(f"  Anti-Recoil: {ANTI_RECOIL}px/Frame ({'EIN' if ANTI_RECOIL_ENABLED else 'AUS'})")
-    print(f"  Prediction: {PREDICTION_FRAMES} Frames voraus")
-    print(f"  FOV: {FOV_RADIUS}px | Confidence: {CONFIDENCE}")
-    print()
-    print("  WICHTIG — XIM Matrix Settings:")
-    print("    Synch: 0 (Off) | Smoothing: 0 | Deadzone: 0 | Curve: Linear")
-    print()
-    print("  Tasten:")
-    print("    A=ADS  P=Profil  M=Modell  R=Anti-Recoil  ESC=Beenden")
-    print("    1/2=FOV  3/4=Conf  5/6=Smooth  7/8=SpeedX  9/0=SpeedY")
-    print("    +/-=Anti-Recoil Staerke  [/]=Prediction Frames")
+    print("  Tasten: A=ADS P=Profil R=Recoil 5/6=Smooth ESC=Quit")
     print("=" * 60)
 
     # --- Variablen ---
     tracker = KalmanTracker()
-    profile_idx = 0
+    profile_idx = 0  # Startet jetzt mit AIMBOT (nicht Assist!)
     profile = PROFILES[PROFILE_ORDER[profile_idx]]
     ads_active = False
     frame_count = 0
@@ -410,7 +343,6 @@ def main():
     smooth = profile["smooth"]
     deadzone = profile["deadzone"]
 
-    # --- Hauptschleife ---
     try:
         while True:
             ret, frame = cap.read()
@@ -420,18 +352,16 @@ def main():
             frame_count += 1
             now = time.monotonic()
 
-            # FPS (alle 30 Frames)
             if frame_count % 30 == 0:
                 elapsed = now - fps_timer
                 fps = 30.0 / elapsed if elapsed > 0 else 0
                 fps_timer = now
 
-            # --- YOLO Inference ---
+            # --- YOLO ---
             all_dets = detector.detect(frame, conf_threshold=CONFIDENCE)
             target_dets = [d for d in all_dets if d["class_name"] in TARGET_CLASSES]
             tx, ty, target_det = pick_best_target(target_dets, fw, fh)
 
-            # --- Tracking + Aim ---
             target_pos = None
             cx, cy = fw / 2.0, fh / 2.0
 
@@ -442,10 +372,10 @@ def main():
                     target_pos = pos
 
                     # ========================================
-                    # PROFI AIM-MATHEMATIK mit PREDICTION
+                    # v8 AIM-LOGIK: Snap + Prediction + Clamp
                     # ========================================
                     if ads_active and tracker.locked:
-                        # Prediction: Wo wird das Ziel in N Frames sein?
+                        # Prediction
                         if PREDICTION_FRAMES > 0 and tracker.frames_seen >= 3:
                             pred = tracker.get_predicted_position(PREDICTION_FRAMES)
                             aim_x, aim_y = pred[0], pred[1]
@@ -457,19 +387,30 @@ def main():
                         dist = math.sqrt(dx * dx + dy * dy)
 
                         if dist > deadzone:
-                            # Einfache Division — genau wie DMA-Aimbots
-                            move_x = (dx / smooth) * SPEED_X
-                            move_y = (dy / smooth) * SPEED_Y
+                            # SNAP-ZONE: Nah am Ziel = Smooth 1.0 (sofort!)
+                            if dist < SNAP_RADIUS:
+                                effective_smooth = 1.0
+                            else:
+                                effective_smooth = smooth
 
-                            # Anti-Recoil dazu (NUR wenn auf Gegner!)
+                            move_x = (dx / effective_smooth) * SPEED_X
+                            move_y = (dy / effective_smooth) * SPEED_Y
+
+                            # Anti-Recoil
                             if ANTI_RECOIL_ENABLED and ANTI_RECOIL > 0:
                                 move_y += ANTI_RECOIL
+
+                            # MINIMUM-CLAMP: Kleine Moves hochsetzen!
+                            # XIM ignoriert 1-2px — mindestens MIN_MOVE senden
+                            if abs(move_x) > 0.5 and abs(move_x) < MIN_MOVE:
+                                move_x = MIN_MOVE if move_x > 0 else -MIN_MOVE
+                            if abs(move_y) > 0.5 and abs(move_y) < MIN_MOVE:
+                                move_y = MIN_MOVE if move_y > 0 else -MIN_MOVE
 
                             # Sicherheits-Limit
                             move_x = max(-MAX_MOVE_PER_FRAME, min(MAX_MOVE_PER_FRAME, move_x))
                             move_y = max(-MAX_MOVE_PER_FRAME, min(MAX_MOVE_PER_FRAME, move_y))
 
-                            # Senden — jeden Frame, kein Cooldown!
                             ix = int(round(move_x))
                             iy = int(round(move_y))
                             if (abs(ix) > 0 or abs(iy) > 0) and KMBOX_AVAILABLE:
@@ -477,8 +418,8 @@ def main():
                                     kmbox_net.move(ix, iy)
                                 except Exception:
                                     pass
+
                         elif ANTI_RECOIL_ENABLED and ANTI_RECOIL > 0:
-                            # In Deadzone aber auf Gegner: Anti-Recoil trotzdem
                             iy = int(round(ANTI_RECOIL))
                             if iy > 0 and KMBOX_AVAILABLE:
                                 try:
@@ -496,27 +437,24 @@ def main():
                 )
                 if WINDOW_SCALE != 1.0:
                     display = cv2.resize(display, (int(fw * WINDOW_SCALE), int(fh * WINDOW_SCALE)))
-                cv2.imshow("AIMBOT v7", display)
+                cv2.imshow("AIMBOT v8", display)
 
             # --- Tastatur ---
             key = cv2.waitKey(1) & 0xFF
 
-            if key == 27:  # ESC
+            if key == 27:
                 break
-
             elif key == ord('a'):
                 ads_active = not ads_active
                 print(f"ADS: {'EIN' if ads_active else 'AUS'}")
                 if not ads_active:
                     tracker.reset()
-
             elif key == ord('p'):
                 profile_idx = (profile_idx + 1) % len(PROFILE_ORDER)
                 profile = PROFILES[PROFILE_ORDER[profile_idx]]
                 smooth = profile["smooth"]
                 deadzone = profile["deadzone"]
                 print(f"Profil: {profile['name']} (Smooth: {smooth}, DZ: {deadzone})")
-
             elif key == ord('m'):
                 modes = ["coco", "fps", "nano"]
                 idx = modes.index(MODEL_MODE) if MODEL_MODE in modes else 0
@@ -529,7 +467,6 @@ def main():
                 else:
                     print(f"Modell '{MODEL_MODE}' nicht gefunden!")
                     MODEL_MODE = modes[idx]
-
             elif key == ord('1'):
                 FOV_RADIUS = max(50, FOV_RADIUS - 25)
                 print(f"FOV: {FOV_RADIUS}px")
@@ -560,23 +497,18 @@ def main():
             elif key == ord('0'):
                 SPEED_Y = min(3.00, round(SPEED_Y + 0.10, 2))
                 print(f"Speed Y: {SPEED_Y:.2f}")
-
             elif key == ord('r'):
                 ANTI_RECOIL_ENABLED = not ANTI_RECOIL_ENABLED
                 print(f"Anti-Recoil: {'EIN' if ANTI_RECOIL_ENABLED else 'AUS'} ({ANTI_RECOIL}px)")
-
             elif key == ord('+') or key == ord('='):
                 ANTI_RECOIL = min(15.0, round(ANTI_RECOIL + 0.5, 1))
-                print(f"Anti-Recoil Staerke: {ANTI_RECOIL}px")
-
+                print(f"Anti-Recoil: {ANTI_RECOIL}px")
             elif key == ord('-'):
                 ANTI_RECOIL = max(0.0, round(ANTI_RECOIL - 0.5, 1))
-                print(f"Anti-Recoil Staerke: {ANTI_RECOIL}px")
-
+                print(f"Anti-Recoil: {ANTI_RECOIL}px")
             elif key == ord(']'):
                 PREDICTION_FRAMES = min(5, PREDICTION_FRAMES + 1)
                 print(f"Prediction: {PREDICTION_FRAMES} Frames")
-
             elif key == ord('['):
                 PREDICTION_FRAMES = max(0, PREDICTION_FRAMES - 1)
                 print(f"Prediction: {PREDICTION_FRAMES} Frames")
