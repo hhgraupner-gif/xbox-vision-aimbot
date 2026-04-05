@@ -90,7 +90,7 @@ ANTI_RECOIL = 6.0           # Pixel nach unten pro Frame (0 = aus, 5-10 = typisc
 ANTI_RECOIL_ENABLED = True  # R-Taste zum Togglen
 
 # Kalman Prediction: Vorausberechnung fuer bewegende Gegner
-PREDICTION_FRAMES = 2       # Wie viele Frames vorausschauen (0 = aus, 1-3 = empfohlen)
+PREDICTION_FRAMES = 4       # Wie viele Frames vorausschauen (0 = aus, 3-5 = aggressives Mitziehen)
 
 # ============================================================
 # PROFILE
@@ -461,7 +461,7 @@ def main():
                             move_x = (dx / smooth) * SPEED_X
                             move_y = (dy / smooth) * SPEED_Y
 
-                            # Anti-Recoil dazu
+                            # Anti-Recoil dazu (NUR wenn auf Gegner!)
                             if ANTI_RECOIL_ENABLED and ANTI_RECOIL > 0:
                                 move_y += ANTI_RECOIL
 
@@ -477,22 +477,16 @@ def main():
                                     kmbox_net.move(ix, iy)
                                 except Exception:
                                     pass
+                        elif ANTI_RECOIL_ENABLED and ANTI_RECOIL > 0:
+                            # In Deadzone aber auf Gegner: Anti-Recoil trotzdem
+                            iy = int(round(ANTI_RECOIL))
+                            if iy > 0 and KMBOX_AVAILABLE:
+                                try:
+                                    kmbox_net.move(0, iy)
+                                except Exception:
+                                    pass
             else:
                 tracker.mark_lost()
-
-            # ========================================
-            # ANTI-RECOIL — IMMER bei ADS (auch ohne Gegner!)
-            # ========================================
-            if ads_active and ANTI_RECOIL_ENABLED and ANTI_RECOIL > 0:
-                # Nur senden wenn KEIN Aim-Korrektur stattfand (sonst doppelt)
-                no_aim_correction = (tx is None) or (not tracker.locked)
-                if no_aim_correction and KMBOX_AVAILABLE:
-                    iy = int(round(ANTI_RECOIL))
-                    if iy > 0:
-                        try:
-                            kmbox_net.move(0, iy)
-                        except Exception:
-                            pass
 
             # --- Anzeige ---
             if SHOW_WINDOW:
