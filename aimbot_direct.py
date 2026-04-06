@@ -56,8 +56,13 @@ FOV_RADIUS = 180
 # Der XIM mit Weichheit 50 + Sync 32 glaettet unsere Korrekturen.
 
 STRENGTH = 0.7              # Etwas staerker (0.3 = kaum, 1.0 = deutlich)
-DEADZONE = 12               # Kleiner = greift frueher ein
-MAX_MOVE = 40               # Kleine Moves — XIM macht den Rest
+DEADZONE = 15               # Erst korrigieren wenn deutlich daneben
+MAX_MOVE = 30               # Kleinere Moves — XIM verstaerkt sie sowieso
+
+# COOLDOWN: Nach einer Korrektur X Frames warten
+# Gibt dem XIM Zeit die Bewegung fertig zu verarbeiten
+# Verhindert das Hin-und-Her-Pendeln!
+COOLDOWN_FRAMES = 4         # 4 Frames warten nach jeder Korrektur (einstellbar)               # Kleine Moves — XIM macht den Rest
 
 # ============================================================
 # FILTER
@@ -199,7 +204,7 @@ def draw_overlay(frame, dets, aim_pos, tracker, fps, active, strength):
     lock = " | LOCKED" if tracker.locked and active else ""
     cv2.putText(frame, f"FPS:{fps:.0f} | SOFT ASSIST | {mode}{lock}",
                 (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 200, 100) if active else (150, 150, 150), 2)
-    cv2.putText(frame, f"Strength: {strength:.1f} | DZ: {DEADZONE} | FOV: {FOV_RADIUS}",
+    cv2.putText(frame, f"Strength: {strength:.1f} | DZ: {DEADZONE} | CD: {COOLDOWN_FRAMES}F | FOV: {FOV_RADIUS}",
                 (10, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
 
     return frame
@@ -209,7 +214,7 @@ def draw_overlay(frame, dets, aim_pos, tracker, fps, active, strength):
 # HAUPTPROGRAMM
 # ============================================================
 def main():
-    global CONFIDENCE, FOV_RADIUS, STRENGTH, DEADZONE, MODEL_MODE
+    global CONFIDENCE, FOV_RADIUS, STRENGTH, DEADZONE, MODEL_MODE, COOLDOWN_FRAMES
 
     print("=" * 55)
     print("  SOFT ASSIST v10 — XIM Unterstuetzung")
@@ -252,6 +257,7 @@ def main():
     fps = 0.0
     fps_t = time.monotonic()
     strength = STRENGTH
+    cooldown = 0  # Frames bis zur naechsten Korrektur
 
     try:
         while True:
@@ -283,8 +289,8 @@ def main():
                         dy = pos[1] - cy
                         dist = math.sqrt(dx * dx + dy * dy)
 
-                        # Nur korrigieren wenn deutlich daneben
-                        if dist > DEADZONE:
+                        # Nur korrigieren wenn deutlich daneben UND Cooldown abgelaufen
+                        if dist > DEADZONE and cooldown <= 0:
                             mx = dx * strength
                             my = dy * strength
 
@@ -297,10 +303,15 @@ def main():
                             if (abs(ix) > 0 or abs(iy) > 0) and KMBOX_AVAILABLE:
                                 try:
                                     kmbox_net.move(ix, iy)
+                                    cooldown = COOLDOWN_FRAMES  # Warten!
                                 except Exception:
                                     pass
             else:
                 tracker.mark_lost()
+
+            # Cooldown runterzaehlen
+            if cooldown > 0:
+                cooldown -= 1
 
             if SHOW_WINDOW:
                 disp = draw_overlay(frame.copy(), all_dets, aim_pos, tracker, fps, active, strength)
@@ -340,6 +351,12 @@ def main():
             elif key == ord('8'):
                 CONFIDENCE = min(0.80, round(CONFIDENCE + 0.05, 2))
                 print(f"Confidence: {CONFIDENCE}")
+            elif key == ord('9'):
+                COOLDOWN_FRAMES = max(0, COOLDOWN_FRAMES - 1)
+                print(f"Cooldown: {COOLDOWN_FRAMES} Frames")
+            elif key == ord('0'):
+                COOLDOWN_FRAMES = min(10, COOLDOWN_FRAMES + 1)
+                print(f"Cooldown: {COOLDOWN_FRAMES} Frames")
             elif key == ord('m'):
                 modes = ["fps", "coco", "nano"]
                 idx = modes.index(MODEL_MODE) if MODEL_MODE in modes else 0
