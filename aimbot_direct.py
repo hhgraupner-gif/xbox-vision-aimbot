@@ -1,17 +1,19 @@
 """
-AIMBOT VISION v10 — SOFT ASSIST
-=================================
-Leichter AI-Assist der MIT dem XIM Matrix zusammenarbeitet.
-Gibt nur sanfte Schubser Richtung Gegner — der XIM glaettet den Rest.
-
-NICHT als voller Aimbot gedacht! Nur als Unterstuetzung zum XIM Aim Assist.
-Funktioniert perfekt mit: Weichheit 50, Sync 32, 10000 DPI, 15cm/360
+AIMBOT VISION v11 — PERFORMANCE OPTIMIERT
+==========================================
+Soft Assist mit 3 Performance-Boostern:
+  1. ROI-Cropping: Nur Bildmitte analysieren (640x640 statt 1920x1080)
+  2. Threading: Capture + AI laufen parallel
+  3. 60 FPS Capture
 
 Steuerung:
-  A     = Assist an/aus (Toggle)
-  1/2   = STRENGTH runter/hoch (0.1-Schritte, fein!)
+  A     = Assist an/aus
+  1/2   = STRENGTH runter/hoch
   3/4   = FOV kleiner/groesser
+  5/6   = Deadzone kleiner/groesser
   7/8   = Confidence runter/hoch
+  9/0   = Cooldown -/+
+  C     = ROI Cropping an/aus
   M     = Modell wechseln
   ESC   = Beenden
 """
@@ -20,6 +22,7 @@ import os
 import sys
 import time
 import math
+import threading
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'backend'))
 
@@ -50,19 +53,19 @@ CONFIDENCE = 0.40
 FOV_RADIUS = 180
 
 # ============================================================
-# SOFT ASSIST — Sanfte Schubser, XIM glaettet
+# SOFT ASSIST
 # ============================================================
-# STRENGTH niedrig! Wir UNTERSTUETZEN den XIM Aim Assist nur.
-# Der XIM mit Weichheit 50 + Sync 32 glaettet unsere Korrekturen.
+STRENGTH = 0.7
+DEADZONE = 15
+MAX_MOVE = 30
+COOLDOWN_FRAMES = 4
 
-STRENGTH = 0.7              # Etwas staerker (0.3 = kaum, 1.0 = deutlich)
-DEADZONE = 15               # Erst korrigieren wenn deutlich daneben
-MAX_MOVE = 30               # Kleinere Moves — XIM verstaerkt sie sowieso
-
-# COOLDOWN: Nach einer Korrektur X Frames warten
-# Gibt dem XIM Zeit die Bewegung fertig zu verarbeiten
-# Verhindert das Hin-und-Her-Pendeln!
-COOLDOWN_FRAMES = 4         # 4 Frames warten nach jeder Korrektur (einstellbar)               # Kleine Moves — XIM macht den Rest
+# ============================================================
+# PERFORMANCE
+# ============================================================
+USE_ROI_CROP = True         # Nur Bildmitte analysieren
+ROI_SIZE = 640              # 640x640 Pixel aus der Mitte (= Modell-Groesse!)
+TARGET_FPS = 60             # Capture Card FPS
 
 # ============================================================
 # FILTER
@@ -95,7 +98,52 @@ def get_model_path(mode):
 
 
 # ============================================================
-# EINFACHER TRACKER (Kalman fuer Glaettung)
+# THREADED CAPTURE — Laeuft im Hintergrund, immer neuestes Frame
+# ============================================================
+class FastCapture:
+    def __init__(self, device, width=1920, height=1080, fps=60):
+        self.cap = cv2.VideoCapture(device, cv2.CAP_DSHOW)
+        if not self.cap.isOpened():
+            self.cap = cv2.VideoCapture(device)
+        if not self.cap.isOpened():
+            raise RuntimeError("Capture Card nicht gefunden!")
+
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        self.cap.set(cv2.CAP_PROP_FPS, fps)
+        # Puffer klein halten fuer minimale Latenz
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+        self.frame = None
+        self.running = True
+        self.lock = threading.Lock()
+        self.thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self.thread.start()
+
+        self.width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self.height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        actual_fps = int(self.cap.get(cv2.CAP_PROP_FPS))
+        print(f"  Capture: {self.width}x{self.height} @ {actual_fps} FPS (Buffer: 1)")
+
+    def _capture_loop(self):
+        while self.running:
+            ret, frame = self.cap.read()
+            if ret:
+                with self.lock:
+                    self.frame = frame
+
+    def read(self):
+        with self.lock:
+            return self.frame is not None, self.frame.copy() if self.frame is not None else None
+
+    def release(self):
+        self.running = False
+        self.thread.join(timeout=2)
+        self.cap.release()
+
+
+# ============================================================
+# TRACKER
 # ============================================================
 class SmoothTracker:
     def __init__(self):
@@ -104,7 +152,7 @@ class SmoothTracker:
     def reset(self):
         self.x = None
         self.y = None
-        self.alpha = 0.4  # EMA-Faktor: 0.3=sehr glatt, 0.6=reaktiv
+        self.alpha = 0.4
         self.frames = 0
         self.lost = 0
 
@@ -157,7 +205,6 @@ def pick_best_target(detections, frame_w, frame_h):
         if cls in IGNORE_CLASSES:
             continue
 
-        # Brust-Mitte
         if cls == "head":
             tx, ty = (x1 + x2) / 2.0, (y1 + y2) / 2.0
         else:
@@ -176,11 +223,42 @@ def pick_best_target(detections, frame_w, frame_h):
 
 
 # ============================================================
-# OVERLAY
+# ROI CROPPING — Nur Bildmitte fuer die AI
 # ============================================================
-def draw_overlay(frame, dets, aim_pos, tracker, fps, active, strength):
+def crop_center(frame, crop_size):
+    """Schneidet crop_size x crop_size aus der Mitte.
+    Gibt (crop, offset_x, offset_y) zurueck."""
     h, w = frame.shape[:2]
     cx, cy = w // 2, h // 2
+    half = crop_size // 2
+    x1 = max(0, cx - half)
+    y1 = max(0, cy - half)
+    x2 = min(w, cx + half)
+    y2 = min(h, cy + half)
+    return frame[y1:y2, x1:x2], x1, y1
+
+
+def offset_detections(detections, off_x, off_y):
+    """Verschiebt Bounding Boxes vom Crop-Raum in den Fullframe-Raum."""
+    for d in detections:
+        d["bbox"][0] += off_x
+        d["bbox"][1] += off_y
+        d["bbox"][2] += off_x
+        d["bbox"][3] += off_y
+    return detections
+
+
+# ============================================================
+# OVERLAY
+# ============================================================
+def draw_overlay(frame, dets, aim_pos, tracker, fps, inf_ms, active, strength, use_roi):
+    h, w = frame.shape[:2]
+    cx, cy = w // 2, h // 2
+
+    # ROI-Bereich anzeigen
+    if use_roi:
+        half = ROI_SIZE // 2
+        cv2.rectangle(frame, (cx-half, cy-half), (cx+half, cy+half), (50, 50, 50), 1)
 
     col = (0, 200, 100) if active else (80, 80, 80)
     cv2.circle(frame, (cx, cy), FOV_RADIUS, col, 1)
@@ -201,10 +279,11 @@ def draw_overlay(frame, dets, aim_pos, tracker, fps, active, strength):
         cv2.circle(frame, (ax, ay), 5, (0, 200, 100), -1)
 
     mode = "ASSIST ON" if active else "ASSIST OFF"
+    roi_txt = "ROI" if use_roi else "FULL"
     lock = " | LOCKED" if tracker.locked and active else ""
-    cv2.putText(frame, f"FPS:{fps:.0f} | SOFT ASSIST | {mode}{lock}",
+    cv2.putText(frame, f"FPS:{fps:.0f} | AI:{inf_ms:.0f}ms | {roi_txt} | {mode}{lock}",
                 (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 200, 100) if active else (150, 150, 150), 2)
-    cv2.putText(frame, f"Strength: {strength:.1f} | DZ: {DEADZONE} | CD: {COOLDOWN_FRAMES}F | FOV: {FOV_RADIUS}",
+    cv2.putText(frame, f"STR:{strength:.1f} | DZ:{DEADZONE} | CD:{COOLDOWN_FRAMES} | FOV:{FOV_RADIUS}",
                 (10, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
 
     return frame
@@ -214,13 +293,15 @@ def draw_overlay(frame, dets, aim_pos, tracker, fps, active, strength):
 # HAUPTPROGRAMM
 # ============================================================
 def main():
-    global CONFIDENCE, FOV_RADIUS, STRENGTH, DEADZONE, MODEL_MODE, COOLDOWN_FRAMES
+    global CONFIDENCE, FOV_RADIUS, STRENGTH, DEADZONE, MODEL_MODE
+    global COOLDOWN_FRAMES, USE_ROI_CROP
 
-    print("=" * 55)
-    print("  SOFT ASSIST v10 — XIM Unterstuetzung")
-    print("  Sanfte AI-Schubser + XIM Aim Assist = Klebrig!")
-    print("=" * 55)
+    print("=" * 60)
+    print("  SOFT ASSIST v11 — PERFORMANCE OPTIMIERT")
+    print("  ROI-Crop + Threading + 60 FPS")
+    print("=" * 60)
 
+    # KMBox
     if KMBOX_AVAILABLE:
         try:
             kmbox_net.init(KMBOX_IP, KMBOX_PORT, KMBOX_UUID)
@@ -230,6 +311,7 @@ def main():
     else:
         print("  KMBox nicht da")
 
+    # YOLO
     model_path = get_model_path(MODEL_MODE)
     if not model_path:
         print("FEHLER: Kein Modell!")
@@ -237,33 +319,36 @@ def main():
     print(f"  Modell: {os.path.basename(model_path)}")
     detector = YOLODetector(model_path)
 
-    cap = cv2.VideoCapture(CAPTURE_DEVICE, cv2.CAP_DSHOW)
-    if not cap.isOpened():
-        cap = cv2.VideoCapture(CAPTURE_DEVICE)
-    if not cap.isOpened():
-        print("FEHLER: Keine Capture Card!")
+    # Capture (Threaded!)
+    print(f"\n  Starte Threaded Capture...")
+    try:
+        cap = FastCapture(CAPTURE_DEVICE, 1920, 1080, TARGET_FPS)
+    except RuntimeError as e:
+        print(f"  FEHLER: {e}")
         return
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
-    fw = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    fh = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    print(f"  Capture: {fw}x{fh}")
-    print(f"\n  A=Assist an/aus | 1/2=Strength | ESC=Quit")
-    print("=" * 55)
+    fw, fh = cap.width, cap.height
+
+    print(f"\n  ROI-Crop: {'EIN' if USE_ROI_CROP else 'AUS'} ({ROI_SIZE}x{ROI_SIZE})")
+    print(f"  → Analysiert nur Bildmitte statt volles {fw}x{fh}")
+    print(f"\n  Tasten: A=Assist 1/2=Strength C=ROI ESC=Quit")
+    print("=" * 60)
 
     tracker = SmoothTracker()
-    active = True  # Standardmaessig AN
+    active = True
     fc = 0
     fps = 0.0
     fps_t = time.monotonic()
     strength = STRENGTH
-    cooldown = 0  # Frames bis zur naechsten Korrektur
+    cooldown = 0
+    inf_ms = 0.0
 
     try:
         while True:
             ret, frame = cap.read()
-            if not ret:
+            if not ret or frame is None:
+                time.sleep(0.001)
                 continue
+
             fc += 1
             now = time.monotonic()
             if fc % 30 == 0:
@@ -271,7 +356,19 @@ def main():
                 fps = 30.0 / el if el > 0 else 0
                 fps_t = now
 
-            all_dets = detector.detect(frame, conf_threshold=CONFIDENCE)
+            # === ROI CROPPING ===
+            if USE_ROI_CROP:
+                roi, off_x, off_y = crop_center(frame, ROI_SIZE)
+                t0 = time.monotonic()
+                all_dets = detector.detect(roi, conf_threshold=CONFIDENCE)
+                inf_ms = (time.monotonic() - t0) * 1000
+                # Koordinaten zurueck in Fullframe-Raum
+                all_dets = offset_detections(all_dets, off_x, off_y)
+            else:
+                t0 = time.monotonic()
+                all_dets = detector.detect(frame, conf_threshold=CONFIDENCE)
+                inf_ms = (time.monotonic() - t0) * 1000
+
             targets = [d for d in all_dets if d["class_name"] in TARGET_CLASSES]
             tx, ty, tdet = pick_best_target(targets, fw, fh)
 
@@ -289,35 +386,31 @@ def main():
                         dy = pos[1] - cy
                         dist = math.sqrt(dx * dx + dy * dy)
 
-                        # Nur korrigieren wenn deutlich daneben UND Cooldown abgelaufen
                         if dist > DEADZONE and cooldown <= 0:
                             mx = dx * strength
                             my = dy * strength
-
                             mx = max(-MAX_MOVE, min(MAX_MOVE, mx))
                             my = max(-MAX_MOVE, min(MAX_MOVE, my))
-
                             ix = int(round(mx))
                             iy = int(round(my))
-
                             if (abs(ix) > 0 or abs(iy) > 0) and KMBOX_AVAILABLE:
                                 try:
                                     kmbox_net.move(ix, iy)
-                                    cooldown = COOLDOWN_FRAMES  # Warten!
+                                    cooldown = COOLDOWN_FRAMES
                                 except Exception:
                                     pass
             else:
                 tracker.mark_lost()
 
-            # Cooldown runterzaehlen
             if cooldown > 0:
                 cooldown -= 1
 
             if SHOW_WINDOW:
-                disp = draw_overlay(frame.copy(), all_dets, aim_pos, tracker, fps, active, strength)
+                disp = draw_overlay(frame.copy(), all_dets, aim_pos, tracker,
+                                    fps, inf_ms, active, strength, USE_ROI_CROP)
                 if WINDOW_SCALE != 1.0:
                     disp = cv2.resize(disp, (int(fw * WINDOW_SCALE), int(fh * WINDOW_SCALE)))
-                cv2.imshow("SOFT ASSIST v10", disp)
+                cv2.imshow("SOFT ASSIST v11", disp)
 
             key = cv2.waitKey(1) & 0xFF
             if key == 27:
@@ -327,6 +420,9 @@ def main():
                 print(f"Assist: {'EIN' if active else 'AUS'}")
                 if not active:
                     tracker.reset()
+            elif key == ord('c'):
+                USE_ROI_CROP = not USE_ROI_CROP
+                print(f"ROI-Crop: {'EIN' if USE_ROI_CROP else 'AUS'}")
             elif key == ord('1'):
                 strength = max(0.1, round(strength - 0.1, 1))
                 print(f"Strength: {strength}")
