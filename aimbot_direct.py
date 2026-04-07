@@ -1,11 +1,13 @@
 """
-AIMBOT VISION v13 — MINIMAP READER + CONFIG + PERF
-====================================================
-Neu in v13:
-  - Minimap-Reader: Erkennt Teammates (blau/gruen) auf der Minimap
-  - Teammate-Schutz: Zielt NICHT auf Spieler in Teammate-Richtung
-  - Config: Settings in config.json gespeichert/geladen
-  - Minimap Debug: Taste B zeigt erkannte Minimap
+AIMBOT VISION v14 — ADVANCED TRACKING
+=======================================
+Neu in v14:
+  - Velocity Prediction: Zielt wohin der Gegner sich BEWEGT
+  - Dynamic Strength: Starker Snap bei Distanz, Praezision bei Naehe
+  - Sticky Target: Bleibt auf aktuellem Ziel, springt nicht hin und her
+  - Schnellerer Tracker: Alpha 0.6 (war 0.4)
+  - Cooldown 2 Frames (war 4), Max-Move 50px (war 30)
+  - Groesse-Bonus: Naehere (groessere) Gegner werden bevorzugt
 
 Performance-Optimierungen:
   1. Threaded Capture (Buffer=1, immer neuestes Frame)
@@ -75,8 +77,8 @@ DEFAULT_CONFIG = {
     "fov_radius": 180,
     "strength": 0.7,
     "deadzone": 15,
-    "max_move": 30,
-    "cooldown_frames": 4,
+    "max_move": 50,
+    "cooldown_frames": 2,
     "use_roi_crop": True,
     "roi_size": 640,
     "target_fps": 60,
@@ -275,34 +277,63 @@ class FastInference:
 
 
 # ============================================================
-# TRACKER
+# TRACKER MIT VELOCITY PREDICTION
 # ============================================================
 class SmoothTracker:
+    """Verfolgt ein Ziel mit EMA-Glaettung + Geschwindigkeits-Vorhersage."""
+
     def __init__(self):
         self.reset()
 
     def reset(self):
         self.x = None
         self.y = None
-        self.alpha = 0.4
+        self.vx = 0.0           # Geschwindigkeit X (Pixel/Frame)
+        self.vy = 0.0           # Geschwindigkeit Y (Pixel/Frame)
+        self.prev_x = None
+        self.prev_y = None
+        self.alpha = 0.6        # Position-Glaettung (schneller = besser tracking)
+        self.v_alpha = 0.3      # Velocity-Glaettung (niedrig = stabiler)
         self.frames = 0
         self.lost = 0
+        self.target_id = None   # Fuer Sticky Target
 
     def update(self, mx, my):
         if self.x is None:
             self.x, self.y = mx, my
+            self.prev_x, self.prev_y = mx, my
         else:
+            # Velocity berechnen (wie schnell bewegt sich das Ziel?)
+            raw_vx = mx - self.prev_x
+            raw_vy = my - self.prev_y
+            self.vx += self.v_alpha * (raw_vx - self.vx)
+            self.vy += self.v_alpha * (raw_vy - self.vy)
+
+            self.prev_x, self.prev_y = self.x, self.y
+
+            # Position glaetten
             self.x += self.alpha * (mx - self.x)
             self.y += self.alpha * (my - self.y)
+
         self.frames += 1
         self.lost = 0
 
     def mark_lost(self):
         self.lost += 1
-        if self.lost > 5:
+        if self.lost > 8:
             self.reset()
 
-    def get_position(self):
+    def get_position(self, predict_frames=2):
+        """Gibt vorhergesagte Position zurueck (wohin das Ziel sich bewegt)."""
+        if self.x is None:
+            return None
+        # Prediction: Aktuelle Position + Geschwindigkeit * Frames voraus
+        px = self.x + self.vx * predict_frames
+        py = self.y + self.vy * predict_frames
+        return (px, py)
+
+    def get_raw_position(self):
+        """Aktuelle Position ohne Prediction."""
         if self.x is None:
             return None
         return (self.x, self.y)
@@ -313,9 +344,10 @@ class SmoothTracker:
 
 
 # ============================================================
-# ZIELAUSWAHL MIT TEAMMATE-SCHUTZ
+# ZIELAUSWAHL MIT TEAMMATE-SCHUTZ + STICKY TARGET
 # ============================================================
-def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None):
+def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos=None):
+    """Waehlt das beste Ziel. sticky_pos = aktuelle Tracker-Position fuer Sticky-Bonus."""
     cx, cy = frame_w / 2.0, frame_h / 2.0
     fov = cfg["fov_radius"]
     dead_ratio = cfg["dead_body_ratio"]
@@ -325,7 +357,7 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None):
     tm_protect = cfg["teammate_protection"] and minimap is not None
 
     best = None
-    best_dist = float('inf')
+    best_score = float('inf')
 
     for det in detections:
         x1, y1, x2, y2 = det["bbox"]
@@ -353,15 +385,31 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None):
         if dist > fov:
             continue
 
-        # TEAMMATE-SCHUTZ: Pruefen ob Ziel in Richtung eines Teammates liegt
+        # TEAMMATE-SCHUTZ
         if tm_protect and minimap.is_teammate_direction(
             tx, cx, fov_deg=cfg["game_fov"], tolerance=cfg["teammate_tolerance"]
         ):
             continue
 
-        effective_dist = dist * (0.5 if cls == "head" else 1.0)
-        if effective_dist < best_dist:
-            best_dist = effective_dist
+        # Score berechnen
+        score = dist
+
+        # Head-Bonus: Koepfe bevorzugen
+        if cls == "head":
+            score *= 0.5
+
+        # Groesse-Bonus: Groessere Spieler (naeher) bevorzugen
+        if bh > 80:
+            score *= 0.7
+
+        # STICKY TARGET: Aktuelles Ziel stark bevorzugen
+        if sticky_pos is not None:
+            stick_dist = math.sqrt((tx - sticky_pos[0]) ** 2 + (ty - sticky_pos[1]) ** 2)
+            if stick_dist < 80:  # Ziel ist nah am aktuellen Lock
+                score *= 0.3   # Starker Bonus → nicht wechseln!
+
+        if score < best_score:
+            best_score = score
             best = (tx, ty, det)
 
     return best if best else (None, None, None)
@@ -386,8 +434,8 @@ def main():
     cfg = load_config()
 
     print("=" * 60)
-    print("  AIMBOT v13 — MINIMAP READER + CONFIG")
-    print("  Teammate-Schutz | Auto-Save | Debug-Modus")
+    print("  AIMBOT v14 — ADVANCED TRACKING")
+    print("  Velocity Prediction | Dynamic Strength | Sticky Target")
     print("=" * 60)
 
     # KMBox
@@ -497,13 +545,15 @@ def main():
             # Zielauswahl + Aim (JEDEN Frame — Latenz-kritisch!)
             targets = [d for d in all_dets if d["class_name"] in TARGET_CLASSES]
             mm = minimap if cfg["minimap_enabled"] and cfg["teammate_protection"] else None
-            tx, ty, tdet = pick_best_target(targets, fw, fh, cfg, minimap=mm)
+            sticky = tracker.get_raw_position()
+            tx, ty, tdet = pick_best_target(targets, fw, fh, cfg, minimap=mm, sticky_pos=sticky)
 
             aim_pos = None
 
             if tx is not None:
                 tracker.update(tx, ty)
-                pos = tracker.get_position()
+                # Prediction: Zielt wohin der Gegner sich bewegt
+                pos = tracker.get_position(predict_frames=2)
                 if pos:
                     aim_pos = pos
 
@@ -513,8 +563,16 @@ def main():
                         dist = math.sqrt(dx * dx + dy * dy)
 
                         if dist > cfg["deadzone"] and cooldown <= 0:
-                            mx = dx * strength
-                            my = dy * strength
+                            # DYNAMIC STRENGTH: Stark wenn weit, sanft wenn nah
+                            if dist > 100:
+                                dyn_str = strength * 1.5   # Schneller Snap
+                            elif dist > 50:
+                                dyn_str = strength         # Normal
+                            else:
+                                dyn_str = strength * 0.6   # Praezision
+
+                            mx = dx * dyn_str
+                            my = dy * dyn_str
                             mx = max(-cfg["max_move"], min(cfg["max_move"], mx))
                             my = max(-cfg["max_move"], min(cfg["max_move"], my))
                             ix = int(round(mx))
@@ -581,7 +639,7 @@ def main():
                     cv2.rectangle(frame, (mmx, mmy), (mmx+mms, mmy+mms), (255, 200, 0), 1)
 
                 disp = cv2.resize(frame, (disp_w, disp_h), interpolation=cv2.INTER_NEAREST)
-                cv2.imshow("AIMBOT v13", disp)
+                cv2.imshow("AIMBOT v14", disp)
 
             elif render_frame:
                 # Overlay AUS: Minimales Status-Fenster (pre-alloc, kein neues Array)
@@ -592,7 +650,7 @@ def main():
                             (5, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 200, 100), 1)
                 cv2.putText(tiny, f"STR:{strength:.1f} | V=Overlay | ESC=Quit",
                             (5, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1)
-                cv2.imshow("AIMBOT v13", tiny)
+                cv2.imshow("AIMBOT v14", tiny)
 
             # Minimap Debug (nur wenn aktiv UND Render-Frame)
             if render_frame and show_minimap_debug and cfg["minimap_enabled"]:
