@@ -86,9 +86,9 @@ DEFAULT_CONFIG = {
     "confidence": 0.40,
     "fov_radius": 180,
     "strength": 0.7,
-    "deadzone": 15,
-    "max_move": 50,
-    "cooldown_frames": 2,
+    "deadzone": 20,
+    "max_move": 40,
+    "cooldown_frames": 3,
     "use_roi_crop": True,
     "roi_size": 640,
     "target_fps": 60,
@@ -300,7 +300,7 @@ class FastInference:
 # TRACKER MIT VELOCITY PREDICTION
 # ============================================================
 class SmoothTracker:
-    """Verfolgt ein Ziel mit EMA-Glaettung + Geschwindigkeits-Vorhersage."""
+    """Verfolgt ein Ziel mit EMA-Glaettung + Oszillations-Erkennung."""
 
     def __init__(self):
         self.reset()
@@ -308,55 +308,59 @@ class SmoothTracker:
     def reset(self):
         self.x = None
         self.y = None
-        self.vx = 0.0           # Geschwindigkeit X (Pixel/Frame)
-        self.vy = 0.0           # Geschwindigkeit Y (Pixel/Frame)
         self.prev_x = None
         self.prev_y = None
-        self.alpha = 0.6        # Position-Glaettung (schneller = besser tracking)
-        self.v_alpha = 0.3      # Velocity-Glaettung (niedrig = stabiler)
+        self.alpha = 0.5
         self.frames = 0
         self.lost = 0
-        self.target_id = None   # Fuer Sticky Target
+        self.target_id = None
+        # Anti-Oszillation: Trackt Richtungswechsel
+        self.prev_dx = 0.0
+        self.prev_dy = 0.0
+        self.osc_count = 0      # Wie oft Richtung gewechselt
 
     def update(self, mx, my):
         if self.x is None:
             self.x, self.y = mx, my
             self.prev_x, self.prev_y = mx, my
         else:
-            # Velocity berechnen (wie schnell bewegt sich das Ziel?)
-            raw_vx = mx - self.prev_x
-            raw_vy = my - self.prev_y
-            self.vx += self.v_alpha * (raw_vx - self.vx)
-            self.vy += self.v_alpha * (raw_vy - self.vy)
-
             self.prev_x, self.prev_y = self.x, self.y
-
-            # Position glaetten
             self.x += self.alpha * (mx - self.x)
             self.y += self.alpha * (my - self.y)
 
         self.frames += 1
         self.lost = 0
 
+    def check_oscillation(self, dx, dy):
+        """Erkennt ob Aim hin-und-her pendelt. Returns damping factor 0.0-1.0."""
+        # Richtungswechsel erkennen (Vorzeichen aendert sich)
+        if (dx * self.prev_dx < 0) or (dy * self.prev_dy < 0):
+            self.osc_count = min(self.osc_count + 1, 6)
+        else:
+            self.osc_count = max(self.osc_count - 1, 0)
+
+        self.prev_dx = dx
+        self.prev_dy = dy
+
+        # Je mehr Oszillation, desto staerker daempfen
+        if self.osc_count >= 4:
+            return 0.2   # Starkes Daempfen
+        elif self.osc_count >= 2:
+            return 0.5   # Mittleres Daempfen
+        return 1.0       # Kein Daempfen
+
     def mark_lost(self):
         self.lost += 1
         if self.lost > 4:
             self.reset()
 
-    def get_position(self, predict_frames=0):
-        """Gibt Position zurueck. predict_frames=0 fuer direkte Position."""
+    def get_position(self):
+        """Gibt geglättete Position zurueck."""
         if self.x is None:
             return None
-        if predict_frames > 0 and self.frames > 3:
-            # Prediction nur wenn genug Daten UND Velocity stabil
-            if abs(self.vx) > 0.5 or abs(self.vy) > 0.5:
-                px = self.x + self.vx * predict_frames
-                py = self.y + self.vy * predict_frames
-                return (px, py)
         return (self.x, self.y)
 
     def get_raw_position(self):
-        """Aktuelle Position ohne Prediction."""
         if self.x is None:
             return None
         return (self.x, self.y)
@@ -599,12 +603,19 @@ def main():
             sticky = tracker.get_raw_position()
             tx, ty, tdet = pick_best_target(targets, fw, fh, cfg, minimap=mm, sticky_pos=sticky)
 
+            # TEAMMATE-SUPPRESSION: Wenn nahe Teammates auf Minimap → Aim pausieren
+            suppress_aim = False
+            if cfg["minimap_enabled"] and cfg["teammate_protection"] and minimap.teammates:
+                for tm in minimap.teammates:
+                    if tm["distance"] < minimap.size * 0.3:
+                        suppress_aim = True
+                        break
+
             aim_pos = None
 
-            if tx is not None:
+            if tx is not None and not suppress_aim:
                 tracker.update(tx, ty)
-                # Prediction nur bei stabiler Velocity, sonst direkt
-                pos = tracker.get_position(predict_frames=1)
+                pos = tracker.get_position()
                 if pos:
                     aim_pos = pos
 
@@ -614,29 +625,27 @@ def main():
                         dist = math.sqrt(dx * dx + dy * dy)
 
                         if dist > cfg["deadzone"] and cooldown <= 0:
+                            # Anti-Oszillation: Daempft wenn Aim hin-und-her pendelt
+                            osc_damp = tracker.check_oscillation(dx, dy)
+
                             if input_mode == "titan" and titan:
-                                # TITAN TWO: Praezise Stick-Werte
                                 sx, sy = pixels_to_stick(
                                     dx, dy, fw, fh,
                                     sensitivity=cfg["titan_sensitivity"],
                                     speed_x=cfg["titan_speed_x"],
                                     speed_y=cfg["titan_speed_y"],
                                 )
-                                titan.set_aim(sx, sy)
-                                # Anti-Recoil wenn aktiv + am Schiessen
+                                titan.set_aim(sx * osc_damp, sy * osc_damp)
                                 if cfg["anti_recoil_enabled"] and titan.is_firing():
                                     recoil_y = get_recoil_profile(cfg["recoil_profile"])
                                     titan.set_anti_recoil(recoil_y)
                                 cooldown = cfg["cooldown_frames"]
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
-                                # KMBOX: Maus-Pixel-Bewegungen
-                                if dist > 100:
-                                    dyn_str = strength * 1.3
-                                elif dist > 40:
-                                    dyn_str = strength
-                                else:
-                                    dyn_str = strength * 0.85
+                                # SMOOTH CURVE: sqrt-basiert statt Stufen
+                                # Kleine dist → sanft, grosse dist → stark
+                                curve = math.sqrt(dist / cfg["fov_radius"])
+                                dyn_str = strength * curve * osc_damp
 
                                 mx = dx * dyn_str
                                 my = dy * dyn_str
