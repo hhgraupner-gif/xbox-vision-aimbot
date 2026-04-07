@@ -61,6 +61,16 @@ try:
 except Exception:
     KMBOX_AVAILABLE = False
 
+try:
+    from titan_two import TitanTwo, pixels_to_stick, RECOIL_PROFILES, get_recoil_profile
+    from titan_two import MACRO_NONE, MACRO_DROPSHOT, MACRO_SNAKING, MACRO_SLIDE_CANCEL
+    from titan_two import MACRO_BUNNY_HOP, MACRO_AUTO_FIRE, MACRO_YY_SWAP
+    TITAN_MODULE_AVAILABLE = True
+except Exception:
+    TITAN_MODULE_AVAILABLE = False
+
+# Titan Two wird in main() initialisiert (braucht gtuner Modul)
+
 
 # ============================================================
 # CONFIG FILE
@@ -95,6 +105,16 @@ DEFAULT_CONFIG = {
     "teammate_protection": True,
     "teammate_tolerance": 30,
     "game_fov": 100,
+    "input_mode": "auto",
+    "titan_speed_x": 55.0,
+    "titan_speed_y": 55.0,
+    "titan_sensitivity": 1.0,
+    "recoil_profile": "default",
+    "anti_recoil_enabled": False,
+    "macro_dropshot_key": "q",
+    "macro_snaking_key": "e",
+    "macro_slidecancel_key": "r",
+    "macro_autofire_key": "t",
 }
 
 
@@ -446,6 +466,26 @@ def main():
         except Exception as e:
             print(f"  KMBox: {e}")
 
+    # Titan Two
+    titan = None
+    if TITAN_MODULE_AVAILABLE:
+        titan = TitanTwo()
+        if not titan.connected:
+            titan = None
+
+    # Input Modus bestimmen
+    input_mode = cfg["input_mode"]
+    if input_mode == "auto":
+        if titan and titan.connected:
+            input_mode = "titan"
+        elif KMBOX_AVAILABLE:
+            input_mode = "kmbox"
+        else:
+            input_mode = "none"
+    print(f"  Input: {input_mode.upper()}"
+          f"{' (Titan Two → praezise Stick-Werte!)' if input_mode == 'titan' else ''}"
+          f"{' (KMBox → Maus-Emulation)' if input_mode == 'kmbox' else ''}")
+
     # YOLO
     model_path = get_model_path(cfg["model_mode"], cfg["use_nano"])
     if not model_path:
@@ -563,26 +603,42 @@ def main():
                         dist = math.sqrt(dx * dx + dy * dy)
 
                         if dist > cfg["deadzone"] and cooldown <= 0:
-                            # DYNAMIC STRENGTH: Stark wenn weit, sanft wenn nah
-                            if dist > 100:
-                                dyn_str = strength * 1.5   # Schneller Snap
-                            elif dist > 50:
-                                dyn_str = strength         # Normal
-                            else:
-                                dyn_str = strength * 0.6   # Praezision
+                            if input_mode == "titan" and titan:
+                                # TITAN TWO: Praezise Stick-Werte
+                                sx, sy = pixels_to_stick(
+                                    dx, dy, fw, fh,
+                                    sensitivity=cfg["titan_sensitivity"],
+                                    speed_x=cfg["titan_speed_x"],
+                                    speed_y=cfg["titan_speed_y"],
+                                )
+                                titan.set_aim(sx, sy)
+                                # Anti-Recoil wenn aktiv + am Schiessen
+                                if cfg["anti_recoil_enabled"] and titan.is_firing():
+                                    recoil_y = get_recoil_profile(cfg["recoil_profile"])
+                                    titan.set_anti_recoil(recoil_y)
+                                cooldown = cfg["cooldown_frames"]
 
-                            mx = dx * dyn_str
-                            my = dy * dyn_str
-                            mx = max(-cfg["max_move"], min(cfg["max_move"], mx))
-                            my = max(-cfg["max_move"], min(cfg["max_move"], my))
-                            ix = int(round(mx))
-                            iy = int(round(my))
-                            if (abs(ix) > 0 or abs(iy) > 0) and KMBOX_AVAILABLE:
-                                try:
-                                    kmbox_net.move(ix, iy)
-                                    cooldown = cfg["cooldown_frames"]
-                                except Exception:
-                                    pass
+                            elif input_mode == "kmbox" and KMBOX_AVAILABLE:
+                                # KMBOX: Maus-Pixel-Bewegungen
+                                if dist > 100:
+                                    dyn_str = strength * 1.5
+                                elif dist > 50:
+                                    dyn_str = strength
+                                else:
+                                    dyn_str = strength * 0.6
+
+                                mx = dx * dyn_str
+                                my = dy * dyn_str
+                                mx = max(-cfg["max_move"], min(cfg["max_move"], mx))
+                                my = max(-cfg["max_move"], min(cfg["max_move"], my))
+                                ix = int(round(mx))
+                                iy = int(round(my))
+                                if abs(ix) > 0 or abs(iy) > 0:
+                                    try:
+                                        kmbox_net.move(ix, iy)
+                                        cooldown = cfg["cooldown_frames"]
+                                    except Exception:
+                                        pass
             else:
                 tracker.mark_lost()
 
@@ -760,6 +816,31 @@ def main():
                 cfg["minimap_size"] = max(80, cfg["minimap_size"] - 10)
                 minimap.set_position(size=cfg["minimap_size"])
                 print(f"Minimap Size: {cfg['minimap_size']}")
+
+            # Titan Two Macros (nur wenn Titan Two aktiv)
+            elif key == ord('q') and input_mode == "titan" and titan:
+                titan.set_macro(MACRO_DROPSHOT)
+                print("MACRO: Dropshot!")
+            elif key == ord('e') and input_mode == "titan" and titan:
+                titan.set_macro(MACRO_SNAKING)
+                print("MACRO: Snaking!")
+            elif key == ord('r') and input_mode == "titan" and titan:
+                titan.set_macro(MACRO_SLIDE_CANCEL)
+                print("MACRO: Slide-Cancel!")
+            elif key == ord('t') and input_mode == "titan" and titan:
+                titan.set_macro(MACRO_AUTO_FIRE)
+                print("MACRO: Auto-Fire!")
+            elif key == ord('g'):
+                cfg["anti_recoil_enabled"] = not cfg["anti_recoil_enabled"]
+                print(f"Anti-Recoil: {'EIN' if cfg['anti_recoil_enabled'] else 'AUS'}"
+                      f" (Profil: {cfg['recoil_profile']})")
+            elif key == ord('h'):
+                # Recoil-Profil durchschalten
+                profiles = list(RECOIL_PROFILES.keys()) if TITAN_MODULE_AVAILABLE else ["default"]
+                idx = profiles.index(cfg["recoil_profile"]) if cfg["recoil_profile"] in profiles else 0
+                cfg["recoil_profile"] = profiles[(idx + 1) % len(profiles)]
+                rval = get_recoil_profile(cfg["recoil_profile"]) if TITAN_MODULE_AVAILABLE else 0
+                print(f"Recoil-Profil: {cfg['recoil_profile']} (Y={rval})")
 
     except KeyboardInterrupt:
         print("\nStop.")

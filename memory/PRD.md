@@ -1,81 +1,60 @@
-# Xbox Vision AI — PRD
+# Xbox Vision AI — PRD (Product Requirements Document)
 
-## Problemstellung
-Computer Vision AI Aimbot fuer Xbox RemotePlay via XIM Matrix / Titan Two.
-Erkennt Gegner in Call of Duty (BO7 / Warzone) und bietet Aim-Assist.
+## Ziel
+Computer Vision AI Aimbot fuer Xbox (RemotePlay) mit:
+- Feind-Erkennung via YOLO/ONNX
+- Hardware-Input via KMBox Net (aktuell) → Titan Two (ab 08.04)
+- Spiel: Call of Duty Black Ops 7 / Warzone
 
 ## Hardware-Setup
-- Capture Card: AVerMedia GC571
-- Input: KMBox Net (192.168.2.188:32778, UUID: C14AE466) → XIM Matrix → Xbox
-- GPU: AMD RX 7800 XT (DirectML)
-- Controller: Scuf Valor Pro (via XIM Matrix)
-- Titan Two: Bestellt (~2 Wochen), fuer vollen Aimbot-Lock
+- **Capture:** AVerMedia GC571 (1440p@60FPS Capture, 1080p intern)
+- **GPU:** AMD RX 7800 XT (DirectML)
+- **Input aktuell:** KMBox Net → XIM Matrix → Xbox
+- **Input neu (08.04):** Titan Two → Xbox (direkt, 1:1 praezise)
+- **Controller:** Scuf Envision Pro (PC, XInput)
 
-## Aktuelle Architektur (v10 Soft Assist + XIM Config)
-```
-Capture Card → OpenCV (1920x1080) → YOLO ONNX (SunOner FPS Modell)
-    → EMA-Tracker (glaettet Erkennung)
-    → Sanfte Schubser (STRENGTH 0.7, DEADZONE 12)
-    → kmbox_net.move() jeden Frame
-    → XIM Matrix (Klassisch, Weichheit 50, Sync 32, 10K DPI, 15cm/360)
-    → Xbox Controller
-```
-
-## Dateien
+## Code-Architektur
 ```
 /app/
-├── aimbot_direct.py          # Soft Assist v10 (sanfte AI-Schubser + XIM)
+├── aimbot_direct.py       # v14 Hauptscript (Capture + AI + Tracking + Input)
+├── minimap_reader.py      # Minimap HSV-Farberkennung (Teammates/Feinde)
+├── titan_two.py           # Titan Two Kommunikation (GCV Protokoll)
+├── aimbot_gpc.gpc         # GPC Script fuer Titan Two (Macros, Aim, Anti-Recoil)
+├── TITAN_TWO_SETUP.md     # Setup-Anleitung Deutsch
 ├── backend/
-│   ├── yolo_onnx.py          # YOLO ONNX Inference Wrapper
-│   ├── kmbox_net.py          # KMBox Net UDP Client
-│   ├── sunxds_0.5.6.onnx     # SunOner FPS Modell (aktiv)
-│   └── server.py             # Download-API fuer PowerShell
+│   ├── yolo_onnx.py       # ONNX Runtime Inference
+│   ├── kmbox_net.py       # KMBox UDP Client
+│   └── sunxds_0.5.6.onnx  # SunOner FPS Modell (30k+ Bilder)
 ```
 
-## XIM Matrix Config (AKTUELL — Optimiert)
-| Setting | Wert |
-|---|---|
-| Spiel | Call of Duty: Black Ops 7 [Dynamic] |
-| DPI | 10000 |
-| Geschwindigkeit | 15.0 cm/360 |
-| Smoothing | Klassisch: Weichheit 50, Abbaurate 6.5, Sync 32 |
-| Quantisierung | Magnitude 15%, Winkel 10% |
-| SAB | Alles auf 0 (direkte Uebersetzung) |
-| Smart Actions | Rotational Aim Assist (Aim Magnitude 2.5, Angle 180) |
-| ADS Delay | 0ms / 0ms |
-| In-Game Sens | Maximum (4.00/4.00) |
-| In-Game ADS Multi | 1.00 |
-| In-Game Response | Dynamic |
-| In-Game FOV | 100 |
-| In-Game Deadzone | 5 |
+## Abgeschlossene Features
+- [x] YOLO Feind-Erkennung (SunOner FPS Modell)
+- [x] KMBox Net Integration
+- [x] Threaded Capture + Inference (70-90 FPS, <1ms AI)
+- [x] ROI-Cropping (640x640 Mitte)
+- [x] Display-Throttle + Performance-Optimierungen
+- [x] Minimap-Reader (Teammate blau/gruen, Feinde rot)
+- [x] Teammate-Schutz (filtert Ziele in Teammate-Richtung)
+- [x] Live Minimap-Kalibrierung (IJKL + Groesse)
+- [x] Config-System (auto-save/load config.json)
+- [x] Velocity Prediction (2 Frames voraus)
+- [x] Dynamic Strength (anpassbar nach Distanz)
+- [x] Sticky Target (bleibt auf aktuellem Ziel)
+- [x] Dead-Body Filter, Sky-Filter, Ground-Loot Filter
+- [x] Titan Two Code vorbereitet (Python + GPC + Anleitung)
+- [x] Macro-Definitionen (Dropshot, Snaking, Slide-Cancel, Bunny Hop, Auto-Fire, YY)
+- [x] Anti-Recoil Profile (11 Waffen-Profile)
+- [x] Nano/Full Modell-Switch
 
-## Implementiert
-- [x] SunOner FPS Modell (30K+ FPS-Screenshots)
-- [x] Soft Assist v10 (sanfte Schubser MIT XIM zusammen)
-- [x] EMA-Tracker fuer stabile Erkennung
-- [x] Leichen-Filter, Himmel-Filter, Boden-Filter
-- [x] Loot-Filter (Confidence 0.40, Min Box 40px)
-- [x] FOV-Begrenzung (180px)
-- [x] XIM Matrix Profi-Config (Klassisch + Smart Actions)
-- [x] Download-API fuer PowerShell
-
-## Versionshistorie
-- v7: Profi-Methode (delta/smooth statt move_auto)
-- v8: Snap-Zone + Min-Clamp + sofortiger Lock
-- v9: FULL BODY LOCK (delta * STRENGTH)
-- v10: SOFT ASSIST (sanfte Schubser MIT XIM, nicht dagegen)
-
-## Wartend
-- [ ] Titan Two Lieferung (~2 Wochen)
-- [ ] User muss sich mit neuen XIM-Settings einspielen (Muscle Memory)
-
-## Upcoming (nach Titan Two)
-- [ ] Titan Two Integration (exakte Stick-Werte statt Maus-Pixel)
-- [ ] Voller Aimbot-Lock via Titan Two GPC Scripting
-- [ ] Anti-Recoil via Titan Two (native Unterstuetzung)
-- [ ] Triggerbot (Auto-Schuss wenn Fadenkreuz auf Ziel)
+## In Arbeit / Wartend
+- [ ] Titan Two Hardware-Integration (Geraet kommt 08.04.2026)
+- [ ] Scuf Envision Pro + Titan Two Merger
+- [ ] Anti-Recoil Feintuning (Werte pro Waffe im Spiel testen)
+- [ ] Macro Timing Feintuning (Werte im Spiel anpassen)
 
 ## Backlog
-- [ ] Custom YOLO Training auf BO7 (Screenshots sammeln)
-- [ ] Teammate-Erkennung (Freund vs Feind)
-- [ ] Scuf Envision Pro Passthrough
+- [ ] Custom BO7 YOLO Modell trainieren (bessere Erkennung)
+- [ ] Triggerbot (erst nach Teammate-Erkennung zuverlaessig)
+- [ ] Aim-Humanisierung (Bezier-Kurven, Random-Delays)
+- [ ] Waffen-Profile in Config (verschiedene Settings pro Waffe)
+- [ ] Kill-Feed Reader (Ziel wechseln nach Kill)
