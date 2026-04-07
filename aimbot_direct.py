@@ -171,6 +171,7 @@ class FastInference:
         self.detector = detector
         self.input_frame = None
         self.input_roi_info = None  # (off_x, off_y) oder None
+        self._conf = 0.40
         self.results = []
         self.inf_ms = 0.0
         self.running = True
