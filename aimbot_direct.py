@@ -1,12 +1,23 @@
 """
-AIMBOT VISION v13 — MINIMAP READER + CONFIG
-=============================================
+AIMBOT VISION v13 — MINIMAP READER + CONFIG + PERF
+====================================================
 Neu in v13:
   - Minimap-Reader: Erkennt Teammates (blau/gruen) auf der Minimap
   - Teammate-Schutz: Zielt NICHT auf Spieler in Teammate-Richtung
-  - Feind-Info: Zeigt erkannte Feinde von der Minimap
-  - Config: Settings werden in config.json gespeichert/geladen
-  - Debug: Taste B zeigt Minimap-Debug-Fenster
+  - Config: Settings in config.json gespeichert/geladen
+  - Minimap Debug: Taste B zeigt erkannte Minimap
+
+Performance-Optimierungen:
+  1. Threaded Capture (Buffer=1, immer neuestes Frame)
+  2. Threaded Inference (AI laeuft parallel, non-blocking)
+  3. Inference-Guard (neuer Frame nur wenn AI fertig)
+  4. ROI-Cropping (640x640 Mitte, kein Full-Screen Resize)
+  5. Display-Throttle (Overlay nur jeden 2. Frame = weniger GPU-Last)
+  6. Minimap-Throttle (nur jeden 3. Frame = spart ~0.5ms)
+  7. INTER_NEAREST Resize (schnellster Resize-Algorithmus)
+  8. Pre-Computed Werte (Screen-Center etc. einmal berechnen)
+  9. Pre-Alloc Buffers (kein numpy.zeros() pro Frame)
+  10. Overlay Toggle (V-Taste: aus = +10-15 FPS extra)
 
 Steuerung:
   A     = Assist an/aus
@@ -192,6 +203,7 @@ class FastInference:
         self._conf = 0.40
         self.results = []
         self.inf_ms = 0.0
+        self.busy = False
         self.running = True
         self.has_input = threading.Event()
         self.has_output = threading.Event()
@@ -206,6 +218,7 @@ class FastInference:
             if not self.running:
                 break
             self.has_input.clear()
+            self.busy = True
 
             with self.lock_in:
                 frame = self.input_frame
@@ -213,6 +226,7 @@ class FastInference:
                 conf = self._conf
 
             if frame is None:
+                self.busy = False
                 continue
 
             t0 = time.monotonic()
@@ -230,14 +244,19 @@ class FastInference:
             with self.lock_out:
                 self.results = dets
                 self.inf_ms = ms
+            self.busy = False
             self.has_output.set()
 
     def submit(self, frame, conf, roi_info=None):
+        """Nur senden wenn AI-Thread nicht beschaeftigt (kein Stau)."""
+        if self.busy:
+            return False
         with self.lock_in:
             self.input_frame = frame
             self.input_roi_info = roi_info
             self._conf = conf
         self.has_input.set()
+        return True
 
     def get_results(self):
         with self.lock_out:
@@ -428,10 +447,23 @@ def main():
 
     frame_times = deque(maxlen=60)
 
+    # Pre-computed (einmal berechnen statt jeden Frame)
+    scr_cx = fw / 2.0
+    scr_cy = fh / 2.0
+    hcx = fw // 2
+    hcy = fh // 2
+    disp_w = fw // 2
+    disp_h = fh // 2
+
+    # Throttle-Counter
+    tm_count = 0
+    en_count = 0
+
+    # Pre-alloc fuer Overlay-aus Modus
+    tiny = np.zeros((60, 300, 3), dtype=np.uint8)
+
     try:
         while True:
-            loop_start = time.monotonic()
-
             ret, frame = cap.read()
             if not ret or frame is None:
                 time.sleep(0.001)
@@ -439,34 +471,31 @@ def main():
 
             fc += 1
 
-            # Frame an AI-Thread senden
+            # Frame an AI-Thread senden (nur wenn nicht beschaeftigt)
             if cfg["use_roi_crop"]:
                 roi, off_x, off_y = crop_center(frame, cfg["roi_size"])
                 inferencer.submit(roi, cfg["confidence"], (off_x, off_y))
             else:
                 inferencer.submit(frame, cfg["confidence"], None)
 
-            # Minimap lesen (< 1ms)
-            tm_count = 0
-            en_count = 0
-            if cfg["minimap_enabled"]:
+            # Minimap nur jeden 3. Frame lesen (Position aendert sich langsam)
+            if cfg["minimap_enabled"] and fc % 3 == 0:
                 teammates, enemies = minimap.update(frame)
                 tm_count = len(teammates)
                 en_count = len(enemies)
 
-            # Neueste AI-Ergebnisse
+            # Neueste AI-Ergebnisse (non-blocking)
             new_dets, new_ms = inferencer.get_results()
             if new_dets is not None:
                 all_dets = new_dets
                 inf_ms = new_ms
 
-            # Zielauswahl + Aim
+            # Zielauswahl + Aim (JEDEN Frame — Latenz-kritisch!)
             targets = [d for d in all_dets if d["class_name"] in TARGET_CLASSES]
             mm = minimap if cfg["minimap_enabled"] and cfg["teammate_protection"] else None
             tx, ty, tdet = pick_best_target(targets, fw, fh, cfg, minimap=mm)
 
             aim_pos = None
-            scr_cx, scr_cy = fw / 2.0, fh / 2.0
 
             if tx is not None:
                 tracker.update(tx, ty)
@@ -498,17 +527,17 @@ def main():
             if cooldown > 0:
                 cooldown -= 1
 
-            # FPS
-            frame_times.append(time.monotonic())
+            # FPS berechnen
+            now = time.monotonic()
+            frame_times.append(now)
             if len(frame_times) > 1:
                 elapsed = frame_times[-1] - frame_times[0]
                 fps = (len(frame_times) - 1) / elapsed if elapsed > 0 else 0
 
-            # Overlay
-            if cfg["show_overlay"]:
-                h, w = frame.shape[:2]
-                hcx, hcy = w // 2, h // 2
+            # ===== DISPLAY (jeden 2. Frame — spart ~5-8ms) =====
+            render_frame = (fc % 2 == 0)
 
+            if render_frame and cfg["show_overlay"]:
                 if cfg["use_roi_crop"]:
                     half = cfg["roi_size"] // 2
                     cv2.rectangle(frame, (hcx-half, hcy-half), (hcx+half, hcy+half), (50, 50, 50), 1)
@@ -543,15 +572,16 @@ def main():
                 cv2.putText(frame, f"STR:{strength:.1f} DZ:{cfg['deadzone']} CD:{cfg['cooldown_frames']} FOV:{cfg['fov_radius']}",
                             (10, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
 
-                # Minimap-Region markieren
                 if cfg["minimap_enabled"]:
-                    mx, my, ms = cfg["minimap_x"], cfg["minimap_y"], cfg["minimap_size"]
-                    cv2.rectangle(frame, (mx, my), (mx+ms, my+ms), (255, 200, 0), 1)
+                    mmx, mmy, mms = cfg["minimap_x"], cfg["minimap_y"], cfg["minimap_size"]
+                    cv2.rectangle(frame, (mmx, mmy), (mmx+mms, mmy+mms), (255, 200, 0), 1)
 
-                disp = cv2.resize(frame, (fw // 2, fh // 2))
+                disp = cv2.resize(frame, (disp_w, disp_h), interpolation=cv2.INTER_NEAREST)
                 cv2.imshow("AIMBOT v13", disp)
-            else:
-                tiny = np.zeros((60, 300, 3), dtype=np.uint8)
+
+            elif render_frame:
+                # Overlay AUS: Minimales Status-Fenster (pre-alloc, kein neues Array)
+                tiny[:] = 0
                 nano = "NANO" if cfg["use_nano"] else "FULL"
                 roi_t = "ROI" if cfg["use_roi_crop"] else "ALL"
                 cv2.putText(tiny, f"FPS:{fps:.0f} AI:{inf_ms:.0f}ms {nano} {roi_t}",
@@ -560,18 +590,13 @@ def main():
                             (5, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1)
                 cv2.imshow("AIMBOT v13", tiny)
 
-            # Minimap Debug Fenster
-            if show_minimap_debug and cfg["minimap_enabled"]:
+            # Minimap Debug (nur wenn aktiv UND Render-Frame)
+            if render_frame and show_minimap_debug and cfg["minimap_enabled"]:
                 debug_img = minimap.get_debug_image(frame)
                 if debug_img.size > 0:
                     cv2.imshow("Minimap Debug", debug_img)
-            elif not show_minimap_debug:
-                try:
-                    cv2.destroyWindow("Minimap Debug")
-                except Exception:
-                    pass
 
-            # Tastatur
+            # Tastatur (muss JEDEN Frame pruefen!)
             key = cv2.waitKey(1) & 0xFF
             if key == 27:
                 break
