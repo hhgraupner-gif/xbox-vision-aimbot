@@ -32,6 +32,8 @@ Steuerung:
   M     = Modell-Familie wechseln
   B     = Minimap Debug an/aus
   F     = Teammate-Schutz an/aus
+  Pfeiltasten = Minimap-Position verschieben (bei Debug-Modus)
+  +/-   = Minimap groesser/kleiner
   ESC   = Beenden
 """
 
@@ -84,9 +86,9 @@ DEFAULT_CONFIG = {
     "ground_filter_ratio": 0.88,
     "min_box_height": 40,
     "minimap_enabled": True,
-    "minimap_x": 22,
-    "minimap_y": 42,
-    "minimap_size": 195,
+    "minimap_x": 40,
+    "minimap_y": 140,
+    "minimap_size": 200,
     "teammate_protection": True,
     "teammate_tolerance": 30,
     "game_fov": 100,
@@ -432,6 +434,7 @@ def main():
     print(f"\n  Tasten:")
     print(f"  A=Assist  V=Overlay  C=ROI  N=Nano/Full  M=Modell")
     print(f"  B=Minimap-Debug  F=Teammate-Schutz")
+    print(f"  Pfeile=Minimap verschieben  +/-=Minimap Groesse")
     print(f"  1/2=STR  3/4=FOV  5/6=DZ  7/8=Conf  9/0=CD  ESC=Quit")
     print("=" * 60)
 
@@ -672,6 +675,32 @@ def main():
                     tracker.reset()
                 else:
                     cfg["model_mode"] = modes[idx]
+
+            # Minimap-Position Pfeiltasten (nur wenn Debug aktiv)
+            elif show_minimap_debug and key == 82:  # Pfeil hoch
+                cfg["minimap_y"] = max(0, cfg["minimap_y"] - 5)
+                minimap.set_position(y=cfg["minimap_y"])
+                print(f"Minimap Y: {cfg['minimap_y']}")
+            elif show_minimap_debug and key == 84:  # Pfeil runter
+                cfg["minimap_y"] = min(900, cfg["minimap_y"] + 5)
+                minimap.set_position(y=cfg["minimap_y"])
+                print(f"Minimap Y: {cfg['minimap_y']}")
+            elif show_minimap_debug and key == 81:  # Pfeil links
+                cfg["minimap_x"] = max(0, cfg["minimap_x"] - 5)
+                minimap.set_position(x=cfg["minimap_x"])
+                print(f"Minimap X: {cfg['minimap_x']}")
+            elif show_minimap_debug and key == 83:  # Pfeil rechts
+                cfg["minimap_x"] = min(1700, cfg["minimap_x"] + 5)
+                minimap.set_position(x=cfg["minimap_x"])
+                print(f"Minimap X: {cfg['minimap_x']}")
+            elif show_minimap_debug and key == ord('+'):
+                cfg["minimap_size"] = min(400, cfg["minimap_size"] + 10)
+                minimap.set_position(size=cfg["minimap_size"])
+                print(f"Minimap Size: {cfg['minimap_size']}")
+            elif show_minimap_debug and key == ord('-'):
+                cfg["minimap_size"] = max(80, cfg["minimap_size"] - 10)
+                minimap.set_position(size=cfg["minimap_size"])
+                print(f"Minimap Size: {cfg['minimap_size']}")
 
     except KeyboardInterrupt:
         print("\nStop.")
