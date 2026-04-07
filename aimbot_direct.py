@@ -33,6 +33,7 @@ Steuerung:
   B     = Minimap Debug an/aus
   F     = Teammate-Schutz an/aus
   Pfeiltasten = Minimap-Position verschieben (bei Debug-Modus)
+  I/K=hoch/runter  J/L=links/rechts (Minimap, bei Debug)
   +/-   = Minimap groesser/kleiner
   ESC   = Beenden
 """
@@ -434,7 +435,7 @@ def main():
     print(f"\n  Tasten:")
     print(f"  A=Assist  V=Overlay  C=ROI  N=Nano/Full  M=Modell")
     print(f"  B=Minimap-Debug  F=Teammate-Schutz")
-    print(f"  Pfeile=Minimap verschieben  +/-=Minimap Groesse")
+    print(f"  Pfeile: I/K=hoch/runter  J/L=links/rechts  +/-=Groesse")
     print(f"  1/2=STR  3/4=FOV  5/6=DZ  7/8=Conf  9/0=CD  ESC=Quit")
     print("=" * 60)
 
@@ -676,20 +677,20 @@ def main():
                 else:
                     cfg["model_mode"] = modes[idx]
 
-            # Minimap-Position Pfeiltasten (nur wenn Debug aktiv)
-            elif show_minimap_debug and key == 82:  # Pfeil hoch
+            # Minimap-Position IJKL (nur wenn Debug aktiv)
+            elif show_minimap_debug and key == ord('i'):  # Hoch
                 cfg["minimap_y"] = max(0, cfg["minimap_y"] - 5)
                 minimap.set_position(y=cfg["minimap_y"])
                 print(f"Minimap Y: {cfg['minimap_y']}")
-            elif show_minimap_debug and key == 84:  # Pfeil runter
+            elif show_minimap_debug and key == ord('k'):  # Runter
                 cfg["minimap_y"] = min(900, cfg["minimap_y"] + 5)
                 minimap.set_position(y=cfg["minimap_y"])
                 print(f"Minimap Y: {cfg['minimap_y']}")
-            elif show_minimap_debug and key == 81:  # Pfeil links
+            elif show_minimap_debug and key == ord('j'):  # Links
                 cfg["minimap_x"] = max(0, cfg["minimap_x"] - 5)
                 minimap.set_position(x=cfg["minimap_x"])
                 print(f"Minimap X: {cfg['minimap_x']}")
-            elif show_minimap_debug and key == 83:  # Pfeil rechts
+            elif show_minimap_debug and key == ord('l'):  # Rechts
                 cfg["minimap_x"] = min(1700, cfg["minimap_x"] + 5)
                 minimap.set_position(x=cfg["minimap_x"])
                 print(f"Minimap X: {cfg['minimap_x']}")
