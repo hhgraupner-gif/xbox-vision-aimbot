@@ -1200,6 +1200,7 @@ async def download_file(filename: str):
         "test_scuf.py": Path("/app/test_scuf.py"),
         "scuf_passthrough.py": Path("/app/scuf_passthrough.py"),
         "aimbot_direct.py": Path("/app/aimbot_direct.py"),
+        "minimap_reader.py": Path("/app/minimap_reader.py"),
         "kmbox_net.py": Path("/app/backend/kmbox_net.py"),
         "yolo_onnx.py": Path("/app/backend/yolo_onnx.py"),
         "bo7_v5_640.onnx": Path("/app/backend/bo7_v5_640.onnx"),

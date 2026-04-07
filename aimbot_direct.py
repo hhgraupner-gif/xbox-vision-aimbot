@@ -1,15 +1,12 @@
 """
-AIMBOT VISION v12 — MAXIMUM PERFORMANCE
-=========================================
-Alles optimiert fuer minimale Latenz und maximale FPS.
-
-Performance-Features:
-  1. Threaded Capture (Buffer=1, 60 FPS)
-  2. Threaded Inference (AI laeuft parallel, blockt nichts)
-  3. ROI-Cropping (640x640 aus Mitte, kein Resize)
-  4. Dynamischer Modell-Switch (Nano 320 fuer Speed / Full 640 fuer Praezision)
-  5. Overlay Toggle (aus = +10-15 FPS)
-  6. Zero-Copy Pipeline (minimale Speicher-Operationen)
+AIMBOT VISION v13 — MINIMAP READER + CONFIG
+=============================================
+Neu in v13:
+  - Minimap-Reader: Erkennt Teammates (blau/gruen) auf der Minimap
+  - Teammate-Schutz: Zielt NICHT auf Spieler in Teammate-Richtung
+  - Feind-Info: Zeigt erkannte Feinde von der Minimap
+  - Config: Settings werden in config.json gespeichert/geladen
+  - Debug: Taste B zeigt Minimap-Debug-Fenster
 
 Steuerung:
   A     = Assist an/aus
@@ -22,6 +19,8 @@ Steuerung:
   V     = Overlay an/aus (aus = mehr FPS!)
   N     = Nano/Full Modell umschalten
   M     = Modell-Familie wechseln
+  B     = Minimap Debug an/aus
+  F     = Teammate-Schutz an/aus
   ESC   = Beenden
 """
 
@@ -29,6 +28,7 @@ import os
 import sys
 import time
 import math
+import json
 import threading
 from collections import deque
 
@@ -37,6 +37,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'backend'))
 import cv2
 import numpy as np
 from yolo_onnx import YOLODetector, TARGET_CLASSES, IGNORE_CLASSES
+from minimap_reader import MinimapReader
 
 try:
     import kmbox_net
@@ -46,38 +47,68 @@ except Exception:
 
 
 # ============================================================
-# HARDWARE
+# CONFIG FILE
 # ============================================================
-KMBOX_IP = "192.168.2.188"
-KMBOX_PORT = 32778
-KMBOX_UUID = "C14AE466"
-CAPTURE_DEVICE = 0
+CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+
+DEFAULT_CONFIG = {
+    "kmbox_ip": "192.168.2.188",
+    "kmbox_port": 32778,
+    "kmbox_uuid": "C14AE466",
+    "capture_device": 0,
+    "model_mode": "fps",
+    "confidence": 0.40,
+    "fov_radius": 180,
+    "strength": 0.7,
+    "deadzone": 15,
+    "max_move": 30,
+    "cooldown_frames": 4,
+    "use_roi_crop": True,
+    "roi_size": 640,
+    "target_fps": 60,
+    "show_overlay": True,
+    "use_nano": False,
+    "dead_body_ratio": 1.2,
+    "sky_filter_ratio": 0.10,
+    "ground_filter_ratio": 0.88,
+    "min_box_height": 40,
+    "minimap_enabled": True,
+    "minimap_x": 22,
+    "minimap_y": 42,
+    "minimap_size": 195,
+    "teammate_protection": True,
+    "teammate_tolerance": 30,
+    "game_fov": 100,
+}
+
+
+def load_config():
+    """Laedt Config aus JSON oder erstellt Default."""
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                saved = json.load(f)
+            cfg = DEFAULT_CONFIG.copy()
+            cfg.update(saved)
+            print(f"  Config geladen: {CONFIG_FILE}")
+            return cfg
+        except Exception as e:
+            print(f"  Config Fehler: {e} — nutze Default")
+    return DEFAULT_CONFIG.copy()
+
+
+def save_config(cfg):
+    """Speichert Config als JSON."""
+    try:
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(cfg, f, indent=2)
+    except Exception:
+        pass
+
 
 # ============================================================
-# MODELL
+# MODEL PATH
 # ============================================================
-MODEL_MODE = "fps"
-CONFIDENCE = 0.40
-FOV_RADIUS = 180
-
-# ============================================================
-# SOFT ASSIST
-# ============================================================
-STRENGTH = 0.7
-DEADZONE = 15
-MAX_MOVE = 30
-COOLDOWN_FRAMES = 4
-
-# ============================================================
-# PERFORMANCE
-# ============================================================
-USE_ROI_CROP = True
-ROI_SIZE = 640
-TARGET_FPS = 60
-SHOW_OVERLAY = True         # V-Taste: Overlay aus = +10-15 FPS!
-USE_NANO = False            # N-Taste: Nano-Modell (320px, 3x schneller)
-
-
 def get_model_path(mode, nano=False):
     base = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'backend')
     if nano:
@@ -102,16 +133,7 @@ def get_model_path(mode, nano=False):
 
 
 # ============================================================
-# FILTER
-# ============================================================
-DEAD_BODY_RATIO = 1.2
-SKY_FILTER_RATIO = 0.10
-GROUND_FILTER_RATIO = 0.88
-MIN_BOX_HEIGHT = 40
-
-
-# ============================================================
-# THREADED CAPTURE — Immer neuestes Frame, keine Wartezeit
+# THREADED CAPTURE
 # ============================================================
 class FastCapture:
     def __init__(self, device, width=1920, height=1080, fps=60):
@@ -153,10 +175,6 @@ class FastCapture:
                 return True, self.frame
             return False, None
 
-    def has_new(self):
-        with self.lock:
-            return self.new_frame
-
     def release(self):
         self.running = False
         self.thread.join(timeout=2)
@@ -164,13 +182,13 @@ class FastCapture:
 
 
 # ============================================================
-# THREADED INFERENCE — AI laeuft im Hintergrund
+# THREADED INFERENCE
 # ============================================================
 class FastInference:
     def __init__(self, detector):
         self.detector = detector
         self.input_frame = None
-        self.input_roi_info = None  # (off_x, off_y) oder None
+        self.input_roi_info = None
         self._conf = 0.40
         self.results = []
         self.inf_ms = 0.0
@@ -201,7 +219,6 @@ class FastInference:
             dets = self.detector.detect(frame, conf_threshold=conf)
             ms = (time.monotonic() - t0) * 1000
 
-            # ROI Offset anwenden
             if roi_info:
                 off_x, off_y = roi_info
                 for d in dets:
@@ -274,10 +291,17 @@ class SmoothTracker:
 
 
 # ============================================================
-# ZIELAUSWAHL
+# ZIELAUSWAHL MIT TEAMMATE-SCHUTZ
 # ============================================================
-def pick_best_target(detections, frame_w, frame_h):
+def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None):
     cx, cy = frame_w / 2.0, frame_h / 2.0
+    fov = cfg["fov_radius"]
+    dead_ratio = cfg["dead_body_ratio"]
+    min_h = cfg["min_box_height"]
+    sky = cfg["sky_filter_ratio"]
+    ground = cfg["ground_filter_ratio"]
+    tm_protect = cfg["teammate_protection"] and minimap is not None
+
     best = None
     best_dist = float('inf')
 
@@ -286,14 +310,14 @@ def pick_best_target(detections, frame_w, frame_h):
         bw, bh = x2 - x1, y2 - y1
         cls = det["class_name"]
 
-        if bw > bh * DEAD_BODY_RATIO:
+        if bw > bh * dead_ratio:
             continue
-        if bh < MIN_BOX_HEIGHT:
+        if bh < min_h:
             continue
         mid_y = (y1 + y2) / 2.0
-        if mid_y < frame_h * SKY_FILTER_RATIO:
+        if mid_y < frame_h * sky:
             continue
-        if mid_y > frame_h * GROUND_FILTER_RATIO:
+        if mid_y > frame_h * ground:
             continue
         if cls in IGNORE_CLASSES:
             continue
@@ -304,7 +328,13 @@ def pick_best_target(detections, frame_w, frame_h):
             tx, ty = (x1 + x2) / 2.0, y1 + bh * 0.35
 
         dist = math.sqrt((tx - cx) ** 2 + (ty - cy) ** 2)
-        if dist > FOV_RADIUS:
+        if dist > fov:
+            continue
+
+        # TEAMMATE-SCHUTZ: Pruefen ob Ziel in Richtung eines Teammates liegt
+        if tm_protect and minimap.is_teammate_direction(
+            tx, cx, fov_deg=cfg["game_fov"], tolerance=cfg["teammate_tolerance"]
+        ):
             continue
 
         effective_dist = dist * (0.5 if cls == "head" else 1.0)
@@ -331,46 +361,58 @@ def crop_center(frame, crop_size):
 # HAUPTPROGRAMM
 # ============================================================
 def main():
-    global CONFIDENCE, FOV_RADIUS, STRENGTH, DEADZONE, MODEL_MODE
-    global COOLDOWN_FRAMES, USE_ROI_CROP, SHOW_OVERLAY, USE_NANO
+    cfg = load_config()
 
     print("=" * 60)
-    print("  AIMBOT v12 — MAXIMUM PERFORMANCE")
-    print("  Threaded Capture + Threaded AI + ROI + Nano-Switch")
+    print("  AIMBOT v13 — MINIMAP READER + CONFIG")
+    print("  Teammate-Schutz | Auto-Save | Debug-Modus")
     print("=" * 60)
 
     # KMBox
     if KMBOX_AVAILABLE:
         try:
-            kmbox_net.init(KMBOX_IP, KMBOX_PORT, KMBOX_UUID)
+            kmbox_net.init(cfg["kmbox_ip"], cfg["kmbox_port"], cfg["kmbox_uuid"])
             print(f"  KMBox: OK")
         except Exception as e:
             print(f"  KMBox: {e}")
 
     # YOLO
-    model_path = get_model_path(MODEL_MODE, USE_NANO)
+    model_path = get_model_path(cfg["model_mode"], cfg["use_nano"])
     if not model_path:
         print("FEHLER: Kein Modell!")
         return
     print(f"  Modell: {os.path.basename(model_path)}")
     detector = YOLODetector(model_path)
 
-    # Threaded Capture
+    # Capture
     print(f"\n  Starte Threads...")
     try:
-        cap = FastCapture(CAPTURE_DEVICE, 1920, 1080, TARGET_FPS)
+        cap = FastCapture(cfg["capture_device"], 1920, 1080, cfg["target_fps"])
     except RuntimeError as e:
         print(f"  FEHLER: {e}")
         return
     fw, fh = cap.width, cap.height
 
-    # Threaded Inference
+    # Inference Thread
     inferencer = FastInference(detector)
     print(f"  AI-Thread: gestartet")
 
-    print(f"  ROI: {'EIN' if USE_ROI_CROP else 'AUS'} ({ROI_SIZE}x{ROI_SIZE})")
+    # Minimap Reader
+    minimap = MinimapReader(
+        x=cfg["minimap_x"],
+        y=cfg["minimap_y"],
+        size=cfg["minimap_size"],
+    )
+    print(f"  Minimap: {'EIN' if cfg['minimap_enabled'] else 'AUS'} "
+          f"(x={cfg['minimap_x']}, y={cfg['minimap_y']}, {cfg['minimap_size']}px)")
+    print(f"  Teammate-Schutz: {'EIN' if cfg['teammate_protection'] else 'AUS'} "
+          f"(Toleranz: {cfg['teammate_tolerance']}°)")
+
+    print(f"  ROI: {'EIN' if cfg['use_roi_crop'] else 'AUS'} ({cfg['roi_size']}x{cfg['roi_size']})")
+    print(f"  Config: {CONFIG_FILE}")
     print(f"\n  Tasten:")
     print(f"  A=Assist  V=Overlay  C=ROI  N=Nano/Full  M=Modell")
+    print(f"  B=Minimap-Debug  F=Teammate-Schutz")
     print(f"  1/2=STR  3/4=FOV  5/6=DZ  7/8=Conf  9/0=CD  ESC=Quit")
     print("=" * 60)
 
@@ -378,14 +420,12 @@ def main():
     active = True
     fc = 0
     fps = 0.0
-    fps_t = time.monotonic()
-    strength = STRENGTH
+    strength = cfg["strength"]
     cooldown = 0
     all_dets = []
     inf_ms = 0.0
-    last_submit = 0.0
+    show_minimap_debug = False
 
-    # FPS Tracking (letzte 60 Frames)
     frame_times = deque(maxlen=60)
 
     try:
@@ -399,14 +439,22 @@ def main():
 
             fc += 1
 
-            # Frame an AI-Thread senden (nur wenn der vorherige fertig ist)
-            if USE_ROI_CROP:
-                roi, off_x, off_y = crop_center(frame, ROI_SIZE)
-                inferencer.submit(roi, CONFIDENCE, (off_x, off_y))
+            # Frame an AI-Thread senden
+            if cfg["use_roi_crop"]:
+                roi, off_x, off_y = crop_center(frame, cfg["roi_size"])
+                inferencer.submit(roi, cfg["confidence"], (off_x, off_y))
             else:
-                inferencer.submit(frame, CONFIDENCE, None)
+                inferencer.submit(frame, cfg["confidence"], None)
 
-            # Neueste Ergebnisse abholen (non-blocking)
+            # Minimap lesen (< 1ms)
+            tm_count = 0
+            en_count = 0
+            if cfg["minimap_enabled"]:
+                teammates, enemies = minimap.update(frame)
+                tm_count = len(teammates)
+                en_count = len(enemies)
+
+            # Neueste AI-Ergebnisse
             new_dets, new_ms = inferencer.get_results()
             if new_dets is not None:
                 all_dets = new_dets
@@ -414,10 +462,11 @@ def main():
 
             # Zielauswahl + Aim
             targets = [d for d in all_dets if d["class_name"] in TARGET_CLASSES]
-            tx, ty, tdet = pick_best_target(targets, fw, fh)
+            mm = minimap if cfg["minimap_enabled"] and cfg["teammate_protection"] else None
+            tx, ty, tdet = pick_best_target(targets, fw, fh, cfg, minimap=mm)
 
             aim_pos = None
-            cx, cy = fw / 2.0, fh / 2.0
+            scr_cx, scr_cy = fw / 2.0, fh / 2.0
 
             if tx is not None:
                 tracker.update(tx, ty)
@@ -426,21 +475,21 @@ def main():
                     aim_pos = pos
 
                     if active and tracker.locked:
-                        dx = pos[0] - cx
-                        dy = pos[1] - cy
+                        dx = pos[0] - scr_cx
+                        dy = pos[1] - scr_cy
                         dist = math.sqrt(dx * dx + dy * dy)
 
-                        if dist > DEADZONE and cooldown <= 0:
+                        if dist > cfg["deadzone"] and cooldown <= 0:
                             mx = dx * strength
                             my = dy * strength
-                            mx = max(-MAX_MOVE, min(MAX_MOVE, mx))
-                            my = max(-MAX_MOVE, min(MAX_MOVE, my))
+                            mx = max(-cfg["max_move"], min(cfg["max_move"], mx))
+                            my = max(-cfg["max_move"], min(cfg["max_move"], my))
                             ix = int(round(mx))
                             iy = int(round(my))
                             if (abs(ix) > 0 or abs(iy) > 0) and KMBOX_AVAILABLE:
                                 try:
                                     kmbox_net.move(ix, iy)
-                                    cooldown = COOLDOWN_FRAMES
+                                    cooldown = cfg["cooldown_frames"]
                                 except Exception:
                                     pass
             else:
@@ -449,23 +498,23 @@ def main():
             if cooldown > 0:
                 cooldown -= 1
 
-            # FPS berechnen
+            # FPS
             frame_times.append(time.monotonic())
             if len(frame_times) > 1:
                 elapsed = frame_times[-1] - frame_times[0]
                 fps = (len(frame_times) - 1) / elapsed if elapsed > 0 else 0
 
-            # Overlay (optional — ausschalten fuer +10-15 FPS)
-            if SHOW_OVERLAY:
+            # Overlay
+            if cfg["show_overlay"]:
                 h, w = frame.shape[:2]
                 hcx, hcy = w // 2, h // 2
 
-                if USE_ROI_CROP:
-                    half = ROI_SIZE // 2
+                if cfg["use_roi_crop"]:
+                    half = cfg["roi_size"] // 2
                     cv2.rectangle(frame, (hcx-half, hcy-half), (hcx+half, hcy+half), (50, 50, 50), 1)
 
                 col = (0, 200, 100) if active else (80, 80, 80)
-                cv2.circle(frame, (hcx, hcy), FOV_RADIUS, col, 1)
+                cv2.circle(frame, (hcx, hcy), cfg["fov_radius"], col, 1)
                 cv2.line(frame, (hcx-10, hcy), (hcx+10, hcy), (255, 255, 255), 1)
                 cv2.line(frame, (hcx, hcy-10), (hcx, hcy+10), (255, 255, 255), 1)
 
@@ -483,25 +532,44 @@ def main():
                     cv2.circle(frame, (ax, ay), 5, (0, 200, 100), -1)
 
                 mode = "ON" if active else "OFF"
-                nano = "NANO" if USE_NANO else "FULL"
-                roi = "ROI" if USE_ROI_CROP else "ALL"
-                cv2.putText(frame, f"FPS:{fps:.0f} AI:{inf_ms:.0f}ms {nano} {roi} | {mode}",
+                nano = "NANO" if cfg["use_nano"] else "FULL"
+                roi_t = "ROI" if cfg["use_roi_crop"] else "ALL"
+                tm_t = f"TM:{tm_count}" if cfg["minimap_enabled"] else ""
+                en_t = f"EN:{en_count}" if cfg["minimap_enabled"] and en_count > 0 else ""
+                prot = "SCHUTZ" if cfg["teammate_protection"] else ""
+
+                cv2.putText(frame, f"FPS:{fps:.0f} AI:{inf_ms:.0f}ms {nano} {roi_t} | {mode} {tm_t} {en_t} {prot}",
                             (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 200, 100), 2)
-                cv2.putText(frame, f"STR:{strength:.1f} DZ:{DEADZONE} CD:{COOLDOWN_FRAMES} FOV:{FOV_RADIUS}",
+                cv2.putText(frame, f"STR:{strength:.1f} DZ:{cfg['deadzone']} CD:{cfg['cooldown_frames']} FOV:{cfg['fov_radius']}",
                             (10, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
 
+                # Minimap-Region markieren
+                if cfg["minimap_enabled"]:
+                    mx, my, ms = cfg["minimap_x"], cfg["minimap_y"], cfg["minimap_size"]
+                    cv2.rectangle(frame, (mx, my), (mx+ms, my+ms), (255, 200, 0), 1)
+
                 disp = cv2.resize(frame, (fw // 2, fh // 2))
-                cv2.imshow("AIMBOT v12", disp)
+                cv2.imshow("AIMBOT v13", disp)
             else:
-                # Minimales Fenster fuer Tastatur-Input
                 tiny = np.zeros((60, 300, 3), dtype=np.uint8)
-                nano = "NANO" if USE_NANO else "FULL"
-                roi = "ROI" if USE_ROI_CROP else "ALL"
-                cv2.putText(tiny, f"FPS:{fps:.0f} AI:{inf_ms:.0f}ms {nano} {roi}",
+                nano = "NANO" if cfg["use_nano"] else "FULL"
+                roi_t = "ROI" if cfg["use_roi_crop"] else "ALL"
+                cv2.putText(tiny, f"FPS:{fps:.0f} AI:{inf_ms:.0f}ms {nano} {roi_t}",
                             (5, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 200, 100), 1)
                 cv2.putText(tiny, f"STR:{strength:.1f} | V=Overlay | ESC=Quit",
                             (5, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1)
-                cv2.imshow("AIMBOT v12", tiny)
+                cv2.imshow("AIMBOT v13", tiny)
+
+            # Minimap Debug Fenster
+            if show_minimap_debug and cfg["minimap_enabled"]:
+                debug_img = minimap.get_debug_image(frame)
+                if debug_img.size > 0:
+                    cv2.imshow("Minimap Debug", debug_img)
+            elif not show_minimap_debug:
+                try:
+                    cv2.destroyWindow("Minimap Debug")
+                except Exception:
+                    pass
 
             # Tastatur
             key = cv2.waitKey(1) & 0xFF
@@ -513,68 +581,80 @@ def main():
                 if not active:
                     tracker.reset()
             elif key == ord('v'):
-                SHOW_OVERLAY = not SHOW_OVERLAY
-                print(f"Overlay: {'EIN' if SHOW_OVERLAY else 'AUS (Max FPS!)'}")
+                cfg["show_overlay"] = not cfg["show_overlay"]
+                print(f"Overlay: {'EIN' if cfg['show_overlay'] else 'AUS (Max FPS!)'}")
             elif key == ord('c'):
-                USE_ROI_CROP = not USE_ROI_CROP
-                print(f"ROI: {'EIN' if USE_ROI_CROP else 'AUS'}")
+                cfg["use_roi_crop"] = not cfg["use_roi_crop"]
+                print(f"ROI: {'EIN' if cfg['use_roi_crop'] else 'AUS'}")
+            elif key == ord('b'):
+                show_minimap_debug = not show_minimap_debug
+                print(f"Minimap Debug: {'EIN' if show_minimap_debug else 'AUS'}")
+            elif key == ord('f'):
+                cfg["teammate_protection"] = not cfg["teammate_protection"]
+                print(f"Teammate-Schutz: {'EIN' if cfg['teammate_protection'] else 'AUS'}")
             elif key == ord('n'):
-                USE_NANO = not USE_NANO
-                np2 = get_model_path(MODEL_MODE, USE_NANO)
+                cfg["use_nano"] = not cfg["use_nano"]
+                np2 = get_model_path(cfg["model_mode"], cfg["use_nano"])
                 if np2:
-                    print(f"Lade: {'NANO' if USE_NANO else 'FULL'} ({os.path.basename(np2)})...")
+                    print(f"Lade: {'NANO' if cfg['use_nano'] else 'FULL'} ({os.path.basename(np2)})...")
                     new_det = YOLODetector(np2)
                     inferencer.swap_detector(new_det)
                     tracker.reset()
                 else:
-                    USE_NANO = not USE_NANO
+                    cfg["use_nano"] = not cfg["use_nano"]
                     print("Modell nicht gefunden!")
             elif key == ord('1'):
                 strength = max(0.1, round(strength - 0.1, 1))
+                cfg["strength"] = strength
                 print(f"Strength: {strength}")
             elif key == ord('2'):
                 strength = min(5.0, round(strength + 0.1, 1))
+                cfg["strength"] = strength
                 print(f"Strength: {strength}")
             elif key == ord('3'):
-                FOV_RADIUS = max(50, FOV_RADIUS - 25)
-                print(f"FOV: {FOV_RADIUS}px")
+                cfg["fov_radius"] = max(50, cfg["fov_radius"] - 25)
+                print(f"FOV: {cfg['fov_radius']}px")
             elif key == ord('4'):
-                FOV_RADIUS = min(400, FOV_RADIUS + 25)
-                print(f"FOV: {FOV_RADIUS}px")
+                cfg["fov_radius"] = min(400, cfg["fov_radius"] + 25)
+                print(f"FOV: {cfg['fov_radius']}px")
             elif key == ord('5'):
-                DEADZONE = max(5, DEADZONE - 5)
-                print(f"Deadzone: {DEADZONE}px")
+                cfg["deadzone"] = max(5, cfg["deadzone"] - 5)
+                print(f"Deadzone: {cfg['deadzone']}px")
             elif key == ord('6'):
-                DEADZONE = min(60, DEADZONE + 5)
-                print(f"Deadzone: {DEADZONE}px")
+                cfg["deadzone"] = min(60, cfg["deadzone"] + 5)
+                print(f"Deadzone: {cfg['deadzone']}px")
             elif key == ord('7'):
-                CONFIDENCE = max(0.15, round(CONFIDENCE - 0.05, 2))
-                print(f"Confidence: {CONFIDENCE}")
+                cfg["confidence"] = max(0.15, round(cfg["confidence"] - 0.05, 2))
+                print(f"Confidence: {cfg['confidence']}")
             elif key == ord('8'):
-                CONFIDENCE = min(0.80, round(CONFIDENCE + 0.05, 2))
-                print(f"Confidence: {CONFIDENCE}")
+                cfg["confidence"] = min(0.80, round(cfg["confidence"] + 0.05, 2))
+                print(f"Confidence: {cfg['confidence']}")
             elif key == ord('9'):
-                COOLDOWN_FRAMES = max(0, COOLDOWN_FRAMES - 1)
-                print(f"Cooldown: {COOLDOWN_FRAMES}")
+                cfg["cooldown_frames"] = max(0, cfg["cooldown_frames"] - 1)
+                print(f"Cooldown: {cfg['cooldown_frames']}")
             elif key == ord('0'):
-                COOLDOWN_FRAMES = min(10, COOLDOWN_FRAMES + 1)
-                print(f"Cooldown: {COOLDOWN_FRAMES}")
+                cfg["cooldown_frames"] = min(10, cfg["cooldown_frames"] + 1)
+                print(f"Cooldown: {cfg['cooldown_frames']}")
             elif key == ord('m'):
                 modes = ["fps", "coco"]
-                idx = modes.index(MODEL_MODE) if MODEL_MODE in modes else 0
-                MODEL_MODE = modes[(idx + 1) % len(modes)]
-                np2 = get_model_path(MODEL_MODE, USE_NANO)
+                idx = modes.index(cfg["model_mode"]) if cfg["model_mode"] in modes else 0
+                cfg["model_mode"] = modes[(idx + 1) % len(modes)]
+                np2 = get_model_path(cfg["model_mode"], cfg["use_nano"])
                 if np2:
-                    print(f"Lade: {MODEL_MODE}...")
+                    print(f"Lade: {cfg['model_mode']}...")
                     new_det = YOLODetector(np2)
                     inferencer.swap_detector(new_det)
                     tracker.reset()
                 else:
-                    MODEL_MODE = modes[idx]
+                    cfg["model_mode"] = modes[idx]
 
     except KeyboardInterrupt:
         print("\nStop.")
     finally:
+        # Config speichern bei Beenden
+        save_config(cfg)
+        print(f"  Config gespeichert: {CONFIG_FILE}")
+
         inferencer.stop()
         cap.release()
         cv2.destroyAllWindows()
