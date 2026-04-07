@@ -103,7 +103,7 @@ DEFAULT_CONFIG = {
     "minimap_y": 140,
     "minimap_size": 200,
     "teammate_protection": True,
-    "teammate_tolerance": 30,
+    "teammate_tolerance": 45,
     "game_fov": 100,
     "input_mode": "auto",
     "titan_speed_x": 55.0,
@@ -340,7 +340,7 @@ class SmoothTracker:
 
     def mark_lost(self):
         self.lost += 1
-        if self.lost > 8:
+        if self.lost > 4:
             self.reset()
 
     def get_position(self, predict_frames=0):
@@ -379,6 +379,14 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
     ground = cfg["ground_filter_ratio"]
     tm_protect = cfg["teammate_protection"] and minimap is not None
 
+    # Dynamische Teammate-Toleranz: Breiter wenn Teammates nah sind
+    tm_tolerance = cfg["teammate_tolerance"]
+    if tm_protect and minimap.teammates:
+        for tm in minimap.teammates:
+            if tm["distance"] < minimap.size * 0.4:
+                tm_tolerance = max(tm_tolerance, 65)
+                break
+
     best = None
     best_score = float('inf')
 
@@ -408,9 +416,9 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
         if dist > fov:
             continue
 
-        # TEAMMATE-SCHUTZ
+        # TEAMMATE-SCHUTZ (dynamische Toleranz)
         if tm_protect and minimap.is_teammate_direction(
-            tx, cx, fov_deg=cfg["game_fov"], tolerance=cfg["teammate_tolerance"]
+            tx, cx, fov_deg=cfg["game_fov"], tolerance=tm_tolerance
         ):
             continue
 
