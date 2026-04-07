@@ -94,10 +94,10 @@ DEFAULT_CONFIG = {
     "target_fps": 60,
     "show_overlay": True,
     "use_nano": False,
-    "dead_body_ratio": 1.2,
+    "dead_body_ratio": 1.0,
     "sky_filter_ratio": 0.10,
     "ground_filter_ratio": 0.88,
-    "min_box_height": 40,
+    "min_box_height": 45,
     "minimap_enabled": True,
     "minimap_x": 40,
     "minimap_y": 140,
@@ -343,14 +343,17 @@ class SmoothTracker:
         if self.lost > 8:
             self.reset()
 
-    def get_position(self, predict_frames=2):
-        """Gibt vorhergesagte Position zurueck (wohin das Ziel sich bewegt)."""
+    def get_position(self, predict_frames=0):
+        """Gibt Position zurueck. predict_frames=0 fuer direkte Position."""
         if self.x is None:
             return None
-        # Prediction: Aktuelle Position + Geschwindigkeit * Frames voraus
-        px = self.x + self.vx * predict_frames
-        py = self.y + self.vy * predict_frames
-        return (px, py)
+        if predict_frames > 0 and self.frames > 3:
+            # Prediction nur wenn genug Daten UND Velocity stabil
+            if abs(self.vx) > 0.5 or abs(self.vy) > 0.5:
+                px = self.x + self.vx * predict_frames
+                py = self.y + self.vy * predict_frames
+                return (px, py)
+        return (self.x, self.y)
 
     def get_raw_position(self):
         """Aktuelle Position ohne Prediction."""
@@ -422,11 +425,11 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
         if bh > 80:
             score *= 0.7
 
-        # STICKY TARGET: Aktuelles Ziel stark bevorzugen
+        # STICKY TARGET: Aktuelles Ziel bevorzugen (aber nicht zu stark)
         if sticky_pos is not None:
             stick_dist = math.sqrt((tx - sticky_pos[0]) ** 2 + (ty - sticky_pos[1]) ** 2)
-            if stick_dist < 80:  # Ziel ist nah am aktuellen Lock
-                score *= 0.3   # Starker Bonus → nicht wechseln!
+            if stick_dist < 60:
+                score *= 0.5
 
         if score < best_score:
             best_score = score
@@ -592,8 +595,8 @@ def main():
 
             if tx is not None:
                 tracker.update(tx, ty)
-                # Prediction: Zielt wohin der Gegner sich bewegt
-                pos = tracker.get_position(predict_frames=2)
+                # Prediction nur bei stabiler Velocity, sonst direkt
+                pos = tracker.get_position(predict_frames=1)
                 if pos:
                     aim_pos = pos
 
@@ -621,11 +624,11 @@ def main():
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
                                 # KMBOX: Maus-Pixel-Bewegungen
                                 if dist > 100:
-                                    dyn_str = strength * 1.5
-                                elif dist > 50:
+                                    dyn_str = strength * 1.3
+                                elif dist > 40:
                                     dyn_str = strength
                                 else:
-                                    dyn_str = strength * 0.6
+                                    dyn_str = strength * 0.85
 
                                 mx = dx * dyn_str
                                 my = dy * dyn_str
