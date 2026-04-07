@@ -22,24 +22,26 @@ import math
 
 # ============================================================
 # HSV-Farbbereiche (OpenCV: H=0-180, S=0-255, V=0-255)
+# Strenge Filter: Spieler-Icons sind SEHR gesaettigt + hell,
+# Karten-Elemente sind blass/dunkel → hohe S/V Schwellen
 # ============================================================
 
-# Teammates (blau)
-BLUE_LOW = np.array([95, 80, 80])
-BLUE_HIGH = np.array([130, 255, 255])
+# Teammates (blau) — Helles, gesaettigtes Blau
+BLUE_LOW = np.array([100, 150, 150])
+BLUE_HIGH = np.array([125, 255, 255])
 
-# Freunde (gruen)
-GREEN_LOW = np.array([35, 80, 80])
-GREEN_HIGH = np.array([85, 255, 255])
+# Freunde (gruen) — Helles, gesaettigtes Gruen
+GREEN_LOW = np.array([40, 150, 150])
+GREEN_HIGH = np.array([80, 255, 255])
 
-# Feinde (rot) — Rot wrapt in HSV um 0/180!
-RED_LOW_A = np.array([0, 120, 120])
-RED_HIGH_A = np.array([12, 255, 255])
-RED_LOW_B = np.array([168, 120, 120])
+# Feinde (rot) — Helles, gesaettigtes Rot (wrapt um 0/180!)
+RED_LOW_A = np.array([0, 150, 150])
+RED_HIGH_A = np.array([8, 255, 255])
+RED_LOW_B = np.array([172, 150, 150])
 RED_HIGH_B = np.array([180, 255, 255])
 
-# Minimum Blob-Flaeche (Pixel) um als Icon zu zaehlen
-MIN_BLOB_AREA = 12
+# Minimum Blob-Flaeche (Pixel) — Spieler-Icons sind groesser als Rauschen
+MIN_BLOB_AREA = 30
 
 
 class MinimapReader:
@@ -100,11 +102,15 @@ class MinimapReader:
 
         cx = self.size // 2
         cy = self.size // 2
+        max_dist = self.size * 0.45  # Max 45% vom Zentrum (Spieler nicht am Rand)
         results = []
 
         for c in contours:
             area = cv2.contourArea(c)
             if area < MIN_BLOB_AREA:
+                continue
+            # Zu grosse Blobs sind Karten-Elemente, keine Spieler-Icons
+            if area > 500:
                 continue
 
             M = cv2.moments(c)
@@ -123,7 +129,10 @@ class MinimapReader:
             angle = math.degrees(math.atan2(dx, dy)) % 360
 
             # Zu nah am Zentrum = eigener Spieler, ignorieren
-            if dist < 8:
+            if dist < 10:
+                continue
+            # Zu weit weg = wahrscheinlich Karten-Artefakt
+            if dist > max_dist:
                 continue
 
             results.append({
