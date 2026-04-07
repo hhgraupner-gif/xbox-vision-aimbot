@@ -85,10 +85,10 @@ DEFAULT_CONFIG = {
     "model_mode": "fps",
     "confidence": 0.40,
     "fov_radius": 180,
-    "strength": 0.7,
-    "deadzone": 20,
-    "max_move": 40,
-    "cooldown_frames": 3,
+    "strength": 0.35,
+    "deadzone": 30,
+    "max_move": 18,
+    "cooldown_frames": 4,
     "use_roi_crop": True,
     "roi_size": 640,
     "target_fps": 60,
@@ -625,9 +625,6 @@ def main():
                         dist = math.sqrt(dx * dx + dy * dy)
 
                         if dist > cfg["deadzone"] and cooldown <= 0:
-                            # Anti-Oszillation: Daempft wenn Aim hin-und-her pendelt
-                            osc_damp = tracker.check_oscillation(dx, dy)
-
                             if input_mode == "titan" and titan:
                                 sx, sy = pixels_to_stick(
                                     dx, dy, fw, fh,
@@ -635,6 +632,7 @@ def main():
                                     speed_x=cfg["titan_speed_x"],
                                     speed_y=cfg["titan_speed_y"],
                                 )
+                                osc_damp = tracker.check_oscillation(dx, dy)
                                 titan.set_aim(sx * osc_damp, sy * osc_damp)
                                 if cfg["anti_recoil_enabled"] and titan.is_firing():
                                     recoil_y = get_recoil_profile(cfg["recoil_profile"])
@@ -642,18 +640,16 @@ def main():
                                 cooldown = cfg["cooldown_frames"]
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
-                                # SMOOTH CURVE: sqrt-basiert statt Stufen
-                                # Kleine dist → sanft, grosse dist → stark
-                                curve = math.sqrt(dist / cfg["fov_radius"])
-                                dyn_str = strength * curve * osc_damp
-
-                                mx = dx * dyn_str
-                                my = dy * dyn_str
-                                mx = max(-cfg["max_move"], min(cfg["max_move"], mx))
-                                my = max(-cfg["max_move"], min(cfg["max_move"], my))
+                                # SOFT ASSIST: Einfacher sanfter Stupser
+                                mx = dx * strength
+                                my = dy * strength
+                                # Sanft cappen
+                                limit = cfg["max_move"]
+                                mx = max(-limit, min(limit, mx))
+                                my = max(-limit, min(limit, my))
                                 ix = int(round(mx))
                                 iy = int(round(my))
-                                if abs(ix) > 0 or abs(iy) > 0:
+                                if abs(ix) > 1 or abs(iy) > 1:
                                     try:
                                         kmbox_net.move(ix, iy)
                                         cooldown = cfg["cooldown_frames"]
