@@ -570,10 +570,9 @@ def main():
     # Pre-alloc fuer Overlay-aus Modus
     tiny = np.zeros((60, 300, 3), dtype=np.uint8)
 
-    # INSTANT REPLAY: Speichert letzte ~20 Sekunden (30fps, halbe Aufloesung)
-    REPLAY_FPS = 30
+    # INSTANT REPLAY: Speichert letzte ~20 Sekunden
     REPLAY_SECONDS = 20
-    replay_buffer = deque(maxlen=REPLAY_FPS * REPLAY_SECONDS)
+    replay_buffer = deque(maxlen=1200)  # Grosszuegig, wird per Zeit begrenzt
     replay_saving = False
 
     def save_replay():
@@ -587,19 +586,27 @@ def main():
             nonlocal replay_saving
             ts = time.strftime("%Y%m%d_%H%M%S")
             path = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"clip_{ts}.mp4")
-            h, w = frames_copy[0].shape[:2]
+            h, w = frames_copy[0][0].shape[:2]
+
+            # Echte FPS aus Timestamps berechnen
+            t_first = frames_copy[0][1]
+            t_last = frames_copy[-1][1]
+            duration = t_last - t_first
+            real_fps = len(frames_copy) / duration if duration > 0 else 30
+            real_fps = max(15, min(60, real_fps))
+
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            writer = cv2.VideoWriter(path, fourcc, REPLAY_FPS, (w, h))
-            for f in frames_copy:
+            writer = cv2.VideoWriter(path, fourcc, real_fps, (w, h))
+            for f, _ in frames_copy:
                 writer.write(f)
             writer.release()
-            print(f"  CLIP GESPEICHERT: {path} ({len(frames_copy)} Frames)")
+            secs = len(frames_copy) / real_fps
+            print(f"  CLIP GESPEICHERT: {path} ({secs:.0f}s, {real_fps:.0f}fps)")
             replay_saving = False
 
         threading.Thread(target=_write, daemon=True).start()
 
-    print(f"  Replay: {REPLAY_SECONDS}s Buffer ({REPLAY_FPS}fps)")
-    print(f"  P = Clip speichern (letzte {REPLAY_SECONDS}s)")
+    print(f"  Replay: ~{REPLAY_SECONDS}s Buffer | P = Clip speichern")
 
     try:
         while True:
@@ -752,9 +759,13 @@ def main():
                 disp = cv2.resize(frame, (disp_w, disp_h), interpolation=cv2.INTER_NEAREST)
                 cv2.imshow("AIMBOT v14", disp)
 
-                # Replay Buffer fuellen (mit Overlay, halbe Aufloesung)
+                # Replay Buffer fuellen (mit Overlay + Timestamp)
                 if not replay_saving:
-                    replay_buffer.append(disp.copy())
+                    now_ts = time.monotonic()
+                    replay_buffer.append((disp.copy(), now_ts))
+                    # Alte Frames entfernen (aelter als 20s)
+                    while replay_buffer and (now_ts - replay_buffer[0][1]) > REPLAY_SECONDS:
+                        replay_buffer.popleft()
 
             elif render_frame:
                 # Overlay AUS: Minimales Status-Fenster (pre-alloc, kein neues Array)
