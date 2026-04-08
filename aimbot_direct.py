@@ -640,13 +640,20 @@ def main():
                                 cooldown = cfg["cooldown_frames"]
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
-                                # SOFT ASSIST: Einfacher sanfter Stupser
-                                mx = dx * strength
-                                my = dy * strength
-                                # Sanft cappen
-                                limit = cfg["max_move"]
-                                mx = max(-limit, min(limit, mx))
-                                my = max(-limit, min(limit, my))
+                                # SOFT ASSIST: Sanfter Stupser, etwas staerker im Nahkampf
+                                s = strength
+                                lim = cfg["max_move"]
+                                # Nahkampf-Boost: Gegner gross auf Screen = nah
+                                if tdet:
+                                    bh = tdet["bbox"][3] - tdet["bbox"][1]
+                                    if bh > 90:
+                                        s = strength * 1.6
+                                        lim = int(lim * 1.4)
+
+                                mx = dx * s
+                                my = dy * s
+                                mx = max(-lim, min(lim, mx))
+                                my = max(-lim, min(lim, my))
                                 ix = int(round(mx))
                                 iy = int(round(my))
                                 if abs(ix) > 1 or abs(iy) > 1:
