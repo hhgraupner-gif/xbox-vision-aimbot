@@ -34,6 +34,7 @@ Steuerung:
   M     = Modell-Familie wechseln
   B     = Minimap Debug an/aus
   F     = Teammate-Schutz an/aus
+  P     = CLIP SPEICHERN (letzte 20 Sekunden!)
   Pfeiltasten = Minimap-Position verschieben (bei Debug-Modus)
   I/K=hoch/runter  J/L=links/rechts (Minimap, bei Debug)
   +/-   = Minimap groesser/kleiner
@@ -569,6 +570,37 @@ def main():
     # Pre-alloc fuer Overlay-aus Modus
     tiny = np.zeros((60, 300, 3), dtype=np.uint8)
 
+    # INSTANT REPLAY: Speichert letzte ~20 Sekunden (30fps, halbe Aufloesung)
+    REPLAY_FPS = 30
+    REPLAY_SECONDS = 20
+    replay_buffer = deque(maxlen=REPLAY_FPS * REPLAY_SECONDS)
+    replay_saving = False
+
+    def save_replay():
+        nonlocal replay_saving
+        if replay_saving or len(replay_buffer) < 10:
+            return
+        replay_saving = True
+        frames_copy = list(replay_buffer)
+
+        def _write():
+            nonlocal replay_saving
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            path = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"clip_{ts}.mp4")
+            h, w = frames_copy[0].shape[:2]
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            writer = cv2.VideoWriter(path, fourcc, REPLAY_FPS, (w, h))
+            for f in frames_copy:
+                writer.write(f)
+            writer.release()
+            print(f"  CLIP GESPEICHERT: {path} ({len(frames_copy)} Frames)")
+            replay_saving = False
+
+        threading.Thread(target=_write, daemon=True).start()
+
+    print(f"  Replay: {REPLAY_SECONDS}s Buffer ({REPLAY_FPS}fps)")
+    print(f"  P = Clip speichern (letzte {REPLAY_SECONDS}s)")
+
     try:
         while True:
             ret, frame = cap.read()
@@ -720,6 +752,10 @@ def main():
                 disp = cv2.resize(frame, (disp_w, disp_h), interpolation=cv2.INTER_NEAREST)
                 cv2.imshow("AIMBOT v14", disp)
 
+                # Replay Buffer fuellen (mit Overlay, halbe Aufloesung)
+                if not replay_saving:
+                    replay_buffer.append(disp.copy())
+
             elif render_frame:
                 # Overlay AUS: Minimales Status-Fenster (pre-alloc, kein neues Array)
                 tiny[:] = 0
@@ -758,6 +794,12 @@ def main():
             elif key == ord('f'):
                 cfg["teammate_protection"] = not cfg["teammate_protection"]
                 print(f"Teammate-Schutz: {'EIN' if cfg['teammate_protection'] else 'AUS'}")
+            elif key == ord('p'):
+                if not replay_saving:
+                    print(f"  Speichere Clip ({len(replay_buffer)} Frames)...")
+                    save_replay()
+                else:
+                    print("  Clip wird gerade gespeichert, warte...")
             elif key == ord('n'):
                 cfg["use_nano"] = not cfg["use_nano"]
                 np2 = get_model_path(cfg["model_mode"], cfg["use_nano"])
