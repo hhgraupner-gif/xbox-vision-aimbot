@@ -598,13 +598,10 @@ def main():
             sticky = tracker.get_raw_position()
             tx, ty, tdet = pick_best_target(targets, fw, fh, cfg, minimap=mm, sticky_pos=sticky)
 
-            # TEAMMATE-SUPPRESSION: Wenn nahe Teammates auf Minimap → Aim pausieren
+            # TEAMMATE-SUPPRESSION: Wenn Teammates auf Minimap → Aim pausieren
             suppress_aim = False
             if cfg["minimap_enabled"] and cfg["teammate_protection"] and minimap.teammates:
-                for tm in minimap.teammates:
-                    if tm["distance"] < minimap.size * 0.3:
-                        suppress_aim = True
-                        break
+                suppress_aim = True
 
             aim_pos = None
 
