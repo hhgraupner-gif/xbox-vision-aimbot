@@ -411,10 +411,9 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
         if cls in IGNORE_CLASSES:
             continue
 
-        if cls == "head":
-            tx, ty = (x1 + x2) / 2.0, (y1 + y2) / 2.0
-        else:
-            tx, ty = (x1 + x2) / 2.0, y1 + bh * 0.35
+        # Zielpunkt: MITTE der gesamten Box (stabiler, weniger Pendeln)
+        tx = (x1 + x2) / 2.0
+        ty = (y1 + y2) / 2.0
 
         dist = math.sqrt((tx - cx) ** 2 + (ty - cy) ** 2)
         if dist > fov:
@@ -428,10 +427,6 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
 
         # Score berechnen
         score = dist
-
-        # Head-Bonus: Koepfe bevorzugen
-        if cls == "head":
-            score *= 0.5
 
         # Groesse-Bonus: Groessere Spieler (naeher) bevorzugen
         if bh > 80:
