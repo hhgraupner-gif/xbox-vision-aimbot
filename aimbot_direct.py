@@ -635,28 +635,40 @@ def main():
                                 cooldown = cfg["cooldown_frames"]
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
-                                # SOFT ASSIST: Sanfter Stupser, etwas staerker im Nahkampf
+                                # SOFT ASSIST mit CLOSE-RANGE BOOST
                                 s = strength
                                 lim = cfg["max_move"]
-                                # Nahkampf-Boost: Gegner gross auf Screen = nah
+                                cd = cfg["cooldown_frames"]
+                                dz = cfg["deadzone"]
+
                                 if tdet:
                                     bh = tdet["bbox"][3] - tdet["bbox"][1]
-                                    if bh > 90:
-                                        s = strength * 1.6
-                                        lim = int(lim * 1.4)
+                                    if bh > 120:
+                                        # SEHR NAH: Aggressiv draufbleiben
+                                        s = strength * 2.5
+                                        lim = int(lim * 2.5)
+                                        cd = 1
+                                        dz = 8
+                                    elif bh > 80:
+                                        # NAH: Staerker assistieren
+                                        s = strength * 1.8
+                                        lim = int(lim * 1.8)
+                                        cd = 2
+                                        dz = 12
 
-                                mx = dx * s
-                                my = dy * s
-                                mx = max(-lim, min(lim, mx))
-                                my = max(-lim, min(lim, my))
-                                ix = int(round(mx))
-                                iy = int(round(my))
-                                if abs(ix) > 1 or abs(iy) > 1:
-                                    try:
-                                        kmbox_net.move(ix, iy)
-                                        cooldown = cfg["cooldown_frames"]
-                                    except Exception:
-                                        pass
+                                if dist > dz:
+                                    mx = dx * s
+                                    my = dy * s
+                                    mx = max(-lim, min(lim, mx))
+                                    my = max(-lim, min(lim, my))
+                                    ix = int(round(mx))
+                                    iy = int(round(my))
+                                    if abs(ix) > 1 or abs(iy) > 1:
+                                        try:
+                                            kmbox_net.move(ix, iy)
+                                            cooldown = cd
+                                        except Exception:
+                                            pass
             else:
                 tracker.mark_lost()
 
