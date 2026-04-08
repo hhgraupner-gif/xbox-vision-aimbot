@@ -373,23 +373,15 @@ class SmoothTracker:
 # ============================================================
 # ZIELAUSWAHL MIT TEAMMATE-SCHUTZ + STICKY TARGET
 # ============================================================
-def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos=None):
-    """Waehlt das beste Ziel. sticky_pos = aktuelle Tracker-Position fuer Sticky-Bonus."""
+def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos=None, frame=None):
+    """Waehlt das beste Ziel. frame = Original-Frame fuer Teammate-Farberkennung."""
     cx, cy = frame_w / 2.0, frame_h / 2.0
     fov = cfg["fov_radius"]
     dead_ratio = cfg["dead_body_ratio"]
     min_h = cfg["min_box_height"]
     sky = cfg["sky_filter_ratio"]
     ground = cfg["ground_filter_ratio"]
-    tm_protect = cfg["teammate_protection"] and minimap is not None
-
-    # Dynamische Teammate-Toleranz: Breiter wenn Teammates nah sind
-    tm_tolerance = cfg["teammate_tolerance"]
-    if tm_protect and minimap.teammates:
-        for tm in minimap.teammates:
-            if tm["distance"] < minimap.size * 0.4:
-                tm_tolerance = max(tm_tolerance, 65)
-                break
+    tm_protect = cfg["teammate_protection"] and frame is not None
 
     best = None
     best_score = float('inf')
@@ -411,7 +403,7 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
         if cls in IGNORE_CLASSES:
             continue
 
-        # Zielpunkt: MITTE der gesamten Box (stabiler, weniger Pendeln)
+        # Zielpunkt: MITTE der gesamten Box
         tx = (x1 + x2) / 2.0
         ty = (y1 + y2) / 2.0
 
@@ -419,20 +411,18 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
         if dist > fov:
             continue
 
-        # TEAMMATE-SCHUTZ (dynamische Toleranz)
-        if tm_protect and minimap.is_teammate_direction(
-            tx, cx, fov_deg=cfg["game_fov"], tolerance=tm_tolerance
-        ):
+        # TEAMMATE-SCHUTZ: Blaues Namensschild OBERHALB der Box?
+        if tm_protect and _has_blue_nameplate(frame, x1, y1, x2, bw, frame_w, frame_h):
             continue
 
         # Score berechnen
         score = dist
 
-        # Groesse-Bonus: Groessere Spieler (naeher) bevorzugen
+        # Groesse-Bonus
         if bh > 80:
             score *= 0.7
 
-        # STICKY TARGET: Aktuelles Ziel bevorzugen (aber nicht zu stark)
+        # STICKY TARGET
         if sticky_pos is not None:
             stick_dist = math.sqrt((tx - sticky_pos[0]) ** 2 + (ty - sticky_pos[1]) ** 2)
             if stick_dist < 60:
@@ -443,6 +433,33 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
             best = (tx, ty, det)
 
     return best if best else (None, None, None)
+
+
+# Teammate-Farberkennung: Blaues Namensschild ueber dem Spieler
+_BLUE_NAME_LOW = np.array([90, 120, 120])
+_BLUE_NAME_HIGH = np.array([130, 255, 255])
+
+def _has_blue_nameplate(frame, x1, y1, x2, bw, fw, fh):
+    """Prueft ob OBERHALB einer Detection ein blaues Namensschild ist."""
+    pad = int(bw * 0.2)
+    nx1 = max(0, int(x1) - pad)
+    nx2 = min(fw, int(x2) + pad)
+    ny1 = max(0, int(y1) - 35)
+    ny2 = max(0, int(y1) - 2)
+
+    if ny2 <= ny1 or nx2 <= nx1:
+        return False
+
+    region = frame[ny1:ny2, nx1:nx2]
+    if region.size == 0:
+        return False
+
+    hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, _BLUE_NAME_LOW, _BLUE_NAME_HIGH)
+    blue_pixels = cv2.countNonZero(mask)
+    total_pixels = region.shape[0] * region.shape[1]
+
+    return (blue_pixels / total_pixels) > 0.05 if total_pixels > 0 else False
 
 
 # ============================================================
@@ -594,18 +611,12 @@ def main():
 
             # Zielauswahl + Aim (JEDEN Frame — Latenz-kritisch!)
             targets = [d for d in all_dets if d["class_name"] in TARGET_CLASSES]
-            mm = minimap if cfg["minimap_enabled"] and cfg["teammate_protection"] else None
             sticky = tracker.get_raw_position()
-            tx, ty, tdet = pick_best_target(targets, fw, fh, cfg, minimap=mm, sticky_pos=sticky)
-
-            # TEAMMATE-SUPPRESSION: Wenn Teammates auf Minimap → Aim pausieren
-            suppress_aim = False
-            if cfg["minimap_enabled"] and cfg["teammate_protection"] and minimap.teammates:
-                suppress_aim = True
+            tx, ty, tdet = pick_best_target(targets, fw, fh, cfg, sticky_pos=sticky, frame=frame)
 
             aim_pos = None
 
-            if tx is not None and not suppress_aim:
+            if tx is not None:
                 tracker.update(tx, ty)
                 pos = tracker.get_position()
                 if pos:
