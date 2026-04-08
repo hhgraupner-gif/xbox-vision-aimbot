@@ -411,8 +411,8 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
         if dist > fov:
             continue
 
-        # TEAMMATE-SCHUTZ: Blaues Namensschild OBERHALB der Box?
-        if tm_protect and _has_blue_nameplate(frame, x1, y1, x2, bw, frame_w, frame_h):
+        # TEAMMATE-SCHUTZ: Blaues/Gruenes Namensschild OBERHALB der Box?
+        if tm_protect and _has_teammate_nameplate(frame, x1, y1, x2, bw, frame_w, frame_h):
             continue
 
         # Score berechnen
@@ -435,12 +435,14 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
     return best if best else (None, None, None)
 
 
-# Teammate-Farberkennung: Blaues Namensschild ueber dem Spieler
-_BLUE_NAME_LOW = np.array([90, 120, 120])
-_BLUE_NAME_HIGH = np.array([130, 255, 255])
+# Teammate-Farberkennung: Blaues/Gruenes Namensschild ueber dem Spieler
+_BLUE_LOW = np.array([90, 120, 120])
+_BLUE_HIGH = np.array([130, 255, 255])
+_GREEN_LOW = np.array([35, 120, 120])
+_GREEN_HIGH = np.array([85, 255, 255])
 
-def _has_blue_nameplate(frame, x1, y1, x2, bw, fw, fh):
-    """Prueft ob OBERHALB einer Detection ein blaues Namensschild ist."""
+def _has_teammate_nameplate(frame, x1, y1, x2, bw, fw, fh):
+    """Prueft ob OBERHALB einer Detection ein blaues/gruenes Namensschild ist."""
     pad = int(bw * 0.2)
     nx1 = max(0, int(x1) - pad)
     nx2 = min(fw, int(x2) + pad)
@@ -455,11 +457,12 @@ def _has_blue_nameplate(frame, x1, y1, x2, bw, fw, fh):
         return False
 
     hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
-    mask = cv2.inRange(hsv, _BLUE_NAME_LOW, _BLUE_NAME_HIGH)
-    blue_pixels = cv2.countNonZero(mask)
+    blue_mask = cv2.inRange(hsv, _BLUE_LOW, _BLUE_HIGH)
+    green_mask = cv2.inRange(hsv, _GREEN_LOW, _GREEN_HIGH)
+    teammate_pixels = cv2.countNonZero(blue_mask) + cv2.countNonZero(green_mask)
     total_pixels = region.shape[0] * region.shape[1]
 
-    return (blue_pixels / total_pixels) > 0.05 if total_pixels > 0 else False
+    return (teammate_pixels / total_pixels) > 0.05 if total_pixels > 0 else False
 
 
 # ============================================================
