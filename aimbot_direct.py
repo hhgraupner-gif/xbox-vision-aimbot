@@ -85,9 +85,9 @@ DEFAULT_CONFIG = {
     "model_mode": "fps",
     "confidence": 0.40,
     "fov_radius": 180,
-    "strength": 1.8,
+    "strength": 1.0,
     "deadzone": 3,
-    "max_move": 90,
+    "max_move": 35,
     "cooldown_frames": 0,
     "use_roi_crop": True,
     "roi_size": 640,
@@ -701,8 +701,8 @@ def main():
                 det_h = tdet["bbox"][3] - tdet["bbox"][1] if tdet else 0
                 tracker.update(tx, ty, bbox_h=det_h)
 
-                # Velocity Prediction: Ziele voraus wo der Gegner HINLAEUFT
-                pred = tracker.get_predicted_position(lead_frames=2.5)
+                # Velocity Prediction: Sanft voraus zielen bei Bewegung
+                pred = tracker.get_predicted_position(lead_frames=1.5)
                 pos = pred if pred else tracker.get_position()
 
                 if pos:
@@ -729,17 +729,25 @@ def main():
                                 cooldown = cfg["cooldown_frames"]
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
-                                # AGGRESSIVE TRACKING mit move_auto
+                                # PER-FRAME TRACKING mit move()
+                                # Dynamische Staerke basierend auf Distanz zum Ziel
                                 dyn_str = strength
                                 if det_h > 120:
-                                    dyn_str = min(strength * 2.5, 5.0)  # Close: alles
+                                    dyn_str = strength * 1.6   # Close: staerker
                                 elif det_h > 80:
-                                    dyn_str = min(strength * 2.0, 4.0)  # Mid: brutal
-                                elif det_h > 50:
-                                    dyn_str = min(strength * 1.5, 3.0)  # Range: stark
+                                    dyn_str = strength * 1.3   # Mid: etwas staerker
 
+                                # Nicht-lineare Kurve: grosse Offsets → viel Move, kleine Offsets → wenig
+                                # Verhindert Overshoot bei kleinen Korrekturen
                                 mx = dx * dyn_str
                                 my = dy * dyn_str
+
+                                # Daempfung bei kleinem Offset (Anti-Overshoot)
+                                if dist < 30:
+                                    damp = dist / 30.0  # 0..1
+                                    mx *= damp
+                                    my *= damp
+
                                 lim = cfg["max_move"]
                                 mx = max(-lim, min(lim, mx))
                                 my = max(-lim, min(lim, my))
@@ -747,14 +755,9 @@ def main():
                                 iy = int(round(my))
                                 if ix != 0 or iy != 0:
                                     try:
-                                        kmbox_net.move_auto(ix, iy, 80)
-                                        cooldown = cfg["cooldown_frames"]
+                                        kmbox_net.move(ix, iy)
                                     except Exception:
-                                        try:
-                                            kmbox_net.move(ix, iy)
-                                            cooldown = cfg["cooldown_frames"]
-                                        except Exception:
-                                            pass
+                                        pass
             else:
                 tracker.mark_lost()
 
