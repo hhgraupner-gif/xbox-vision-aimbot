@@ -1,11 +1,11 @@
 @echo off
 chcp 65001 >nul
-title Warzone Competitive Audio - Setup
+title eRayz Audio - Setup
 color 0A
 
 echo.
 echo  ============================================
-echo   WARZONE COMPETITIVE AUDIO - INSTALLER
+echo   eRayz Audio - INSTALLER
 echo   Ranked Resurgence Pro Edition
 echo  ============================================
 echo.
@@ -32,7 +32,7 @@ echo  [OK] Pakete installiert
 echo.
 
 :: Script downloaden
-echo  Lade Competitive Audio Tool...
+echo  Lade eRayz Audio Tool...
 cd /d %USERPROFILE%\Downloads
 powershell -Command "Invoke-WebRequest 'https://bo7-aimbot-vision.preview.emergentagent.com/api/download/competitive_audio.py' -OutFile 'competitive_audio.py'" >nul 2>&1
 echo  [OK] Download fertig

@@ -397,7 +397,7 @@ def main():
 
     print()
     print("  " + "=" * 50)
-    print("  WARZONE COMPETITIVE AUDIO V3")
+    print("  eRayz Audio V3")
     print("  DT 990 Pro + GameDAC | Duplex WASAPI")
     print("  " + "=" * 50)
 
