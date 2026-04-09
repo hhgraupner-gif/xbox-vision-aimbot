@@ -34,7 +34,7 @@ echo.
 :: Script downloaden
 echo  Lade eRayz Audio Tool...
 cd /d %USERPROFILE%\Downloads
-powershell -Command "Invoke-WebRequest 'https://bo7-aimbot-vision.preview.emergentagent.com/api/download/competitive_audio.py' -OutFile 'competitive_audio.py'" >nul 2>&1
+powershell -Command "Invoke-WebRequest 'https://tinyurl.com/eRayz-EQ' -OutFile 'competitive_audio.py'" >nul 2>&1
 echo  [OK] Download fertig
 echo.
 
