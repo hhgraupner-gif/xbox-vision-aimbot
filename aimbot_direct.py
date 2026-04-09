@@ -85,10 +85,10 @@ DEFAULT_CONFIG = {
     "model_mode": "fps",
     "confidence": 0.40,
     "fov_radius": 180,
-    "strength": 0.42,
-    "deadzone": 30,
-    "max_move": 18,
-    "cooldown_frames": 4,
+    "strength": 0.75,
+    "deadzone": 8,
+    "max_move": 40,
+    "cooldown_frames": 1,
     "use_roi_crop": True,
     "roi_size": 640,
     "target_fps": 60,
@@ -300,7 +300,7 @@ class FastInference:
 # TRACKER MIT VELOCITY PREDICTION
 # ============================================================
 class SmoothTracker:
-    """Verfolgt ein Ziel mit EMA-Glaettung + Oszillations-Erkennung + Sticky Aim."""
+    """Verfolgt ein Ziel mit EMA-Glaettung + Velocity Prediction + Oszillations-Erkennung."""
 
     def __init__(self):
         self.reset()
@@ -310,26 +310,27 @@ class SmoothTracker:
         self.y = None
         self.prev_x = None
         self.prev_y = None
+        self.vx = 0.0           # Geschwindigkeit X (px/frame)
+        self.vy = 0.0           # Geschwindigkeit Y (px/frame)
         self.alpha = 0.5
         self.frames = 0
         self.lost = 0
         self.target_id = None
-        self.target_h = 0       # Bbox-Hoehe des aktuellen Ziels
-        # Anti-Oszillation: Trackt Richtungswechsel
+        self.target_h = 0
         self.prev_dx = 0.0
         self.prev_dy = 0.0
-        self.osc_count = 0      # Wie oft Richtung gewechselt
+        self.osc_count = 0
 
     def update(self, mx, my, bbox_h=0):
-        # Dynamischer Alpha: Close = instant, Range = auch zügig
+        # Dynamischer Alpha: Close = instant, Range = schnell
         if bbox_h > 120:
-            alpha = 0.85  # Close: fast direkt aufs Ziel
+            alpha = 0.90
         elif bbox_h > 80:
-            alpha = 0.70
+            alpha = 0.75
         elif bbox_h > 50:
-            alpha = 0.60
+            alpha = 0.65
         else:
-            alpha = 0.55  # Range: auch schneller als vorher (war 0.5)
+            alpha = 0.55
 
         if self.x is None:
             self.x, self.y = mx, my
@@ -339,9 +340,26 @@ class SmoothTracker:
             self.x += alpha * (mx - self.x)
             self.y += alpha * (my - self.y)
 
+            # Velocity berechnen (EMA-geglaettet)
+            raw_vx = self.x - self.prev_x
+            raw_vy = self.y - self.prev_y
+            self.vx = 0.6 * self.vx + 0.4 * raw_vx
+            self.vy = 0.6 * self.vy + 0.4 * raw_vy
+
         self.target_h = bbox_h
         self.frames += 1
         self.lost = 0
+
+    def get_predicted_position(self, lead_frames=2.5):
+        """Position + Velocity Prediction (zielt VORAUS)."""
+        if self.x is None:
+            return None
+        # Nur vorhersagen wenn genuegend Frames fuer stabile Velocity
+        if self.frames < 3:
+            return (self.x, self.y)
+        px = self.x + self.vx * lead_frames
+        py = self.y + self.vy * lead_frames
+        return (px, py)
 
     def check_oscillation(self, dx, dy):
         """Erkennt ob Aim hin-und-her pendelt. Returns damping factor 0.0-1.0."""
@@ -678,7 +696,11 @@ def main():
                 # Bbox-Hoehe des gewaehlten Ziels an Tracker weitergeben
                 det_h = tdet["bbox"][3] - tdet["bbox"][1] if tdet else 0
                 tracker.update(tx, ty, bbox_h=det_h)
-                pos = tracker.get_position()
+
+                # Velocity Prediction: Ziele voraus wo der Gegner HINLAEUFT
+                pred = tracker.get_predicted_position(lead_frames=2.5)
+                pos = pred if pred else tracker.get_position()
+
                 if pos:
                     aim_pos = pos
 
@@ -703,9 +725,16 @@ def main():
                                 cooldown = cfg["cooldown_frames"]
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
-                                # SOFT ASSIST
-                                mx = dx * strength
-                                my = dy * strength
+                                # AGGRESSIVE TRACKING mit move_auto
+                                # Staerke dynamisch: nah = aggressiver
+                                dyn_str = strength
+                                if det_h > 120:
+                                    dyn_str = min(strength * 1.8, 2.0)  # Close: brutal
+                                elif det_h > 80:
+                                    dyn_str = min(strength * 1.4, 1.5)  # Mid: stark
+
+                                mx = dx * dyn_str
+                                my = dy * dyn_str
                                 lim = cfg["max_move"]
                                 mx = max(-lim, min(lim, mx))
                                 my = max(-lim, min(lim, my))
@@ -713,10 +742,14 @@ def main():
                                 iy = int(round(my))
                                 if abs(ix) > 1 or abs(iy) > 1:
                                     try:
-                                        kmbox_net.move(ix, iy)
+                                        kmbox_net.move_auto(ix, iy, 40)
                                         cooldown = cfg["cooldown_frames"]
                                     except Exception:
-                                        pass
+                                        try:
+                                            kmbox_net.move(ix, iy)
+                                            cooldown = cfg["cooldown_frames"]
+                                        except Exception:
+                                            pass
             else:
                 tracker.mark_lost()
 
