@@ -461,9 +461,9 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
         if cls in IGNORE_CLASSES:
             continue
 
-        # Zielpunkt: Mitte X, OBERKOERPER Y (35% von oben — stabiler als Box-Mitte)
+        # Zielpunkt: MITTE der gesamten Box (stabiler als Oberkörper)
         tx = (x1 + x2) / 2.0
-        ty = y1 + (y2 - y1) * 0.35
+        ty = (y1 + y2) / 2.0
 
         dist = math.sqrt((tx - cx) ** 2 + (ty - cy) ** 2)
         if dist > fov:
