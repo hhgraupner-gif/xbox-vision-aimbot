@@ -587,7 +587,7 @@ def main():
         )
         in_stream.start()
         out_stream.start()
-        print(f"  Input:  LAEUFT ({cfg['blocksize']} samples, ~{cfg['blocksize']/use_sr*1000:.1f}ms)")
+        print(f"  Input:  LAEUFT ({cfg['blocksize']} samples, ~{cfg['blocksize']/sr*1000:.1f}ms)")
         print(f"  Output: LAEUFT\n")
     except Exception as e:
         print(f"\n  FEHLER: {e}")
