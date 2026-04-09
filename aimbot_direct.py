@@ -85,10 +85,10 @@ DEFAULT_CONFIG = {
     "model_mode": "fps",
     "confidence": 0.40,
     "fov_radius": 180,
-    "strength": 0.85,
+    "strength": 0.7,
     "deadzone": 4,
-    "max_move": 28,
-    "cooldown_frames": 0,
+    "max_move": 25,
+    "cooldown_frames": 2,
     "use_roi_crop": True,
     "roi_size": 640,
     "target_fps": 60,
@@ -367,21 +367,21 @@ class SmoothTracker:
 
     def check_oscillation(self, dx, dy):
         """Erkennt ob Aim hin-und-her pendelt. Returns damping factor 0.0-1.0."""
-        # Richtungswechsel erkennen (Vorzeichen aendert sich)
         if (dx * self.prev_dx < 0) or (dy * self.prev_dy < 0):
-            self.osc_count = min(self.osc_count + 1, 6)
+            self.osc_count = min(self.osc_count + 2, 8)  # Schneller erkennen
         else:
             self.osc_count = max(self.osc_count - 1, 0)
 
         self.prev_dx = dx
         self.prev_dy = dy
 
-        # Je mehr Oszillation, desto staerker daempfen
-        if self.osc_count >= 4:
-            return 0.2   # Starkes Daempfen
+        if self.osc_count >= 6:
+            return 0.05  # Fast komplett stoppen
+        elif self.osc_count >= 4:
+            return 0.15
         elif self.osc_count >= 2:
-            return 0.5   # Mittleres Daempfen
-        return 1.0       # Kein Daempfen
+            return 0.4
+        return 1.0
 
     def mark_lost(self):
         self.lost += 1
@@ -701,9 +701,8 @@ def main():
                 det_h = tdet["bbox"][3] - tdet["bbox"][1] if tdet else 0
                 tracker.update(tx, ty, bbox_h=det_h)
 
-                # Velocity Prediction: Sanft voraus zielen bei Bewegung
-                pred = tracker.get_predicted_position(lead_frames=1.0)
-                pos = pred if pred else tracker.get_position()
+                # Kein Velocity Prediction — direkt auf aktuelle Position
+                pos = tracker.get_position()
 
                 if pos:
                     aim_pos = pos
@@ -730,21 +729,21 @@ def main():
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
                                 # PER-FRAME TRACKING mit move()
-                                # Dynamische Staerke basierend auf Distanz zum Ziel
                                 dyn_str = strength
                                 if det_h > 120:
-                                    dyn_str = strength * 1.6   # Close: staerker
+                                    dyn_str = strength * 1.5
                                 elif det_h > 80:
-                                    dyn_str = strength * 1.3   # Mid: etwas staerker
+                                    dyn_str = strength * 1.2
 
-                                # Nicht-lineare Kurve: grosse Offsets → viel Move, kleine Offsets → wenig
-                                # Verhindert Overshoot bei kleinen Korrekturen
-                                mx = dx * dyn_str
-                                my = dy * dyn_str
+                                # Anti-Oszillation: Wenn Pendeln erkannt → stark bremsen
+                                osc_damp = tracker.check_oscillation(dx, dy)
+
+                                mx = dx * dyn_str * osc_damp
+                                my = dy * dyn_str * osc_damp
 
                                 # Daempfung bei kleinem Offset (Anti-Pendel)
                                 if dist < 40:
-                                    damp = dist / 40.0
+                                    damp = (dist / 40.0) ** 2  # Quadratisch = noch sanfter nah am Ziel
                                     mx *= damp
                                     my *= damp
 
@@ -756,6 +755,7 @@ def main():
                                 if ix != 0 or iy != 0:
                                     try:
                                         kmbox_net.move(ix, iy)
+                                        cooldown = cfg["cooldown_frames"]
                                     except Exception:
                                         pass
             else:
