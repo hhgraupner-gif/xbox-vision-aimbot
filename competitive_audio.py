@@ -83,6 +83,24 @@ PRESETS = {
         "comp_ratio": 5.0, "comp_threshold": -20.0,
         "spatial_width": 1.8, "gate_db": -48.0, "output_gain_db": 3.0,
     },
+    "rebirth": {
+        # Rebirth Island: Kleine Map, viele Gebaeude, Metall-Treppen, viel Vertikales
+        # Metall-Steps brauchen mehr Edge (4.4kHz), starke Compression fuer Steps durch Waende
+        "step_body_db": 10.0, "step_texture_db": 12.0, "step_edge_db": 8.0,
+        "mud_cut_db": -5.0, "mud_cut_on": True, "gunfire_db": -8.0, "treble_db": -5.0,
+        "highpass_hz": 120, "lowpass_hz": 11000,
+        "comp_ratio": 5.5, "comp_threshold": -22.0,
+        "spatial_width": 1.5, "gate_db": -50.0, "output_gain_db": 3.0,
+    },
+    "heavens": {
+        # Heavens Hollow: Enge Raeume, Mixed Terrain, viel Vertikales Gameplay
+        # Braucht breites Spatial fuer Oben/Unten, maximale Step-Klarheit
+        "step_body_db": 12.0, "step_texture_db": 14.0, "step_edge_db": 7.0,
+        "mud_cut_db": -6.0, "mud_cut_on": True, "gunfire_db": -9.0, "treble_db": -6.0,
+        "highpass_hz": 130, "lowpass_hz": 10500,
+        "comp_ratio": 6.0, "comp_threshold": -24.0,
+        "spatial_width": 1.9, "gate_db": -52.0, "output_gain_db": 4.0,
+    },
 }
 
 
@@ -343,7 +361,7 @@ def main():
     parser.add_argument("--list", action="store_true")
     parser.add_argument("--input", type=int, default=None)
     parser.add_argument("--output", type=int, default=None)
-    parser.add_argument("--preset", choices=["warzone", "multiplayer", "resurgence"])
+    parser.add_argument("--preset", choices=["warzone", "multiplayer", "resurgence", "rebirth", "heavens"])
     parser.add_argument("--no-radar", action="store_true")
     args = parser.parse_args()
 
@@ -416,8 +434,8 @@ def main():
           f" Mud:{cfg['mud_cut_db']:.0f}dB Gun:{cfg['gunfire_db']:.0f}dB")
     print(f"  Comp:{cfg['comp_ratio']:.1f}:1 Spatial:{cfg['spatial_width']:.1f}x"
           f" Gain:{cfg['output_gain_db']:.0f}dB DT990:{cfg['treble_db']:.0f}dB")
-    print(f"\n  [1-3]Preset [Q/W]Body [E/R]Tex [A/S]Edge [D/F]Spa")
-    print(f"  [T/Z]Comp [G/H]Gain [U/I]Gun [O]Mud [B]Bypass [M]Mute [ESC]Quit")
+    print(f"\n  [1]WZ [2]MP [3]Resurg [4]Rebirth [5]Heavens | [Q/W]Body [E/R]Tex [A/S]Edge")
+    print(f"  [D/F]Spa [T/Z]Comp [G/H]Gain [U/I]Gun [O]Mud [B]Bypass [M]Mute [ESC]Quit")
     print("  " + "=" * 50)
 
     proc = Processor(cfg)
@@ -521,6 +539,8 @@ def main():
             elif key == ord('1'): apply_preset(cfg, "warzone"); proc.rebuild(); print("  >> WARZONE")
             elif key == ord('2'): apply_preset(cfg, "multiplayer"); proc.rebuild(); print("  >> MULTIPLAYER")
             elif key == ord('3'): apply_preset(cfg, "resurgence"); proc.rebuild(); print("  >> RESURGENCE")
+            elif key == ord('4'): apply_preset(cfg, "rebirth"); proc.rebuild(); print("  >> REBIRTH ISLAND")
+            elif key == ord('5'): apply_preset(cfg, "heavens"); proc.rebuild(); print("  >> HEAVENS HOLLOW")
             elif key == ord('q'): cfg["step_body_db"] = max(0, cfg["step_body_db"]-2); proc.rebuild(); print(f"  Body: {cfg['step_body_db']:.0f}dB")
             elif key == ord('w'): cfg["step_body_db"] = min(18, cfg["step_body_db"]+2); proc.rebuild(); print(f"  Body: {cfg['step_body_db']:.0f}dB")
             elif key == ord('e'): cfg["step_texture_db"] = max(0, cfg["step_texture_db"]-2); proc.rebuild(); print(f"  Tex: {cfg['step_texture_db']:.0f}dB")
