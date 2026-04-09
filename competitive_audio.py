@@ -1,18 +1,16 @@
 """
-WARZONE COMPETITIVE AUDIO V3 — FINAL
-======================================
-Chirurgische Peaking-EQ | DT 990 Pro + GameDAC
-Duplex WASAPI Stream | Geraete werden gespeichert
+eRayz Audio — RANKED PRO
+=========================
+Competitive Audio Engine | DT 990 Pro
+Raw HDMI Capture | Duplex WASAPI
 
-INSTALLATION:  pip install sounddevice numpy scipy opencv-python
-ERSTER START:  python competitive_audio.py --input 33 --output 24
+ERSTER START:  python competitive_audio.py --input 3 --output 5
 DANACH NUR:    python competitive_audio.py
 
 STEUERUNG:
-  1/2/3  Preset: Warzone / Multiplayer / Resurgence
-  Q/W    Step Body 200Hz -/+
-  E/R    Step Texture 2.4kHz -/+
-  A/S    Step Edge 4.4kHz -/+
+  Q/W    Step Body 250Hz -/+
+  E/R    Step Texture 2.8kHz -/+
+  A/S    Step Edge 4.5kHz -/+
   D/F    Spatial -/+
   T/Z    Compression -/+
   G/H    Output Gain -/+
@@ -48,86 +46,37 @@ DEFAULT_CFG = {
     "input_device": None, "output_device": None,
     "input_name": "", "output_name": "",
     "samplerate": 48000, "blocksize": 512, "channels": 2,
-    "preset": "warzone",
-    "step_body_hz": 200, "step_body_db": 8.0, "step_body_q": 1.8,
-    "mud_cut_hz": 600, "mud_cut_db": -4.0, "mud_cut_q": 1.5, "mud_cut_on": True,
-    "step_texture_hz": 2400, "step_texture_db": 8.0, "step_texture_q": 2.5,
-    "step_edge_hz": 4400, "step_edge_db": 5.0, "step_edge_q": 1.2,
-    "gunfire_hz": 5500, "gunfire_db": -6.0, "gunfire_q": 2.0,
+    "preset": "ranked_pro",
+    # ── RANKED PRO — Optimiert fuer rohes HDMI Audio + DT 990 Pro ──
+    #
+    # Philosophie:
+    #   Raw HDMI = sauberes, unverarbeitetes Signal
+    #   Weniger Boost noetig als bei Virtual Microphone
+    #   Praezision > Aggressivitaet
+    #
+    # Step Body (250Hz): Aufprall-Gewicht von Schritten auf Beton/Metall
+    "step_body_hz": 250, "step_body_db": 7.0, "step_body_q": 2.0,
+    # Mud Cut (500Hz): Ambient-Muell rausschneiden (Fahrzeuge, Wind)
+    "mud_cut_hz": 500, "mud_cut_db": -4.0, "mud_cut_q": 1.2, "mud_cut_on": True,
+    # Step Texture (2.8kHz): Schritt-Details, Reloads, Tueren
+    "step_texture_hz": 2800, "step_texture_db": 8.0, "step_texture_q": 2.0,
+    # Step Edge (4.5kHz): Klarheit, Schritt-Definition
+    "step_edge_hz": 4500, "step_edge_db": 5.0, "step_edge_q": 1.5,
+    # Gunfire Cut (5.5kHz): Schuss-Daempfung
+    "gunfire_hz": 5500, "gunfire_db": -7.0, "gunfire_q": 2.0,
+    # DT 990 Treble Taming (8kHz Spitze zaehmen)
     "treble_hz": 8000, "treble_db": -5.0, "treble_q": 3.0,
-    "highpass_hz": 100, "lowpass_hz": 12000,
-    "comp_ratio": 4.0, "comp_threshold": -18.0, "comp_attack": 0.003, "comp_release": 0.06,
-    "gate_db": -46.0, "spatial_width": 1.6, "output_gain_db": 2.0,
+    # Bandpass
+    "highpass_hz": 120, "lowpass_hz": 11000,
+    # Compression: Leise Steps durch Waende hoerbar machen
+    "comp_ratio": 4.5, "comp_threshold": -20.0, "comp_attack": 0.003, "comp_release": 0.05,
+    # Noise Gate
+    "gate_db": -48.0,
+    # Spatial: Richtungserkennung
+    "spatial_width": 1.6,
+    # Output
+    "output_gain_db": 3.0,
     "show_radar": True,
-}
-
-PRESETS = {
-    "warzone": {
-        "step_body_db": 8.0, "step_texture_db": 8.0, "step_edge_db": 5.0,
-        "mud_cut_db": -4.0, "mud_cut_on": True, "gunfire_db": -6.0, "treble_db": -5.0,
-        "highpass_hz": 100, "lowpass_hz": 12000,
-        "comp_ratio": 4.0, "comp_threshold": -18.0,
-        "spatial_width": 1.6, "gate_db": -46.0, "output_gain_db": 2.0,
-    },
-    "multiplayer": {
-        "step_body_db": 6.0, "step_texture_db": 7.0, "step_edge_db": 4.0,
-        "mud_cut_db": -3.0, "mud_cut_on": True, "gunfire_db": -4.0, "treble_db": -4.0,
-        "highpass_hz": 80, "lowpass_hz": 13000,
-        "comp_ratio": 3.0, "comp_threshold": -16.0,
-        "spatial_width": 1.3, "gate_db": -44.0, "output_gain_db": 1.0,
-    },
-    "resurgence": {
-        "step_body_db": 10.0, "step_texture_db": 10.0, "step_edge_db": 6.0,
-        "mud_cut_db": -5.0, "mud_cut_on": True, "gunfire_db": -8.0, "treble_db": -6.0,
-        "highpass_hz": 110, "lowpass_hz": 11000,
-        "comp_ratio": 5.0, "comp_threshold": -20.0,
-        "spatial_width": 1.8, "gate_db": -48.0, "output_gain_db": 3.0,
-    },
-    "rebirth": {
-        # Rebirth Island: Kleine Map, viele Gebaeude, Metall-Treppen, viel Vertikales
-        # Metall-Steps brauchen mehr Edge (4.4kHz), starke Compression fuer Steps durch Waende
-        "step_body_db": 10.0, "step_texture_db": 12.0, "step_edge_db": 8.0,
-        "mud_cut_db": -5.0, "mud_cut_on": True, "gunfire_db": -8.0, "treble_db": -5.0,
-        "highpass_hz": 120, "lowpass_hz": 11000,
-        "comp_ratio": 5.5, "comp_threshold": -22.0,
-        "spatial_width": 1.5, "gate_db": -50.0, "output_gain_db": 3.0,
-    },
-    "heavens": {
-        # Heavens Hollow: Enge Raeume, Mixed Terrain, viel Vertikales Gameplay
-        "step_body_db": 12.0, "step_texture_db": 14.0, "step_edge_db": 7.0,
-        "mud_cut_db": -6.0, "mud_cut_on": True, "gunfire_db": -9.0, "treble_db": -6.0,
-        "highpass_hz": 130, "lowpass_hz": 10500,
-        "comp_ratio": 6.0, "comp_threshold": -24.0,
-        "spatial_width": 1.9, "gate_db": -52.0, "output_gain_db": 4.0,
-    },
-    "ranked": {
-        # ULTIMATE RANKED RESURGENCE — Pro-Level Preset
-        # Basiert auf: Pro Player EQ (Biffle, Rated), ArtIsWar, ASB Gaming 2026
-        #
-        # Pro-Konsens:
-        #   Sub-Bass <100Hz: HART WEG (Explosionen, Fahrzeuge)
-        #   250Hz: +5dB Body (Step-Aufprall auf Beton/Metall)
-        #   100-500Hz Low-Mids: -3dB CUT (Ambient-Muell)
-        #   2-4kHz: +6dB BOOST (Step-Textur, Reloads, Tueren)
-        #   4.5kHz: +3dB (Klarheit/Definition)
-        #   Gunfire: AGGRESSIV daempfen
-        #   Compression: MAXIMAL (leise Steps durch Waende hoerbar)
-        #
-        # DT 990 Pro Anpassung:
-        #   8kHz Spitze zaehmen, Mitten extra anheben
-        #   Spatial breit fuer Richtungserkennung
-        #
-        "step_body_hz": 250, "step_body_db": 14.0, "step_body_q": 2.0,
-        "mud_cut_hz": 500, "mud_cut_db": -7.0, "mud_cut_q": 1.2, "mud_cut_on": True,
-        "step_texture_hz": 2800, "step_texture_db": 16.0, "step_texture_q": 2.0,
-        "step_edge_hz": 4500, "step_edge_db": 9.0, "step_edge_q": 1.5,
-        "gunfire_hz": 5500, "gunfire_db": -10.0, "gunfire_q": 1.8,
-        "treble_hz": 8000, "treble_db": -7.0, "treble_q": 3.0,
-        "highpass_hz": 130, "lowpass_hz": 10000,
-        "comp_ratio": 6.5, "comp_threshold": -26.0,
-        "comp_attack": 0.002, "comp_release": 0.04,
-        "spatial_width": 2.0, "gate_db": -54.0, "output_gain_db": 5.0,
-    },
 }
 
 
@@ -149,12 +98,6 @@ def save_config(cfg):
             json.dump(cfg, f, indent=2)
     except Exception:
         pass
-
-
-def apply_preset(cfg, name):
-    if name in PRESETS:
-        cfg.update(PRESETS[name])
-        cfg["preset"] = name
 
 
 def make_peak_eq(fc, db, Q, fs):
@@ -318,10 +261,9 @@ class Radar:
             cv2.line(img, (self.cx,self.cy), (px,self.cy), col, 2)
 
         # Status
-        p = cfg["preset"].upper()
         if bypass:
             cv2.putText(img, ">>> BYPASS <<<", (80,self.SZ//2), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,255), 2)
-        cv2.putText(img, f"[{p}] BODY:{cfg['step_body_db']:.0f} TEX:{cfg['step_texture_db']:.0f} EDGE:{cfg['step_edge_db']:.0f}",
+        cv2.putText(img, f"[RANKED PRO] BODY:{cfg['step_body_db']:.0f} TEX:{cfg['step_texture_db']:.0f} EDGE:{cfg['step_edge_db']:.0f}",
                     (6,16), cv2.FONT_HERSHEY_SIMPLEX, 0.30, (0,180,100), 1)
         cv2.putText(img, f"MUD:{cfg['mud_cut_db']:.0f} GUN:{cfg['gunfire_db']:.0f} DT990:{cfg['treble_db']:.0f} SPA:{cfg['spatial_width']:.1f}",
                     (6,32), cv2.FONT_HERSHEY_SIMPLEX, 0.30, (130,130,140), 1)
@@ -356,7 +298,6 @@ def list_devices():
 
 
 def find_device_by_name(devs, name, need_input=True):
-    """Findet Geraet per Name (fuer gespeicherte Config)."""
     if not name:
         return None
     for i, d in enumerate(devs):
@@ -369,9 +310,17 @@ def find_device_by_name(devs, name, need_input=True):
 
 
 def auto_find_capture(devs):
+    """Auto-detect capture card: HDMI zuerst, dann Virtual Microphone."""
+    # Prioritaet 1: HDMI Capture (rohes Signal — besser)
+    for i, d in enumerate(devs):
+        if d['max_input_channels'] >= 2 and d['default_samplerate'] <= 48000:
+            name_l = d['name'].lower()
+            if 'hdmi' in name_l and ('live streamer' in name_l or 'avermedia' in name_l or 'capture' in name_l):
+                return i
+    # Prioritaet 2: AVerMedia Virtual Microphone
     for i, d in enumerate(devs):
         if d['max_input_channels'] >= 2:
-            for kw in ["avermedia", "gc571", "capture", "game capture", "live gamer"]:
+            for kw in ["avermedia", "gc571", "game capture", "live gamer"]:
                 if kw in d['name'].lower():
                     return i
     return None
@@ -384,11 +333,10 @@ def main():
     if sd is None:
         sys.exit(1)
 
-    parser = argparse.ArgumentParser(description="Warzone Competitive Audio V3")
+    parser = argparse.ArgumentParser(description="eRayz Audio — Ranked Pro")
     parser.add_argument("--list", action="store_true")
     parser.add_argument("--input", type=int, default=None)
     parser.add_argument("--output", type=int, default=None)
-    parser.add_argument("--preset", choices=["warzone", "multiplayer", "resurgence", "rebirth", "heavens", "ranked"])
     parser.add_argument("--no-radar", action="store_true")
     args = parser.parse_args()
 
@@ -397,8 +345,8 @@ def main():
 
     print()
     print("  " + "=" * 50)
-    print("  eRayz Audio V3")
-    print("  DT 990 Pro + GameDAC | Duplex WASAPI")
+    print("  eRayz Audio — RANKED PRO")
+    print("  DT 990 Pro | Raw HDMI Capture | Duplex WASAPI")
     print("  " + "=" * 50)
 
     if args.list:
@@ -434,16 +382,12 @@ def main():
     if out_dev is None:
         out_dev = sd.default.device[1]
 
-    # Geraete-Namen speichern fuer naechsten Start
+    # Geraete-Namen speichern
     cfg["input_device"] = in_dev
     cfg["output_device"] = out_dev
     cfg["input_name"] = devs[in_dev]['name']
     cfg["output_name"] = devs[out_dev]['name']
 
-    if args.preset:
-        apply_preset(cfg, args.preset)
-    elif cfg["preset"] in PRESETS:
-        apply_preset(cfg, cfg["preset"])
     if args.no_radar:
         cfg["show_radar"] = False
 
@@ -456,13 +400,13 @@ def main():
     print(f"\n  IN:  [{in_dev}] {devs[in_dev]['name']}")
     print(f"  OUT: [{out_dev}] {devs[out_dev]['name']}")
     print(f"  {sr}Hz | Stereo | {bs} samples (~{bs/sr*1000:.1f}ms)")
-    print(f"\n  [{cfg['preset'].upper()}]"
+    print(f"\n  [RANKED PRO]"
           f" Body:+{cfg['step_body_db']:.0f}dB Tex:+{cfg['step_texture_db']:.0f}dB Edge:+{cfg['step_edge_db']:.0f}dB"
           f" Mud:{cfg['mud_cut_db']:.0f}dB Gun:{cfg['gunfire_db']:.0f}dB")
     print(f"  Comp:{cfg['comp_ratio']:.1f}:1 Spatial:{cfg['spatial_width']:.1f}x"
           f" Gain:{cfg['output_gain_db']:.0f}dB DT990:{cfg['treble_db']:.0f}dB")
-    print(f"\n  [1]WZ [2]MP [3]Resurg [4]Rebirth [5]Heavens [6]RANKED | [Q/W]Body [E/R]Tex")
-    print(f"  [A/S]Edge [D/F]Spa [T/Z]Comp [G/H]Gain [U/I]Gun [O]Mud [B]Bypass [M]Mute [ESC]Quit")
+    print(f"\n  [Q/W]Body [E/R]Tex [A/S]Edge [D/F]Spa [T/Z]Comp")
+    print(f"  [G/H]Gain [U/I]Gun [O]Mud [B]Bypass [M]Mute [ESC]Quit")
     print("  " + "=" * 50)
 
     proc = Processor(cfg)
@@ -492,8 +436,6 @@ def main():
         print("  Fallback: Separate Streams...")
 
         # Ring-Buffer Fallback
-        from collections import deque as _dq
-
         class _RB:
             def __init__(self, cap, nch):
                 self.buf = np.zeros((cap, nch), dtype=np.float32)
@@ -558,40 +500,34 @@ def main():
     try:
         while True:
             if radar and cfg["show_radar"] and cv2:
-                cv2.imshow("Step Radar", radar.draw(proc.peak_dir, proc.step_pwr, cfg, proc.bypass))
+                cv2.imshow("eRayz Radar", radar.draw(proc.peak_dir, proc.step_pwr, cfg, proc.bypass))
 
             key = (cv2.waitKey(33) & 0xFF) if (cv2 and cfg["show_radar"]) else (time.sleep(0.033) or 255)
 
             if key == 27: break
-            elif key == ord('1'): apply_preset(cfg, "warzone"); proc.rebuild(); print("  >> WARZONE")
-            elif key == ord('2'): apply_preset(cfg, "multiplayer"); proc.rebuild(); print("  >> MULTIPLAYER")
-            elif key == ord('3'): apply_preset(cfg, "resurgence"); proc.rebuild(); print("  >> RESURGENCE")
-            elif key == ord('4'): apply_preset(cfg, "rebirth"); proc.rebuild(); print("  >> REBIRTH ISLAND")
-            elif key == ord('5'): apply_preset(cfg, "heavens"); proc.rebuild(); print("  >> HEAVENS HOLLOW")
-            elif key == ord('6'): apply_preset(cfg, "ranked"); proc.rebuild(); print("  >> RANKED RESURGENCE (PRO)")
-            elif key == ord('q'): cfg["step_body_db"] = max(0, cfg["step_body_db"]-2); proc.rebuild(); print(f"  Body: {cfg['step_body_db']:.0f}dB")
-            elif key == ord('w'): cfg["step_body_db"] = min(18, cfg["step_body_db"]+2); proc.rebuild(); print(f"  Body: {cfg['step_body_db']:.0f}dB")
-            elif key == ord('e'): cfg["step_texture_db"] = max(0, cfg["step_texture_db"]-2); proc.rebuild(); print(f"  Tex: {cfg['step_texture_db']:.0f}dB")
-            elif key == ord('r'): cfg["step_texture_db"] = min(18, cfg["step_texture_db"]+2); proc.rebuild(); print(f"  Tex: {cfg['step_texture_db']:.0f}dB")
-            elif key == ord('a'): cfg["step_edge_db"] = max(0, cfg["step_edge_db"]-2); proc.rebuild(); print(f"  Edge: {cfg['step_edge_db']:.0f}dB")
-            elif key == ord('s'): cfg["step_edge_db"] = min(18, cfg["step_edge_db"]+2); proc.rebuild(); print(f"  Edge: {cfg['step_edge_db']:.0f}dB")
+            elif key == ord('q'): cfg["step_body_db"] = max(0, cfg["step_body_db"]-1); proc.rebuild(); print(f"  Body: {cfg['step_body_db']:.0f}dB")
+            elif key == ord('w'): cfg["step_body_db"] = min(14, cfg["step_body_db"]+1); proc.rebuild(); print(f"  Body: {cfg['step_body_db']:.0f}dB")
+            elif key == ord('e'): cfg["step_texture_db"] = max(0, cfg["step_texture_db"]-1); proc.rebuild(); print(f"  Tex: {cfg['step_texture_db']:.0f}dB")
+            elif key == ord('r'): cfg["step_texture_db"] = min(14, cfg["step_texture_db"]+1); proc.rebuild(); print(f"  Tex: {cfg['step_texture_db']:.0f}dB")
+            elif key == ord('a'): cfg["step_edge_db"] = max(0, cfg["step_edge_db"]-1); proc.rebuild(); print(f"  Edge: {cfg['step_edge_db']:.0f}dB")
+            elif key == ord('s'): cfg["step_edge_db"] = min(12, cfg["step_edge_db"]+1); proc.rebuild(); print(f"  Edge: {cfg['step_edge_db']:.0f}dB")
             elif key == ord('d'): cfg["spatial_width"] = max(0.5, round(cfg["spatial_width"]-0.1,1)); print(f"  Spa: {cfg['spatial_width']:.1f}x")
             elif key == ord('f'): cfg["spatial_width"] = min(3.0, round(cfg["spatial_width"]+0.1,1)); print(f"  Spa: {cfg['spatial_width']:.1f}x")
             elif key == ord('t'): cfg["comp_ratio"] = max(1.0, round(cfg["comp_ratio"]-0.5,1)); proc.rebuild(); print(f"  Comp: {cfg['comp_ratio']:.1f}:1")
             elif key == ord('z'): cfg["comp_ratio"] = min(8.0, round(cfg["comp_ratio"]+0.5,1)); proc.rebuild(); print(f"  Comp: {cfg['comp_ratio']:.1f}:1")
-            elif key == ord('g'): cfg["output_gain_db"] = max(-12, cfg["output_gain_db"]-1); proc.rebuild(); print(f"  Gain: {cfg['output_gain_db']:.0f}dB")
-            elif key == ord('h'): cfg["output_gain_db"] = min(18, cfg["output_gain_db"]+1); proc.rebuild(); print(f"  Gain: {cfg['output_gain_db']:.0f}dB")
+            elif key == ord('g'): cfg["output_gain_db"] = max(-6, cfg["output_gain_db"]-1); proc.rebuild(); print(f"  Gain: {cfg['output_gain_db']:.0f}dB")
+            elif key == ord('h'): cfg["output_gain_db"] = min(12, cfg["output_gain_db"]+1); proc.rebuild(); print(f"  Gain: {cfg['output_gain_db']:.0f}dB")
             elif key == ord('u'): cfg["gunfire_db"] = min(0, cfg["gunfire_db"]+1); proc.rebuild(); print(f"  Gun: {cfg['gunfire_db']:.0f}dB")
-            elif key == ord('i'): cfg["gunfire_db"] = max(-15, cfg["gunfire_db"]-1); proc.rebuild(); print(f"  Gun: {cfg['gunfire_db']:.0f}dB")
+            elif key == ord('i'): cfg["gunfire_db"] = max(-12, cfg["gunfire_db"]-1); proc.rebuild(); print(f"  Gun: {cfg['gunfire_db']:.0f}dB")
             elif key == ord('o'): cfg["mud_cut_on"] = not cfg["mud_cut_on"]; proc.rebuild(); print(f"  Mud: {'EIN' if cfg['mud_cut_on'] else 'AUS'}")
-            elif key == ord('b'): proc.bypass = not proc.bypass; print(f"  {'>>> BYPASS (raw audio) <<<' if proc.bypass else '>>> FILTER AKTIV <<<'}")
+            elif key == ord('b'): proc.bypass = not proc.bypass; print(f"  {'>>> BYPASS (raw audio) <<<' if proc.bypass else '>>> eRayz AKTIV <<<'}")
             elif key == ord('m'): proc.muted = not proc.muted; print(f"  {'MUTED' if proc.muted else 'UNMUTED'}")
             elif key == ord('v'):
                 cfg["show_radar"] = not cfg["show_radar"]
                 if not cfg["show_radar"] and cv2: cv2.destroyAllWindows()
                 print(f"  Radar: {'EIN' if cfg['show_radar'] else 'AUS'}")
             elif key == ord('p'):
-                print(f"\n  === SETTINGS ===")
+                print(f"\n  === RANKED PRO SETTINGS ===")
                 for k,v in sorted(cfg.items()):
                     if k not in ("input_device","output_device","input_name","output_name"):
                         print(f"    {k}: {v}")
