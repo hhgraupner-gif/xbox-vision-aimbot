@@ -567,23 +567,62 @@ def main():
     proc = CompetitiveAudioV2(cfg)
     radar = StepRadar() if (cfg["show_radar"] and cv2 is not None) else None
 
-    def callback(indata, outdata, frames, time_info, status):
-        try:
-            outdata[:] = proc.process(indata)[:outdata.shape[0], :outdata.shape[1]]
-        except Exception:
-            outdata[:] = indata
+    # === ZWEI SEPARATE STREAMS (loest "Illegal combination" Fehler) ===
+    import queue
+    audio_q = queue.Queue(maxsize=64)
 
-    print("\n  Starte Audio-Stream...")
+    def in_callback(indata, frames, time_info, status):
+        """Capture Card liest Audio → in Queue."""
+        try:
+            processed = proc.process(indata.copy())
+            audio_q.put_nowait(processed)
+        except queue.Full:
+            pass
+        except Exception:
+            try:
+                audio_q.put_nowait(indata.copy())
+            except queue.Full:
+                pass
+
+    def out_callback(outdata, frames, time_info, status):
+        """Queue → Kopfhoerer."""
+        try:
+            data = audio_q.get_nowait()
+            outdata[:] = data[:outdata.shape[0], :outdata.shape[1]]
+        except queue.Empty:
+            outdata[:] = 0  # Stille wenn Queue leer
+
+    print("\n  Starte Audio-Streams (Dual-Stream Modus)...")
+
+    # Samplerate: Nutze die Rate des Input-Geraets
+    out_sr = int(devs[out_dev]['default_samplerate'])
+    # Beide muessen gleiche SR haben; falls verschieden, nehme Input-SR
+    use_sr = sr
+
+    in_stream = None
+    out_stream = None
     try:
-        stream = sd.Stream(
-            device=(in_dev, out_dev), samplerate=sr, blocksize=cfg["blocksize"],
-            channels=ch, dtype='float32', callback=callback, latency='low',
+        in_stream = sd.InputStream(
+            device=in_dev, samplerate=use_sr, blocksize=cfg["blocksize"],
+            channels=ch, dtype='float32', callback=in_callback, latency='low',
         )
-        stream.start()
-        print("  LAEUFT!\n")
+        out_stream = sd.OutputStream(
+            device=out_dev, samplerate=use_sr, blocksize=cfg["blocksize"],
+            channels=ch, dtype='float32', callback=out_callback, latency='low',
+        )
+        in_stream.start()
+        out_stream.start()
+        print("  Input-Stream:  LAEUFT")
+        print("  Output-Stream: LAEUFT\n")
     except Exception as e:
         print(f"\n  FEHLER: {e}")
-        print(f"  Tipp: python competitive_audio.py --list")
+        print(f"\n  Versuche andere Geraete-Kombination:")
+        print(f"  python competitive_audio.py --list")
+        print(f"  python competitive_audio.py --input <NR> --output <NR>")
+        if in_stream:
+            in_stream.close()
+        if out_stream:
+            out_stream.close()
         return
 
     try:
@@ -690,8 +729,12 @@ def main():
     except KeyboardInterrupt:
         print("\n  Ctrl+C")
     finally:
-        stream.stop()
-        stream.close()
+        if in_stream:
+            in_stream.stop()
+            in_stream.close()
+        if out_stream:
+            out_stream.stop()
+            out_stream.close()
         save_config(cfg)
         print(f"  Config gespeichert: {CONFIG_FILE}")
         if cv2 is not None:
