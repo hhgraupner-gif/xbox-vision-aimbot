@@ -410,7 +410,7 @@ def main():
     if args.no_radar:
         cfg["show_radar"] = False
 
-    sr = int(devs[in_dev]['default_samplerate'])
+    sr = 48000
     cfg["samplerate"] = sr
     ch = min(devs[in_dev]['max_input_channels'], 2)
     cfg["channels"] = ch
