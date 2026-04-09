@@ -85,7 +85,7 @@ DEFAULT_CONFIG = {
     "model_mode": "fps",
     "confidence": 0.40,
     "fov_radius": 180,
-    "strength": 0.35,
+    "strength": 0.42,
     "deadzone": 30,
     "max_move": 18,
     "cooldown_frames": 4,
@@ -321,13 +321,15 @@ class SmoothTracker:
         self.osc_count = 0      # Wie oft Richtung gewechselt
 
     def update(self, mx, my, bbox_h=0):
-        # Dynamischer Alpha: Close-Fight = schneller folgen
+        # Dynamischer Alpha: Close = instant, Range = auch zügig
         if bbox_h > 120:
-            alpha = 0.8   # Fast direkt aufs Ziel (Slide/Jump tracken)
+            alpha = 0.85  # Close: fast direkt aufs Ziel
         elif bbox_h > 80:
-            alpha = 0.65
+            alpha = 0.70
+        elif bbox_h > 50:
+            alpha = 0.60
         else:
-            alpha = self.alpha  # Standard 0.5
+            alpha = 0.55  # Range: auch schneller als vorher (war 0.5)
 
         if self.x is None:
             self.x, self.y = mx, my
@@ -401,21 +403,21 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
     # Grosse Box = naher Gegner = EXTREMER Kleber
     # Radius MUSS gross genug sein um Slide/Jump/Strafe abzufangen!
     if sticky_h > 120:
-        sticky_radius = 350      # Riesig — Slide/Jump kann nicht entkommen
-        sticky_bonus = 0.05      # Praktisch unzerstoerbar
-        min_lock = 18            # ~300ms Minimum-Lock bei 60FPS
+        sticky_radius = 450      # Halber Bildschirm — NICHTS entkommt
+        sticky_bonus = 0.02      # Quasi unmoeglicher Zielwechsel
+        min_lock = 25            # ~420ms bei 60FPS
     elif sticky_h > 80:
-        sticky_radius = 220
-        sticky_bonus = 0.10
-        min_lock = 12            # ~200ms
+        sticky_radius = 300
+        sticky_bonus = 0.06
+        min_lock = 16            # ~267ms
     elif sticky_h > 50:
-        sticky_radius = 130
-        sticky_bonus = 0.25
-        min_lock = 7             # ~116ms
+        sticky_radius = 180
+        sticky_bonus = 0.15
+        min_lock = 10            # ~167ms
     else:
-        sticky_radius = 70
-        sticky_bonus = 0.5
-        min_lock = 3             # ~50ms
+        sticky_radius = 100      # Auch auf Range deutlich stickier
+        sticky_bonus = 0.30
+        min_lock = 5             # ~83ms
 
     best = None
     best_score = float('inf')
