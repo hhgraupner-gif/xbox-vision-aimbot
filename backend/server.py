@@ -1213,6 +1213,8 @@ async def download_file(filename: str):
         "yolo11s.onnx": Path("/app/backend/yolo11s.onnx"),
         "competitive_audio.py": Path("/app/competitive_audio.py"),
         "AUDIO_SETUP.md": Path("/app/AUDIO_SETUP.md"),
+        "warzone_audio_setup.bat": Path("/app/warzone_audio_setup.bat"),
+        "warzone_audio_start.bat": Path("/app/warzone_audio_start.bat"),
     }
     if filename not in allowed:
         raise HTTPException(status_code=404, detail="Datei nicht gefunden")
