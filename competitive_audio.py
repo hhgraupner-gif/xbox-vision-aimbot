@@ -578,11 +578,11 @@ def main():
 
     try:
         in_stream = sd.InputStream(
-            device=in_dev, samplerate=use_sr, blocksize=cfg["blocksize"],
+            device=in_dev, samplerate=sr, blocksize=cfg["blocksize"],
             channels=ch, dtype='float32',
         )
         out_stream = sd.OutputStream(
-            device=out_dev, samplerate=use_sr, blocksize=cfg["blocksize"],
+            device=out_dev, samplerate=sr, blocksize=cfg["blocksize"],
             channels=ch, dtype='float32',
         )
         in_stream.start()
