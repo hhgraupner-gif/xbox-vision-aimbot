@@ -94,12 +94,39 @@ PRESETS = {
     },
     "heavens": {
         # Heavens Hollow: Enge Raeume, Mixed Terrain, viel Vertikales Gameplay
-        # Braucht breites Spatial fuer Oben/Unten, maximale Step-Klarheit
         "step_body_db": 12.0, "step_texture_db": 14.0, "step_edge_db": 7.0,
         "mud_cut_db": -6.0, "mud_cut_on": True, "gunfire_db": -9.0, "treble_db": -6.0,
         "highpass_hz": 130, "lowpass_hz": 10500,
         "comp_ratio": 6.0, "comp_threshold": -24.0,
         "spatial_width": 1.9, "gate_db": -52.0, "output_gain_db": 4.0,
+    },
+    "ranked": {
+        # ULTIMATE RANKED RESURGENCE — Pro-Level Preset
+        # Basiert auf: Pro Player EQ (Biffle, Rated), ArtIsWar, ASB Gaming 2026
+        #
+        # Pro-Konsens:
+        #   Sub-Bass <100Hz: HART WEG (Explosionen, Fahrzeuge)
+        #   250Hz: +5dB Body (Step-Aufprall auf Beton/Metall)
+        #   100-500Hz Low-Mids: -3dB CUT (Ambient-Muell)
+        #   2-4kHz: +6dB BOOST (Step-Textur, Reloads, Tueren)
+        #   4.5kHz: +3dB (Klarheit/Definition)
+        #   Gunfire: AGGRESSIV daempfen
+        #   Compression: MAXIMAL (leise Steps durch Waende hoerbar)
+        #
+        # DT 990 Pro Anpassung:
+        #   8kHz Spitze zaehmen, Mitten extra anheben
+        #   Spatial breit fuer Richtungserkennung
+        #
+        "step_body_hz": 250, "step_body_db": 14.0, "step_body_q": 2.0,
+        "mud_cut_hz": 500, "mud_cut_db": -7.0, "mud_cut_q": 1.2, "mud_cut_on": True,
+        "step_texture_hz": 2800, "step_texture_db": 16.0, "step_texture_q": 2.0,
+        "step_edge_hz": 4500, "step_edge_db": 9.0, "step_edge_q": 1.5,
+        "gunfire_hz": 5500, "gunfire_db": -10.0, "gunfire_q": 1.8,
+        "treble_hz": 8000, "treble_db": -7.0, "treble_q": 3.0,
+        "highpass_hz": 130, "lowpass_hz": 10000,
+        "comp_ratio": 6.5, "comp_threshold": -26.0,
+        "comp_attack": 0.002, "comp_release": 0.04,
+        "spatial_width": 2.0, "gate_db": -54.0, "output_gain_db": 5.0,
     },
 }
 
@@ -361,7 +388,7 @@ def main():
     parser.add_argument("--list", action="store_true")
     parser.add_argument("--input", type=int, default=None)
     parser.add_argument("--output", type=int, default=None)
-    parser.add_argument("--preset", choices=["warzone", "multiplayer", "resurgence", "rebirth", "heavens"])
+    parser.add_argument("--preset", choices=["warzone", "multiplayer", "resurgence", "rebirth", "heavens", "ranked"])
     parser.add_argument("--no-radar", action="store_true")
     args = parser.parse_args()
 
@@ -434,8 +461,8 @@ def main():
           f" Mud:{cfg['mud_cut_db']:.0f}dB Gun:{cfg['gunfire_db']:.0f}dB")
     print(f"  Comp:{cfg['comp_ratio']:.1f}:1 Spatial:{cfg['spatial_width']:.1f}x"
           f" Gain:{cfg['output_gain_db']:.0f}dB DT990:{cfg['treble_db']:.0f}dB")
-    print(f"\n  [1]WZ [2]MP [3]Resurg [4]Rebirth [5]Heavens | [Q/W]Body [E/R]Tex [A/S]Edge")
-    print(f"  [D/F]Spa [T/Z]Comp [G/H]Gain [U/I]Gun [O]Mud [B]Bypass [M]Mute [ESC]Quit")
+    print(f"\n  [1]WZ [2]MP [3]Resurg [4]Rebirth [5]Heavens [6]RANKED | [Q/W]Body [E/R]Tex")
+    print(f"  [A/S]Edge [D/F]Spa [T/Z]Comp [G/H]Gain [U/I]Gun [O]Mud [B]Bypass [M]Mute [ESC]Quit")
     print("  " + "=" * 50)
 
     proc = Processor(cfg)
@@ -541,6 +568,7 @@ def main():
             elif key == ord('3'): apply_preset(cfg, "resurgence"); proc.rebuild(); print("  >> RESURGENCE")
             elif key == ord('4'): apply_preset(cfg, "rebirth"); proc.rebuild(); print("  >> REBIRTH ISLAND")
             elif key == ord('5'): apply_preset(cfg, "heavens"); proc.rebuild(); print("  >> HEAVENS HOLLOW")
+            elif key == ord('6'): apply_preset(cfg, "ranked"); proc.rebuild(); print("  >> RANKED RESURGENCE (PRO)")
             elif key == ord('q'): cfg["step_body_db"] = max(0, cfg["step_body_db"]-2); proc.rebuild(); print(f"  Body: {cfg['step_body_db']:.0f}dB")
             elif key == ord('w'): cfg["step_body_db"] = min(18, cfg["step_body_db"]+2); proc.rebuild(); print(f"  Body: {cfg['step_body_db']:.0f}dB")
             elif key == ord('e'): cfg["step_texture_db"] = max(0, cfg["step_texture_db"]-2); proc.rebuild(); print(f"  Tex: {cfg['step_texture_db']:.0f}dB")
