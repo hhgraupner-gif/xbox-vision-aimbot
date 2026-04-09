@@ -45,34 +45,37 @@ CONFIG_FILE = os.path.join(SCRIPT_DIR, "audio_config.json")
 DEFAULT_CFG = {
     "input_device": None, "output_device": None,
     "input_name": "", "output_name": "",
-    "samplerate": 48000, "blocksize": 512, "channels": 2,
+    "samplerate": 48000, "blocksize": 256, "channels": 2,
     "preset": "ranked_pro",
     # ══════════════════════════════════════════════════════════
-    # RANKED PRO — Basierend auf altem Preset 6 (RANKED)
-    # User-getestet und fuer gut befunden auf Raw HDMI (Device 18)
+    # RANKED PRO MAX — Alte Preset 6 Basis + Distanz + Position
     # ══════════════════════════════════════════════════════════
     #
-    # Band 1: Step Body (200Hz)
+    # Band 1: Sub-Step (120Hz) — Naehe-Gefuehl, Schritte direkt neben dir
+    "sub_step_hz": 120, "sub_step_db": 8.0, "sub_step_q": 1.8,
+    # Band 2: Step Body (200Hz) — Aufprall-Gewicht
     "step_body_hz": 200, "step_body_db": 14.0, "step_body_q": 2.0,
-    # Band 2: Mud Cut (500Hz)
+    # Band 3: Mud Cut (500Hz) — Ambient raus
     "mud_cut_hz": 500, "mud_cut_db": -7.0, "mud_cut_q": 1.2, "mud_cut_on": True,
-    # Band 3: Step Texture (2400Hz)
+    # Band 4: Directional Cue (1400Hz) — HRTF Kern-Bereich fuer Links/Rechts
+    "directional_hz": 1400, "directional_db": 6.0, "directional_q": 1.0,
+    # Band 5: Step Texture (2400Hz) — Details
     "step_texture_hz": 2400, "step_texture_db": 16.0, "step_texture_q": 2.0,
-    # Band 4: Step Edge (4400Hz)
+    # Band 6: Step Edge (4400Hz) — Klarheit
     "step_edge_hz": 4400, "step_edge_db": 9.0, "step_edge_q": 1.5,
-    # Band 5: Gunfire Suppression (5500Hz)
+    # Band 7: Gunfire Suppression (5500Hz)
     "gunfire_hz": 5500, "gunfire_db": -10.0, "gunfire_q": 2.0,
-    # Band 6: DT 990 Treble Fix (8000Hz)
+    # Band 8: DT 990 Treble Fix (8000Hz)
     "treble_hz": 8000, "treble_db": -5.0, "treble_q": 3.0,
     #
     # Bandpass
-    "highpass_hz": 80, "lowpass_hz": 11000,
-    # Compression
-    "comp_ratio": 6.5, "comp_threshold": -18.0, "comp_attack": 0.002, "comp_release": 0.04,
+    "highpass_hz": 60, "lowpass_hz": 11000,
+    # Compression — Aggressiv: Ferne Steps fast so laut wie nahe
+    "comp_ratio": 8.0, "comp_threshold": -24.0, "comp_attack": 0.001, "comp_release": 0.03,
     # Noise Gate
-    "gate_db": -50.0,
-    # Spatial
-    "spatial_width": 1.6,
+    "gate_db": -52.0,
+    # Spatial — Breit fuer praezise Links/Rechts Ortung
+    "spatial_width": 2.0,
     # Output
     "output_gain_db": 5.0,
     "show_radar": True,
@@ -135,8 +138,10 @@ class Processor:
 
         self.eqs = []
         for nm, fk, dk, qk, on in [
+            ("sub",  "sub_step_hz", "sub_step_db", "sub_step_q", True),
             ("body", "step_body_hz", "step_body_db", "step_body_q", True),
             ("mud",  "mud_cut_hz", "mud_cut_db", "mud_cut_q", c["mud_cut_on"]),
+            ("dir",  "directional_hz", "directional_db", "directional_q", True),
             ("tex",  "step_texture_hz", "step_texture_db", "step_texture_q", True),
             ("edge", "step_edge_hz", "step_edge_db", "step_edge_q", True),
             ("gun",  "gunfire_hz", "gunfire_db", "gunfire_q", True),
@@ -262,8 +267,8 @@ class Radar:
         # Status
         if bypass:
             cv2.putText(img, ">>> BYPASS <<<", (80,self.SZ//2), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,255), 2)
-        cv2.putText(img, f"[RANKED PRO] BODY:{cfg['step_body_db']:.0f} TEX:{cfg['step_texture_db']:.0f} EDGE:{cfg['step_edge_db']:.0f}",
-                    (6,16), cv2.FONT_HERSHEY_SIMPLEX, 0.30, (0,180,100), 1)
+        cv2.putText(img, f"[RANKED PRO MAX] BODY:{cfg['step_body_db']:.0f} TEX:{cfg['step_texture_db']:.0f} EDGE:{cfg['step_edge_db']:.0f} DIR:{cfg['directional_db']:.0f}",
+                    (6,16), cv2.FONT_HERSHEY_SIMPLEX, 0.27, (0,180,100), 1)
         cv2.putText(img, f"MUD:{cfg['mud_cut_db']:.0f} GUN:{cfg['gunfire_db']:.0f} DT990:{cfg['treble_db']:.0f} SPA:{cfg['spatial_width']:.1f}",
                     (6,32), cv2.FONT_HERSHEY_SIMPLEX, 0.30, (130,130,140), 1)
         cv2.putText(img, f"COMP:{cfg['comp_ratio']:.1f}:1 GAIN:{cfg['output_gain_db']:.0f}dB HP:{cfg['highpass_hz']}Hz",
@@ -399,8 +404,9 @@ def main():
     print(f"\n  IN:  [{in_dev}] {devs[in_dev]['name']}")
     print(f"  OUT: [{out_dev}] {devs[out_dev]['name']}")
     print(f"  {sr}Hz | Stereo | {bs} samples (~{bs/sr*1000:.1f}ms)")
-    print(f"\n  [RANKED PRO]"
-          f" Body:+{cfg['step_body_db']:.0f}dB Tex:+{cfg['step_texture_db']:.0f}dB Edge:+{cfg['step_edge_db']:.0f}dB"
+    print(f"\n  [RANKED PRO MAX]"
+          f" Sub:+{cfg['sub_step_db']:.0f}dB Body:+{cfg['step_body_db']:.0f}dB Dir:+{cfg['directional_db']:.0f}dB"
+          f" Tex:+{cfg['step_texture_db']:.0f}dB Edge:+{cfg['step_edge_db']:.0f}dB"
           f" Mud:{cfg['mud_cut_db']:.0f}dB Gun:{cfg['gunfire_db']:.0f}dB")
     print(f"  Comp:{cfg['comp_ratio']:.1f}:1 Spatial:{cfg['spatial_width']:.1f}x"
           f" Gain:{cfg['output_gain_db']:.0f}dB DT990:{cfg['treble_db']:.0f}dB")
