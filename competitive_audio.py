@@ -1,21 +1,20 @@
 """
-eRayz Audio — RANKED PRO
-=========================
-Competitive Audio Engine | DT 990 Pro
-Raw HDMI Capture | Duplex WASAPI
+eRayz Audio — MULTIBAND PRO
+=============================
+4-Band Frequency Splitting | Per-Band Compression
+Transient Enhancement | DT 990 Pro | Raw HDMI
 
-ERSTER START:  python competitive_audio.py --input 3 --output 5
+ERSTER START:  python competitive_audio.py --input 18 --output 14
 DANACH NUR:    python competitive_audio.py
 
 STEUERUNG:
-  Q/W    Step Body 250Hz -/+
-  E/R    Step Texture 2.8kHz -/+
-  A/S    Step Edge 4.5kHz -/+
-  D/F    Spatial -/+
-  T/Z    Compression -/+
+  Q/W    Band A (Steps Low) Gain -/+
+  E/R    Band B (Mud) Gain -/+
+  A/S    Band C (Steps Detail) Gain -/+
+  D/F    Band D (Gunfire) Gain -/+
+  T/Z    Master Compression -/+
   G/H    Output Gain -/+
-  U/I    Gunfire Cut -/+
-  O      Mud Cut an/aus
+  X/C    Spatial -/+
   B      BYPASS (A/B Vergleich)
   M      Mute
   V      Radar an/aus
@@ -23,7 +22,7 @@ STEUERUNG:
   ESC    Beenden
 """
 
-import sys, os, json, time, argparse, threading
+import sys, os, json, time, argparse, threading, math
 from collections import deque
 import numpy as np
 from scipy import signal as sig
@@ -46,38 +45,52 @@ DEFAULT_CFG = {
     "input_device": None, "output_device": None,
     "input_name": "", "output_name": "",
     "samplerate": 48000, "blocksize": 256, "channels": 2,
-    "preset": "ranked_pro",
+    "preset": "multiband_pro",
     # ══════════════════════════════════════════════════════════
-    # RANKED PRO MAX — Alte Preset 6 Basis + Distanz + Position
+    # MULTIBAND PRO — 4-Band Split Processing
+    #
+    # Band A: 80-300Hz   → Footstep Body (Boost + Compress)
+    # Band B: 300-1500Hz → Mud Zone (Cut + Gate)
+    # Band C: 1500-5500Hz→ Footstep Detail (Boost + Heavy Compress)
+    # Band D: 5500-11kHz → Gunfire/Treble (Cut + Limit)
     # ══════════════════════════════════════════════════════════
     #
-    # Band 1: Sub-Step (120Hz) — Nur leicht, kein Druck auf Open-Back
-    "sub_step_hz": 120, "sub_step_db": 3.0, "sub_step_q": 1.8,
-    # Band 2: Step Body (200Hz) — Aufprall-Gewicht
-    "step_body_hz": 200, "step_body_db": 14.0, "step_body_q": 2.0,
-    # Band 3: Mud Cut (500Hz) — Ambient raus
-    "mud_cut_hz": 500, "mud_cut_db": -7.0, "mud_cut_q": 1.2, "mud_cut_on": True,
-    # Band 4: Directional Cue (1400Hz) — HRTF Kern-Bereich fuer Links/Rechts
-    "directional_hz": 1400, "directional_db": 6.0, "directional_q": 1.0,
-    # Band 5: Step Texture (2400Hz) — Details
-    "step_texture_hz": 2400, "step_texture_db": 16.0, "step_texture_q": 2.0,
-    # Band 6: Step Edge (4400Hz) — Klarheit
-    "step_edge_hz": 4400, "step_edge_db": 9.0, "step_edge_q": 1.5,
-    # Band 7: Gunfire Suppression (5500Hz)
-    "gunfire_hz": 5500, "gunfire_db": -10.0, "gunfire_q": 2.0,
-    # Band 8: DT 990 Treble Fix (8000Hz)
-    "treble_hz": 8000, "treble_db": -5.0, "treble_q": 3.0,
-    #
-    # Bandpass
+    # Crossover Frequencies
+    "xover_1": 300, "xover_2": 1500, "xover_3": 5500,
     "highpass_hz": 80, "lowpass_hz": 11000,
-    # Compression — Zurueck auf bewaehrt, kein Ohr-Druck
-    "comp_ratio": 6.0, "comp_threshold": -18.0, "comp_attack": 0.002, "comp_release": 0.04,
-    # Noise Gate
-    "gate_db": -50.0,
-    # Spatial — 1.6 bewaehrt, kein Phasen-Druck
+    #
+    # Band A: Footstep Body
+    "band_a_gain_db": 12.0,
+    "band_a_comp_ratio": 4.0,
+    "band_a_comp_thresh": -20.0,
+    #
+    # Band B: Mud Zone — Schneiden, aggressiv gaten
+    "band_b_gain_db": -5.0,
+    "band_b_comp_ratio": 2.0,
+    "band_b_comp_thresh": -15.0,
+    #
+    # Band C: Footstep Detail — Der Geldband. Alles hoerbar machen.
+    "band_c_gain_db": 14.0,
+    "band_c_comp_ratio": 7.0,
+    "band_c_comp_thresh": -26.0,
+    #
+    # Band D: Gunfire/Treble — Runterziehen + Limiten
+    "band_d_gain_db": -8.0,
+    "band_d_comp_ratio": 10.0,
+    "band_d_comp_thresh": -12.0,
+    #
+    # DT 990 Pro: Notch bei 8kHz
+    "dt990_notch_hz": 8000, "dt990_notch_db": -5.0, "dt990_notch_q": 3.0,
+    #
+    # Transient Enhancer: Verstaerkt Attack von Steps
+    "transient_attack": 0.6,  # 0=aus, 1=maximal
+    #
+    # Spatial
     "spatial_width": 1.6,
-    # Output
-    "output_gain_db": 5.0,
+    #
+    # Master
+    "output_gain_db": 4.0,
+    "gate_db": -52.0,
     "show_radar": True,
 }
 
@@ -112,61 +125,127 @@ def make_peak_eq(fc, db, Q, fs):
 
 
 # ============================================================
-# AUDIO PROCESSOR
+# MULTIBAND PROCESSOR
 # ============================================================
-class Processor:
+class MultibandProcessor:
+    """Splittet Audio in 4 Baender, verarbeitet jedes einzeln."""
+
     def __init__(self, cfg):
         self.cfg = cfg
         self.sr = cfg["samplerate"]
-        self.nyq = self.sr / 2.0
+        self.ny = self.sr / 2.0
         self.muted = False
         self.bypass = False
-        self.comp_env = 0.0
         self.step_L = 0.0
         self.step_R = 0.0
         self.peak_dir = 0.0
         self.step_pwr = 0.0
+        # Per-band compressor envelopes [bandA, bandB, bandC, bandD] x [L, R]
+        self.comp_env = [[1e-10]*2 for _ in range(4)]
+        # Transient detector state
+        self.prev_env_c = [0.0, 0.0]
         self._build()
 
     def _f(self, hz):
-        return max(20.0, min(float(hz), self.nyq * 0.95))
+        return max(20.0, min(float(hz), self.ny * 0.95))
 
     def _build(self):
-        sr, ny, c = self.sr, self.nyq, self.cfg
-        self.sos_hp = sig.butter(5, self._f(c["highpass_hz"])/ny, 'highpass', output='sos')
-        self.sos_lp = sig.butter(2, self._f(c["lowpass_hz"])/ny, 'lowpass', output='sos')
+        sr, ny, c = self.sr, self.ny, self.cfg
 
-        self.eqs = []
-        for nm, fk, dk, qk, on in [
-            ("sub",  "sub_step_hz", "sub_step_db", "sub_step_q", True),
-            ("body", "step_body_hz", "step_body_db", "step_body_q", True),
-            ("mud",  "mud_cut_hz", "mud_cut_db", "mud_cut_q", c["mud_cut_on"]),
-            ("dir",  "directional_hz", "directional_db", "directional_q", True),
-            ("tex",  "step_texture_hz", "step_texture_db", "step_texture_q", True),
-            ("edge", "step_edge_hz", "step_edge_db", "step_edge_q", True),
-            ("gun",  "gunfire_hz", "gunfire_db", "gunfire_q", True),
-            ("treb", "treble_hz", "treble_db", "treble_q", True),
-        ]:
-            if on and abs(c[dk]) > 0.1:
-                self.eqs.append(make_peak_eq(self._f(c[fk]), c[dk], c[qk], sr))
+        # Highpass + Lowpass
+        self.sos_hp = sig.butter(4, self._f(c["highpass_hz"])/ny, 'highpass', output='sos')
+        self.sos_lp = sig.butter(3, self._f(c["lowpass_hz"])/ny, 'lowpass', output='sos')
 
-        lo, hi = self._f(1500), self._f(4500)
-        self.sos_rd = sig.butter(2, [lo/ny, hi/ny], 'bandpass', output='sos')
+        # Crossover filters (Linkwitz-Riley 4th order = 2x Butterworth 2nd order)
+        x1, x2, x3 = self._f(c["xover_1"])/ny, self._f(c["xover_2"])/ny, self._f(c["xover_3"])/ny
 
-        self.g_out = 10 ** (c["output_gain_db"]/20)
-        self.g_gate = 10 ** (c["gate_db"]/20)
-        self.g_comp = 10 ** (c["comp_threshold"]/20)
+        # Band A: HP(80) to LP(xover_1)
+        self.sos_a_lp = sig.butter(4, x1, 'lowpass', output='sos')
+        # Band B: HP(xover_1) to LP(xover_2)
+        self.sos_b_bp = sig.butter(3, [x1, x2], 'bandpass', output='sos')
+        # Band C: HP(xover_2) to LP(xover_3)
+        self.sos_c_bp = sig.butter(3, [x2, x3], 'bandpass', output='sos')
+        # Band D: HP(xover_3) to LP(11k)
+        self.sos_d_hp = sig.butter(4, x3, 'highpass', output='sos')
+
+        # Radar detection band
+        lo_r, hi_r = self._f(1500)/ny, self._f(5000)/ny
+        self.sos_rd = sig.butter(2, [lo_r, hi_r], 'bandpass', output='sos')
+
+        # DT990 notch
+        if abs(c["dt990_notch_db"]) > 0.1:
+            self.notch_b, self.notch_a = make_peak_eq(
+                self._f(c["dt990_notch_hz"]), c["dt990_notch_db"], c["dt990_notch_q"], sr)
+            self.has_notch = True
+        else:
+            self.has_notch = False
+
+        # Gains
+        self.g_a = 10 ** (c["band_a_gain_db"] / 20)
+        self.g_b = 10 ** (c["band_b_gain_db"] / 20)
+        self.g_c = 10 ** (c["band_c_gain_db"] / 20)
+        self.g_d = 10 ** (c["band_d_gain_db"] / 20)
+        self.g_out = 10 ** (c["output_gain_db"] / 20)
+        self.g_gate = 10 ** (c["gate_db"] / 20)
+
+        # Comp thresholds
+        self.ct = [10 ** (c[f"band_{b}_comp_thresh"] / 20) for b in "abcd"]
+        self.cr = [c[f"band_{b}_comp_ratio"] for b in "abcd"]
+
         self._zi()
 
     def _zi(self):
         z = lambda s: np.zeros((s.shape[0], 2))
         self.zi_hp = [z(self.sos_hp), z(self.sos_hp)]
         self.zi_lp = [z(self.sos_lp), z(self.sos_lp)]
+        self.zi_a = [z(self.sos_a_lp), z(self.sos_a_lp)]
+        self.zi_b = [z(self.sos_b_bp), z(self.sos_b_bp)]
+        self.zi_c = [z(self.sos_c_bp), z(self.sos_c_bp)]
+        self.zi_d = [z(self.sos_d_hp), z(self.sos_d_hp)]
         self.zi_rd = [z(self.sos_rd), z(self.sos_rd)]
-        self.zi_eq = [[sig.lfilter_zi(b, a)*0, sig.lfilter_zi(b, a)*0] for b, a in self.eqs]
+        if self.has_notch:
+            self.zi_notch = [sig.lfilter_zi(self.notch_b, self.notch_a)*0,
+                             sig.lfilter_zi(self.notch_b, self.notch_a)*0]
 
     def rebuild(self):
         self._build()
+
+    def _compress_band(self, x, band_idx, ch_idx):
+        """Per-Band Kompression."""
+        ratio = self.cr[band_idx]
+        if ratio <= 1.01:
+            return x
+        thresh = self.ct[band_idx]
+        pk = max(np.max(np.abs(x)), 1e-10)
+        env = self.comp_env[band_idx][ch_idx]
+        # Fast attack, medium release
+        coeff = 0.002 if pk > env else 0.04
+        env += coeff * (pk - env)
+        env = max(env, 1e-10)
+        self.comp_env[band_idx][ch_idx] = env
+        if env > thresh:
+            over_db = 20 * math.log10(env / thresh)
+            reduce_db = over_db * (1 - 1/ratio)
+            g = 10 ** (-reduce_db / 20)
+            # Makeup gain: halber Reduce zurueck
+            makeup = 10 ** (reduce_db * 0.5 / 20)
+            return x * g * makeup
+        return x
+
+    def _transient_enhance(self, x, ch_idx):
+        """Verstaerkt den Attack von Transienten (Schritte knackiger)."""
+        amt = self.cfg["transient_attack"]
+        if amt < 0.05:
+            return x
+        env = np.sqrt(np.mean(x * x))
+        delta = env - self.prev_env_c[ch_idx]
+        self.prev_env_c[ch_idx] = env
+        # Positive delta = Attack (Signal wird lauter) → boosten
+        if delta > 0.001:
+            boost = 1.0 + delta * amt * 15
+            boost = min(boost, 1.0 + amt)  # Cap
+            return x * boost
+        return x
 
     def process(self, data):
         if self.muted:
@@ -179,36 +258,47 @@ class Processor:
 
         for i in range(2):
             x = C[i]
+
+            # Pre-filter
             x, self.zi_hp[i] = sig.sosfilt(self.sos_hp, x, zi=self.zi_hp[i])
-            for j, (b, a) in enumerate(self.eqs):
-                x, self.zi_eq[j][i] = sig.lfilter(b, a, x, zi=self.zi_eq[j][i])
             x, self.zi_lp[i] = sig.sosfilt(self.sos_lp, x, zi=self.zi_lp[i])
+
+            # Split into 4 bands
+            a, self.zi_a[i] = sig.sosfilt(self.sos_a_lp, x, zi=self.zi_a[i])
+            b, self.zi_b[i] = sig.sosfilt(self.sos_b_bp, x, zi=self.zi_b[i])
+            c, self.zi_c[i] = sig.sosfilt(self.sos_c_bp, x, zi=self.zi_c[i])
+            d, self.zi_d[i] = sig.sosfilt(self.sos_d_hp, x, zi=self.zi_d[i])
+
+            # Per-band: Gain → Compress
+            a = self._compress_band(a * self.g_a, 0, i)
+            b = self._compress_band(b * self.g_b, 1, i)
+            c = self._compress_band(c * self.g_c, 2, i)
+            d = self._compress_band(d * self.g_d, 3, i)
+
+            # Transient Enhancement auf Band C (Step Detail)
+            c = self._transient_enhance(c, i)
+
+            # Recombine
+            x = a + b + c + d
+
+            # DT990 Notch
+            if self.has_notch:
+                x, self.zi_notch[i] = sig.lfilter(self.notch_b, self.notch_a, x, zi=self.zi_notch[i])
+
+            # Radar detection
             r, self.zi_rd[i] = sig.sosfilt(self.sos_rd, x, zi=self.zi_rd[i])
             rms = float(np.sqrt(np.mean(r*r)))
             if i == 0: self.step_L = rms
             else: self.step_R = rms
+
             C[i] = x
 
         L, R = C
 
         # Noise Gate
-        if np.sqrt(np.mean(L*L) + np.mean(R*R)) < self.g_gate:
+        level = np.sqrt(np.mean(L*L) + np.mean(R*R))
+        if level < self.g_gate:
             L *= 0.02; R *= 0.02
-
-        # Compression
-        rat = self.cfg["comp_ratio"]
-        if rat > 1.01:
-            pk = max(np.max(np.abs(L)), np.max(np.abs(R)), 1e-10)
-            att, rel = self.cfg["comp_attack"], self.cfg["comp_release"]
-            self.comp_env += (att if pk > self.comp_env else rel) * (pk - self.comp_env)
-            self.comp_env = max(self.comp_env, 1e-10)
-            if self.comp_env > self.g_comp:
-                odb = 20 * np.log10(self.comp_env / self.g_comp)
-                rdb = odb * (1 - 1/rat)
-                g = 10**(-rdb/20) * 10**(rdb*0.5/20)
-            else:
-                g = 1.0
-            L *= g; R *= g
 
         # Spatial
         w = self.cfg["spatial_width"]
@@ -216,11 +306,11 @@ class Processor:
             m, s = (L+R)*0.5, (L-R)*0.5*w
             L, R = m+s, m-s
 
-        # Output + Limiter
+        # Output + Soft Limiter
         L = np.tanh(L * self.g_out)
         R = np.tanh(R * self.g_out)
 
-        # Radar
+        # Radar data
         t = self.step_L + self.step_R
         if t > 0.0003:
             self.peak_dir = (self.step_R - self.step_L) / t
@@ -264,14 +354,13 @@ class Radar:
             cv2.circle(img, (px,self.cy), sz, col, -1)
             cv2.line(img, (self.cx,self.cy), (px,self.cy), col, 2)
 
-        # Status
         if bypass:
             cv2.putText(img, ">>> BYPASS <<<", (80,self.SZ//2), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,255), 2)
-        cv2.putText(img, f"[RANKED PRO MAX] BODY:{cfg['step_body_db']:.0f} TEX:{cfg['step_texture_db']:.0f} EDGE:{cfg['step_edge_db']:.0f} DIR:{cfg['directional_db']:.0f}",
-                    (6,16), cv2.FONT_HERSHEY_SIMPLEX, 0.27, (0,180,100), 1)
-        cv2.putText(img, f"MUD:{cfg['mud_cut_db']:.0f} GUN:{cfg['gunfire_db']:.0f} DT990:{cfg['treble_db']:.0f} SPA:{cfg['spatial_width']:.1f}",
+        cv2.putText(img, f"[MULTIBAND PRO] A:{cfg['band_a_gain_db']:.0f} B:{cfg['band_b_gain_db']:.0f} C:{cfg['band_c_gain_db']:.0f} D:{cfg['band_d_gain_db']:.0f}",
+                    (6,16), cv2.FONT_HERSHEY_SIMPLEX, 0.28, (0,180,100), 1)
+        cv2.putText(img, f"DT990:{cfg['dt990_notch_db']:.0f} SPA:{cfg['spatial_width']:.1f} TRANS:{cfg['transient_attack']:.1f}",
                     (6,32), cv2.FONT_HERSHEY_SIMPLEX, 0.30, (130,130,140), 1)
-        cv2.putText(img, f"COMP:{cfg['comp_ratio']:.1f}:1 GAIN:{cfg['output_gain_db']:.0f}dB HP:{cfg['highpass_hz']}Hz",
+        cv2.putText(img, f"COMP A:{cfg['band_a_comp_ratio']:.0f}:1 C:{cfg['band_c_comp_ratio']:.0f}:1 GAIN:{cfg['output_gain_db']:.0f}dB",
                     (6,48), cv2.FONT_HERSHEY_SIMPLEX, 0.28, (130,130,140), 1)
 
         bw = int(pw*(self.SZ-20))
@@ -314,14 +403,11 @@ def find_device_by_name(devs, name, need_input=True):
 
 
 def auto_find_capture(devs):
-    """Auto-detect capture card: HDMI zuerst, dann Virtual Microphone."""
-    # Prioritaet 1: HDMI Capture (rohes Signal — besser)
     for i, d in enumerate(devs):
         if d['max_input_channels'] >= 2 and d['default_samplerate'] <= 48000:
             name_l = d['name'].lower()
             if 'hdmi' in name_l and ('live streamer' in name_l or 'avermedia' in name_l or 'capture' in name_l):
                 return i
-    # Prioritaet 2: AVerMedia Virtual Microphone
     for i, d in enumerate(devs):
         if d['max_input_channels'] >= 2:
             for kw in ["avermedia", "gc571", "game capture", "live gamer"]:
@@ -337,7 +423,7 @@ def main():
     if sd is None:
         sys.exit(1)
 
-    parser = argparse.ArgumentParser(description="eRayz Audio — Ranked Pro")
+    parser = argparse.ArgumentParser(description="eRayz Audio — Multiband Pro")
     parser.add_argument("--list", action="store_true")
     parser.add_argument("--input", type=int, default=None)
     parser.add_argument("--output", type=int, default=None)
@@ -348,15 +434,15 @@ def main():
     devs = list_devices()
 
     print()
-    print("  " + "=" * 50)
-    print("  eRayz Audio — RANKED PRO")
-    print("  DT 990 Pro | Raw HDMI Capture | Duplex WASAPI")
-    print("  " + "=" * 50)
+    print("  " + "=" * 55)
+    print("  eRayz Audio — MULTIBAND PRO")
+    print("  4-Band Split | Per-Band Compression | Transient Shaper")
+    print("  DT 990 Pro | Raw HDMI | 48kHz/256")
+    print("  " + "=" * 55)
 
     if args.list:
         return
 
-    # --- Geraete bestimmen (Prioritaet: CLI > Config > Auto) ---
     in_dev = args.input
     if in_dev is None and cfg["input_name"]:
         in_dev = find_device_by_name(devs, cfg["input_name"], need_input=True)
@@ -386,7 +472,6 @@ def main():
     if out_dev is None:
         out_dev = sd.default.device[1]
 
-    # Geraete-Namen speichern
     cfg["input_device"] = in_dev
     cfg["output_device"] = out_dev
     cfg["input_name"] = devs[in_dev]['name']
@@ -404,20 +489,19 @@ def main():
     print(f"\n  IN:  [{in_dev}] {devs[in_dev]['name']}")
     print(f"  OUT: [{out_dev}] {devs[out_dev]['name']}")
     print(f"  {sr}Hz | Stereo | {bs} samples (~{bs/sr*1000:.1f}ms)")
-    print(f"\n  [RANKED PRO MAX]"
-          f" Sub:+{cfg['sub_step_db']:.0f}dB Body:+{cfg['step_body_db']:.0f}dB Dir:+{cfg['directional_db']:.0f}dB"
-          f" Tex:+{cfg['step_texture_db']:.0f}dB Edge:+{cfg['step_edge_db']:.0f}dB"
-          f" Mud:{cfg['mud_cut_db']:.0f}dB Gun:{cfg['gunfire_db']:.0f}dB")
-    print(f"  Comp:{cfg['comp_ratio']:.1f}:1 Spatial:{cfg['spatial_width']:.1f}x"
-          f" Gain:{cfg['output_gain_db']:.0f}dB DT990:{cfg['treble_db']:.0f}dB")
-    print(f"\n  [Q/W]Body [E/R]Tex [A/S]Edge [D/F]Spa [T/Z]Comp")
-    print(f"  [G/H]Gain [U/I]Gun [O]Mud [B]Bypass [M]Mute [ESC]Quit")
-    print("  " + "=" * 50)
+    print(f"\n  [MULTIBAND PRO]")
+    print(f"  Band A (Steps Low  80-{cfg['xover_1']}Hz):  Gain:{cfg['band_a_gain_db']:+.0f}dB  Comp:{cfg['band_a_comp_ratio']:.0f}:1")
+    print(f"  Band B (Mud    {cfg['xover_1']}-{cfg['xover_2']}Hz): Gain:{cfg['band_b_gain_db']:+.0f}dB  Comp:{cfg['band_b_comp_ratio']:.0f}:1")
+    print(f"  Band C (Detail {cfg['xover_2']}-{cfg['xover_3']}Hz): Gain:{cfg['band_c_gain_db']:+.0f}dB  Comp:{cfg['band_c_comp_ratio']:.0f}:1")
+    print(f"  Band D (Gun    {cfg['xover_3']}Hz+):     Gain:{cfg['band_d_gain_db']:+.0f}dB  Comp:{cfg['band_d_comp_ratio']:.0f}:1")
+    print(f"  Transient: {cfg['transient_attack']:.1f}  Spatial: {cfg['spatial_width']:.1f}x  DT990: {cfg['dt990_notch_db']:.0f}dB")
+    print(f"\n  [Q/W]BandA [E/R]BandB [A/S]BandC [D/F]BandD")
+    print(f"  [T/Z]CompC [G/H]Gain [X/C]Spatial [B]Bypass [M]Mute [ESC]Quit")
+    print("  " + "=" * 55)
 
-    proc = Processor(cfg)
+    proc = MultibandProcessor(cfg)
     radar = Radar() if (cfg["show_radar"] and cv2) else None
 
-    # --- DUPLEX STREAM (Fallback: Ring-Buffer) ---
     print("\n  Starte Duplex Stream...")
     duplex = None
     audio_ok = False
@@ -431,16 +515,15 @@ def main():
     try:
         duplex = sd.Stream(
             device=(in_dev, out_dev), samplerate=sr, blocksize=bs,
-            channels=ch, dtype='float32', callback=duplex_cb, latency=0.03,
+            channels=ch, dtype='float32', callback=duplex_cb, latency=0.02,
         )
         duplex.start()
         audio_ok = True
         print("  DUPLEX OK\n")
     except Exception as e1:
         print(f"  Duplex fehlgeschlagen: {e1}")
-        print("  Fallback: Separate Streams...")
+        print("  Fallback: Ring-Buffer...")
 
-        # Ring-Buffer Fallback
         class _RB:
             def __init__(self, cap, nch):
                 self.buf = np.zeros((cap, nch), dtype=np.float32)
@@ -501,7 +584,6 @@ def main():
     if not audio_ok:
         return
 
-    # --- UI LOOP ---
     try:
         while True:
             if radar and cfg["show_radar"] and cv2:
@@ -510,29 +592,28 @@ def main():
             key = (cv2.waitKey(33) & 0xFF) if (cv2 and cfg["show_radar"]) else (time.sleep(0.033) or 255)
 
             if key == 27: break
-            elif key == ord('q'): cfg["step_body_db"] = max(0, cfg["step_body_db"]-1); proc.rebuild(); print(f"  Body: {cfg['step_body_db']:.0f}dB")
-            elif key == ord('w'): cfg["step_body_db"] = min(14, cfg["step_body_db"]+1); proc.rebuild(); print(f"  Body: {cfg['step_body_db']:.0f}dB")
-            elif key == ord('e'): cfg["step_texture_db"] = max(0, cfg["step_texture_db"]-1); proc.rebuild(); print(f"  Tex: {cfg['step_texture_db']:.0f}dB")
-            elif key == ord('r'): cfg["step_texture_db"] = min(14, cfg["step_texture_db"]+1); proc.rebuild(); print(f"  Tex: {cfg['step_texture_db']:.0f}dB")
-            elif key == ord('a'): cfg["step_edge_db"] = max(0, cfg["step_edge_db"]-1); proc.rebuild(); print(f"  Edge: {cfg['step_edge_db']:.0f}dB")
-            elif key == ord('s'): cfg["step_edge_db"] = min(12, cfg["step_edge_db"]+1); proc.rebuild(); print(f"  Edge: {cfg['step_edge_db']:.0f}dB")
-            elif key == ord('d'): cfg["spatial_width"] = max(0.5, round(cfg["spatial_width"]-0.1,1)); print(f"  Spa: {cfg['spatial_width']:.1f}x")
-            elif key == ord('f'): cfg["spatial_width"] = min(3.0, round(cfg["spatial_width"]+0.1,1)); print(f"  Spa: {cfg['spatial_width']:.1f}x")
-            elif key == ord('t'): cfg["comp_ratio"] = max(1.0, round(cfg["comp_ratio"]-0.5,1)); proc.rebuild(); print(f"  Comp: {cfg['comp_ratio']:.1f}:1")
-            elif key == ord('z'): cfg["comp_ratio"] = min(8.0, round(cfg["comp_ratio"]+0.5,1)); proc.rebuild(); print(f"  Comp: {cfg['comp_ratio']:.1f}:1")
+            elif key == ord('q'): cfg["band_a_gain_db"] = max(-10, cfg["band_a_gain_db"]-1); proc.rebuild(); print(f"  Band A: {cfg['band_a_gain_db']:.0f}dB")
+            elif key == ord('w'): cfg["band_a_gain_db"] = min(20, cfg["band_a_gain_db"]+1); proc.rebuild(); print(f"  Band A: {cfg['band_a_gain_db']:.0f}dB")
+            elif key == ord('e'): cfg["band_b_gain_db"] = max(-15, cfg["band_b_gain_db"]-1); proc.rebuild(); print(f"  Band B: {cfg['band_b_gain_db']:.0f}dB")
+            elif key == ord('r'): cfg["band_b_gain_db"] = min(10, cfg["band_b_gain_db"]+1); proc.rebuild(); print(f"  Band B: {cfg['band_b_gain_db']:.0f}dB")
+            elif key == ord('a'): cfg["band_c_gain_db"] = max(-10, cfg["band_c_gain_db"]-1); proc.rebuild(); print(f"  Band C: {cfg['band_c_gain_db']:.0f}dB")
+            elif key == ord('s'): cfg["band_c_gain_db"] = min(20, cfg["band_c_gain_db"]+1); proc.rebuild(); print(f"  Band C: {cfg['band_c_gain_db']:.0f}dB")
+            elif key == ord('d'): cfg["band_d_gain_db"] = max(-15, cfg["band_d_gain_db"]-1); proc.rebuild(); print(f"  Band D: {cfg['band_d_gain_db']:.0f}dB")
+            elif key == ord('f'): cfg["band_d_gain_db"] = min(5, cfg["band_d_gain_db"]+1); proc.rebuild(); print(f"  Band D: {cfg['band_d_gain_db']:.0f}dB")
+            elif key == ord('t'): cfg["band_c_comp_ratio"] = max(1, cfg["band_c_comp_ratio"]-1); proc.rebuild(); print(f"  Comp C: {cfg['band_c_comp_ratio']:.0f}:1")
+            elif key == ord('z'): cfg["band_c_comp_ratio"] = min(12, cfg["band_c_comp_ratio"]+1); proc.rebuild(); print(f"  Comp C: {cfg['band_c_comp_ratio']:.0f}:1")
             elif key == ord('g'): cfg["output_gain_db"] = max(-6, cfg["output_gain_db"]-1); proc.rebuild(); print(f"  Gain: {cfg['output_gain_db']:.0f}dB")
             elif key == ord('h'): cfg["output_gain_db"] = min(12, cfg["output_gain_db"]+1); proc.rebuild(); print(f"  Gain: {cfg['output_gain_db']:.0f}dB")
-            elif key == ord('u'): cfg["gunfire_db"] = min(0, cfg["gunfire_db"]+1); proc.rebuild(); print(f"  Gun: {cfg['gunfire_db']:.0f}dB")
-            elif key == ord('i'): cfg["gunfire_db"] = max(-12, cfg["gunfire_db"]-1); proc.rebuild(); print(f"  Gun: {cfg['gunfire_db']:.0f}dB")
-            elif key == ord('o'): cfg["mud_cut_on"] = not cfg["mud_cut_on"]; proc.rebuild(); print(f"  Mud: {'EIN' if cfg['mud_cut_on'] else 'AUS'}")
-            elif key == ord('b'): proc.bypass = not proc.bypass; print(f"  {'>>> BYPASS (raw audio) <<<' if proc.bypass else '>>> eRayz AKTIV <<<'}")
+            elif key == ord('x'): cfg["spatial_width"] = max(0.5, round(cfg["spatial_width"]-0.1,1)); print(f"  Spatial: {cfg['spatial_width']:.1f}x")
+            elif key == ord('c'): cfg["spatial_width"] = min(3.0, round(cfg["spatial_width"]+0.1,1)); print(f"  Spatial: {cfg['spatial_width']:.1f}x")
+            elif key == ord('b'): proc.bypass = not proc.bypass; print(f"  {'>>> BYPASS <<<' if proc.bypass else '>>> MULTIBAND AKTIV <<<'}")
             elif key == ord('m'): proc.muted = not proc.muted; print(f"  {'MUTED' if proc.muted else 'UNMUTED'}")
             elif key == ord('v'):
                 cfg["show_radar"] = not cfg["show_radar"]
                 if not cfg["show_radar"] and cv2: cv2.destroyAllWindows()
                 print(f"  Radar: {'EIN' if cfg['show_radar'] else 'AUS'}")
             elif key == ord('p'):
-                print(f"\n  === RANKED PRO SETTINGS ===")
+                print(f"\n  === MULTIBAND PRO SETTINGS ===")
                 for k,v in sorted(cfg.items()):
                     if k not in ("input_device","output_device","input_name","output_name"):
                         print(f"    {k}: {v}")
