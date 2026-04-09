@@ -66,7 +66,7 @@ DEFAULT_CFG = {
     "input_device":   None,
     "output_device":  None,
     "samplerate":     48000,
-    "blocksize":      256,      # ~5ms bei 48kHz — minimal, weil Blocking IO stabil ist
+    "blocksize":      512,      # ~10ms bei 48kHz — guter Kompromiss Latenz/Stabilitaet
     "channels":       2,
     "preset":         "warzone",
 
@@ -587,8 +587,14 @@ def main():
         )
         in_stream.start()
         out_stream.start()
+
+        # Pre-Buffer: 3 Bloecke Stille vorschreiben → Sicherheitspuffer gegen Stottern
+        silence = np.zeros((cfg["blocksize"], ch), dtype=np.float32)
+        for _ in range(3):
+            out_stream.write(silence)
+
         print(f"  Input:  LAEUFT ({cfg['blocksize']} samples, ~{cfg['blocksize']/sr*1000:.1f}ms)")
-        print(f"  Output: LAEUFT\n")
+        print(f"  Output: LAEUFT (Pre-Buffer: 3 Bloecke)\n")
     except Exception as e:
         print(f"\n  FEHLER: {e}")
         print(f"  python competitive_audio.py --list")
