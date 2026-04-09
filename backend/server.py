@@ -1211,6 +1211,8 @@ async def download_file(filename: str):
         "sunxds_640.onnx": Path("/app/backend/sunxds_640.onnx"),
         "sunxds_nano_320.onnx": Path("/app/backend/sunxds_nano_320.onnx"),
         "yolo11s.onnx": Path("/app/backend/yolo11s.onnx"),
+        "competitive_audio.py": Path("/app/competitive_audio.py"),
+        "AUDIO_SETUP.md": Path("/app/AUDIO_SETUP.md"),
     }
     if filename not in allowed:
         raise HTTPException(status_code=404, detail="Datei nicht gefunden")
