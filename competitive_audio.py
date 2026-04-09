@@ -448,6 +448,7 @@ def main():
         duplex_stream = sd.Stream(
             device=(in_dev, out_dev), samplerate=sr, blocksize=blocksize,
             channels=ch, dtype='float32', callback=duplex_cb,
+            latency=0.03,  # 30ms Headroom — verhindert Menu-Stottern
         )
         duplex_stream.start()
         stream_mode = "duplex"
