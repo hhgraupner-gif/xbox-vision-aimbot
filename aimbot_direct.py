@@ -351,11 +351,15 @@ class SmoothTracker:
         self.lost = 0
 
     def get_predicted_position(self, lead_frames=2.5):
-        """Position + Velocity Prediction (zielt VORAUS)."""
+        """Position + Velocity Prediction (zielt VORAUS).
+        Nur bei echtem Movement — ignoriert Box-Jitter."""
         if self.x is None:
             return None
-        # Nur vorhersagen wenn genuegend Frames fuer stabile Velocity
         if self.frames < 3:
+            return (self.x, self.y)
+        # Nur vorhersagen wenn Geschwindigkeit > Jitter-Schwelle (2px/frame)
+        speed = math.sqrt(self.vx * self.vx + self.vy * self.vy)
+        if speed < 2.0:
             return (self.x, self.y)
         px = self.x + self.vx * lead_frames
         py = self.y + self.vy * lead_frames
@@ -457,9 +461,9 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
         if cls in IGNORE_CLASSES:
             continue
 
-        # Zielpunkt: MITTE der gesamten Box
+        # Zielpunkt: Mitte X, OBERKOERPER Y (35% von oben — stabiler als Box-Mitte)
         tx = (x1 + x2) / 2.0
-        ty = (y1 + y2) / 2.0
+        ty = y1 + (y2 - y1) * 0.35
 
         dist = math.sqrt((tx - cx) ** 2 + (ty - cy) ** 2)
         if dist > fov:
