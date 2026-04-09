@@ -1,48 +1,46 @@
 """
-WARZONE COMPETITIVE AUDIO — DT 990 Pro Edition
-=================================================
-Echtzeit Audio-Enhancement fuer Warzone Ranked.
-Speziell abgestimmt auf Beyerdynamic DT 990 Pro + SteelSeries GameDAC.
+WARZONE COMPETITIVE AUDIO V2 — DT 990 Pro Edition
+====================================================
+Chirurgische Peaking-EQ Filter auf exakten Footstep-Frequenzen.
+Basierend auf Spectrogram-Analyse von FPS-Footsteps.
 
-FEATURES:
-  - DT 990 Pro Korrektur (8kHz Spitze zaehmen, Mitten anheben)
-  - Footstep Enhancement (100-300Hz Thuds + 2-4kHz Schritte)
-  - Explosion/Gunfire Suppression (Bass-Rumble + Schuss-Peaks daempfen)
-  - Dynamic Compression (leise Steps lauter, laute Sounds begrenzen)
-  - Stereo Spatial Enhancement (breiteres Stereo fuer Richtungserkennung)
-  - Noise Gate (Stille bleibt still, kein Grundrauschen)
-  - Visueller Audio-Radar (zeigt Richtung starker Step-Signale)
-  - 3 Presets: Warzone (BR), Multiplayer, Resurgence
+SIGNAL-KETTE:
+  1. Highpass 100Hz (5th order) — Rumble/Explosionen komplett weg
+  2. Peaking +8dB @ 200Hz Q=1.8 — Footstep BODY (Thud/Aufprall)
+  3. Peaking -4dB @ 600Hz Q=1.5 — MUD CUT (Waffen-Body/Ambient raus)
+  4. Peaking +8dB @ 2400Hz Q=2.5 — Footstep TEXTURE (Schritte/Richtung)
+  5. Peaking +5dB @ 4400Hz Q=1.2 — Footstep EDGE (Klarheit/Definition)
+  6. Peaking -6dB @ 5500Hz Q=2.0 — Gunfire CRACK Suppression
+  7. Notch  -5dB @ 8000Hz Q=3.0 — DT 990 Pro Treble-Spitze zaehmen
+  8. Lowpass 12kHz (2nd order) — Hiss/Rauschen abschneiden
+  9. Noise Gate
+  10. Dynamic Compression mit Makeup-Gain
+  11. Stereo Spatial Enhancement (Side-Channel verstaerkt)
+  12. Soft Limiter
 
 INSTALLATION:
   pip install sounddevice numpy scipy opencv-python
 
-SETUP:
-  1. Xbox Audio muss ueber Capture Card (GC571) auf den PC kommen
-  2. Script starten: python competitive_audio.py
-  3. Input = Capture Card Audio, Output = GameDAC / Default
-  4. SteelSeries Sonar am besten AUS oder auf "Flat" stellen
-     (unser Tool macht das besser und gezielter)
-
-STEUERUNG (im Radar-Fenster):
-  1/2/3     = Preset: Warzone / Multiplayer / Resurgence
-  Q/W       = Footstep Boost -/+
-  E/R       = Compression -/+
-  A/S       = Bass Cut Frequenz -/+
-  D/F       = Spatial Width -/+
-  T/Z       = Treble Tame (DT990 8kHz) -/+
-  G/H       = Output Gain -/+
-  M         = Mute/Unmute
-  V         = Radar an/aus
-  P         = Alle Einstellungen anzeigen
-  ESC       = Beenden (Config wird gespeichert)
+STEUERUNG:
+  1/2/3   = Preset: Warzone / Multiplayer / Resurgence
+  Q/W     = Step Body (200Hz) Boost -/+
+  E/R     = Step Texture (2.4kHz) Boost -/+
+  A/S     = Step Edge (4.4kHz) Boost -/+
+  D/F     = Spatial Width -/+
+  T/Z     = Compression -/+
+  G/H     = Output Gain -/+
+  U/I     = Gunfire Cut -/+
+  O       = Mud Cut toggle (600Hz)
+  M       = Mute/Unmute
+  V       = Radar an/aus
+  P       = Alle Settings anzeigen
+  ESC     = Beenden
 """
 
 import sys
 import os
 import json
 import time
-import threading
 import argparse
 from collections import deque
 
@@ -53,10 +51,7 @@ try:
     import sounddevice as sd
 except ImportError:
     sd = None
-    print("=" * 55)
-    print("  FEHLER: 'sounddevice' nicht installiert!")
-    print("  Installiere mit:  pip install sounddevice")
-    print("=" * 55)
+    print("FEHLER: pip install sounddevice")
 
 try:
     import cv2
@@ -64,98 +59,96 @@ except ImportError:
     cv2 = None
 
 # ============================================================
-# CONFIG
-# ============================================================
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "audio_config.json")
 
 DEFAULT_CFG = {
-    "input_device":   None,    # None = auto-detect / default
-    "output_device":  None,    # None = default
+    "input_device":   None,
+    "output_device":  None,
     "samplerate":     48000,
-    "blocksize":      512,     # ~10ms bei 48kHz
+    "blocksize":      512,
     "channels":       2,
-
     "preset":         "warzone",
 
-    # --- Footstep Enhancement ---
-    "step_boost_db":      12.0,    # dB Boost im Step-Band
-    "step_low_hz":        80,      # Untere Grenze (Thuds)
-    "step_high_hz":       3500,    # Obere Grenze (Schritte/Scuff)
-    "step_mid_boost_db":  6.0,     # Extra Mid-Boost 1-2.5kHz (Klarheit)
+    # === CHIRURGISCHE EQ BANDS ===
+    # Footstep Body (Thud/Aufprall auf Boden)
+    "step_body_hz":     200,
+    "step_body_db":     8.0,
+    "step_body_q":      1.8,
 
-    # --- Bass Cut (Explosionen/Fahrzeuge) ---
-    "bass_cut_hz":    60,      # Alles darunter wird steil abgeschnitten
+    # Mud Cut (Waffen-Body, Ambient-Muell)
+    "mud_cut_hz":       600,
+    "mud_cut_db":       -4.0,
+    "mud_cut_q":        1.5,
+    "mud_cut_on":       True,
 
-    # --- DT 990 Pro Korrektur ---
-    "treble_tame_db": -4.0,    # dB Cut bei 8kHz (DT990 Spitze)
-    "mid_lift_db":     2.0,    # dB Boost bei 1.5kHz (DT990 Delle)
+    # Footstep Texture (Schritte hoerbar, Richtung)
+    "step_texture_hz":  2400,
+    "step_texture_db":  8.0,
+    "step_texture_q":   2.5,
 
-    # --- Gunfire Suppression ---
-    "gunfire_cut_db": -3.0,    # dB Cut bei 4-6kHz (Schuss-Peaks)
+    # Footstep Edge (Klarheit/Definition)
+    "step_edge_hz":     4400,
+    "step_edge_db":     5.0,
+    "step_edge_q":      1.2,
 
-    # --- Dynamic Compression ---
-    "comp_ratio":      3.5,    # Kompression (1=aus, 6=extrem)
-    "comp_threshold": -20.0,   # dB Schwelle
-    "comp_attack":     0.005,  # Sekunden
-    "comp_release":    0.08,   # Sekunden
+    # Gunfire Crack Suppression
+    "gunfire_hz":       5500,
+    "gunfire_db":       -6.0,
+    "gunfire_q":        2.0,
 
-    # --- Noise Gate ---
-    "gate_db":        -48.0,   # Unter diesem Pegel = Stille
+    # DT990 Treble Tame
+    "treble_hz":        8000,
+    "treble_db":        -5.0,
+    "treble_q":         3.0,
 
-    # --- Spatial ---
-    "spatial_width":   1.4,    # Stereo-Breite (1.0=normal)
+    # Highpass / Lowpass
+    "highpass_hz":      100,
+    "lowpass_hz":       12000,
 
-    # --- Output ---
-    "output_gain_db":  0.0,    # Master-Lautstaerke
+    # Dynamic Compression
+    "comp_ratio":       4.0,
+    "comp_threshold":   -18.0,
+    "comp_attack":      0.003,
+    "comp_release":     0.06,
 
-    # --- Radar ---
-    "show_radar":      True,
+    # Noise Gate
+    "gate_db":          -46.0,
+
+    # Spatial
+    "spatial_width":    1.6,
+
+    # Output
+    "output_gain_db":   2.0,
+
+    # Radar
+    "show_radar":       True,
 }
 
-# === Presets ===
 PRESETS = {
     "warzone": {
-        "step_boost_db":     12.0,
-        "step_low_hz":       80,
-        "step_high_hz":      3500,
-        "step_mid_boost_db": 6.0,
-        "bass_cut_hz":       60,
-        "treble_tame_db":   -4.0,
-        "mid_lift_db":       2.0,
-        "gunfire_cut_db":   -3.0,
-        "comp_ratio":        3.5,
-        "comp_threshold":   -20.0,
-        "spatial_width":     1.4,
-        "gate_db":          -48.0,
+        "step_body_db": 8.0, "step_texture_db": 8.0, "step_edge_db": 5.0,
+        "mud_cut_db": -4.0, "mud_cut_on": True,
+        "gunfire_db": -6.0, "treble_db": -5.0,
+        "highpass_hz": 100, "lowpass_hz": 12000,
+        "comp_ratio": 4.0, "comp_threshold": -18.0,
+        "spatial_width": 1.6, "gate_db": -46.0, "output_gain_db": 2.0,
     },
     "multiplayer": {
-        "step_boost_db":     10.0,
-        "step_low_hz":       100,
-        "step_high_hz":      3000,
-        "step_mid_boost_db": 5.0,
-        "bass_cut_hz":       50,
-        "treble_tame_db":   -3.0,
-        "mid_lift_db":       1.5,
-        "gunfire_cut_db":   -2.0,
-        "comp_ratio":        2.5,
-        "comp_threshold":   -18.0,
-        "spatial_width":     1.2,
-        "gate_db":          -45.0,
+        "step_body_db": 6.0, "step_texture_db": 7.0, "step_edge_db": 4.0,
+        "mud_cut_db": -3.0, "mud_cut_on": True,
+        "gunfire_db": -4.0, "treble_db": -4.0,
+        "highpass_hz": 80, "lowpass_hz": 13000,
+        "comp_ratio": 3.0, "comp_threshold": -16.0,
+        "spatial_width": 1.3, "gate_db": -44.0, "output_gain_db": 1.0,
     },
     "resurgence": {
-        "step_boost_db":     14.0,
-        "step_low_hz":       70,
-        "step_high_hz":      4000,
-        "step_mid_boost_db": 7.0,
-        "bass_cut_hz":       70,
-        "treble_tame_db":   -5.0,
-        "mid_lift_db":       2.5,
-        "gunfire_cut_db":   -4.0,
-        "comp_ratio":        4.0,
-        "comp_threshold":   -22.0,
-        "spatial_width":     1.5,
-        "gate_db":          -50.0,
+        "step_body_db": 10.0, "step_texture_db": 10.0, "step_edge_db": 6.0,
+        "mud_cut_db": -5.0, "mud_cut_on": True,
+        "gunfire_db": -8.0, "treble_db": -6.0,
+        "highpass_hz": 110, "lowpass_hz": 11000,
+        "comp_ratio": 5.0, "comp_threshold": -20.0,
+        "spatial_width": 1.8, "gate_db": -48.0, "output_gain_db": 3.0,
     },
 }
 
@@ -188,22 +181,33 @@ def apply_preset(cfg, name):
 
 
 # ============================================================
-# AUDIO PROCESSOR — DT 990 Pro Optimiert
+# PARAMETRIC PEAKING EQ — Audio EQ Cookbook (Robert Bristow-Johnson)
 # ============================================================
-class CompetitiveAudio:
-    """Echtzeit Audio-Verarbeitung fuer Warzone Competitive.
-    
-    Signal-Kette:
-    1. Highpass (Bass Cut) → Explosionen/Fahrzeuge weg
-    2. DT 990 Korrektur → 8kHz Spitze zaehmen + Mitten anheben
-    3. Gunfire Notch → 4-6kHz Schuss-Peaks daempfen
-    4. Footstep Boost → 80-3500Hz Band verstaerken
-    5. Mid-Clarity Boost → 1-2.5kHz extra fuer Schritt-Klarheit
-    6. Noise Gate → Stille bleibt still
-    7. Dynamic Compression → Leises lauter, Lautes begrenzen
-    8. Spatial Enhancement → Breiteres Stereo
-    9. Soft Limiter → Kein Clipping
-    """
+def make_peaking_eq(fc, gain_db, Q, fs):
+    """Erzeugt einen Peaking-EQ als b/a Koeffizienten.
+    fc: Centerfrequenz Hz, gain_db: Gain in dB, Q: Guete, fs: Samplerate.
+    Basiert auf Audio EQ Cookbook."""
+    A = 10 ** (gain_db / 40.0)  # sqrt(10^(dB/20))
+    w0 = 2.0 * np.pi * fc / fs
+    alpha = np.sin(w0) / (2.0 * Q)
+
+    b0 = 1.0 + alpha * A
+    b1 = -2.0 * np.cos(w0)
+    b2 = 1.0 - alpha * A
+    a0 = 1.0 + alpha / A
+    a1 = -2.0 * np.cos(w0)
+    a2 = 1.0 - alpha / A
+
+    b = np.array([b0 / a0, b1 / a0, b2 / a0])
+    a = np.array([1.0, a1 / a0, a2 / a0])
+    return b, a
+
+
+# ============================================================
+# AUDIO PROCESSOR V2
+# ============================================================
+class CompetitiveAudioV2:
+    """Chirurgische Audio-Verarbeitung mit Peaking-EQ auf Step-Frequenzen."""
 
     def __init__(self, cfg):
         self.cfg = cfg
@@ -212,77 +216,102 @@ class CompetitiveAudio:
         self.muted = False
         self.comp_env = 0.0
 
-        # Radar-Daten
+        # Radar
         self.step_energy_L = 0.0
         self.step_energy_R = 0.0
-        self.peak_dir = 0.0      # -1 links, +1 rechts
-        self.step_power = 0.0    # 0-1 Gesamtstaerke
+        self.peak_dir = 0.0
+        self.step_power = 0.0
 
-        self._build_filters()
+        self._build()
 
-    def _build_filters(self):
-        """Baut alle IIR-Filter (Butterworth + Peaking)."""
+    def _safe_freq(self, hz):
+        return max(20.0, min(float(hz), self.nyq * 0.95))
+
+    def _build(self):
+        """Alle Filter bauen."""
         sr = self.sr
         nyq = self.nyq
         c = self.cfg
 
-        # --- 1. HIGHPASS: Bass Cut ---
-        f_hp = np.clip(c["bass_cut_hz"], 20, nyq * 0.9)
+        # === HIGHPASS (Butterworth 5th order) ===
+        f_hp = self._safe_freq(c["highpass_hz"])
         self.sos_hp = sig.butter(5, f_hp / nyq, btype='highpass', output='sos')
 
-        # --- 2. FOOTSTEP BANDPASS (fuer Boost-Berechnung) ---
-        f_lo = np.clip(c["step_low_hz"], 20, nyq * 0.8)
-        f_hi = np.clip(c["step_high_hz"], f_lo + 50, nyq * 0.9)
-        self.sos_step = sig.butter(3, [f_lo / nyq, f_hi / nyq], btype='bandpass', output='sos')
+        # === LOWPASS (Butterworth 2nd order) ===
+        f_lp = self._safe_freq(c["lowpass_hz"])
+        self.sos_lp = sig.butter(2, f_lp / nyq, btype='lowpass', output='sos')
 
-        # --- 3. MID-CLARITY BANDPASS (1-2.5kHz) ---
-        mid_lo = np.clip(1000, 20, nyq * 0.8)
-        mid_hi = np.clip(2500, mid_lo + 50, nyq * 0.9)
-        self.sos_mid = sig.butter(2, [mid_lo / nyq, mid_hi / nyq], btype='bandpass', output='sos')
+        # === PEAKING EQ BANDS ===
+        self.eq_bands = []
 
-        # --- 4. DT 990 TREBLE TAME (8kHz Peaking Notch) ---
-        f_treble = 8000.0
-        if f_treble < nyq:
-            b_t, a_t = sig.iirnotch(f_treble, Q=3.0, fs=sr)
-            self.ba_treble = (b_t, a_t)
-        else:
-            self.ba_treble = None
+        # 1. Footstep Body
+        if abs(c["step_body_db"]) > 0.1:
+            b, a = make_peaking_eq(self._safe_freq(c["step_body_hz"]),
+                                   c["step_body_db"], c["step_body_q"], sr)
+            self.eq_bands.append(("body", b, a))
 
-        # --- 5. GUNFIRE CUT (4-6kHz) ---
-        gun_lo = np.clip(4000, 20, nyq * 0.8)
-        gun_hi = np.clip(6000, gun_lo + 50, nyq * 0.9)
-        self.sos_gun = sig.butter(2, [gun_lo / nyq, gun_hi / nyq], btype='bandpass', output='sos')
+        # 2. Mud Cut
+        if c["mud_cut_on"] and abs(c["mud_cut_db"]) > 0.1:
+            b, a = make_peaking_eq(self._safe_freq(c["mud_cut_hz"]),
+                                   c["mud_cut_db"], c["mud_cut_q"], sr)
+            self.eq_bands.append(("mud", b, a))
 
-        # Gain-Werte vorberechnen
-        self.step_gain = 10 ** (c["step_boost_db"] / 20.0)
-        self.mid_gain = 10 ** (c["step_mid_boost_db"] / 20.0)
-        self.treble_mix = 10 ** (c["treble_tame_db"] / 20.0)  # <1.0 = daempfen
-        self.mid_lift = 10 ** (c["mid_lift_db"] / 20.0)
-        self.gun_cut = 10 ** (c["gunfire_cut_db"] / 20.0)     # <1.0 = daempfen
+        # 3. Footstep Texture
+        if abs(c["step_texture_db"]) > 0.1:
+            b, a = make_peaking_eq(self._safe_freq(c["step_texture_hz"]),
+                                   c["step_texture_db"], c["step_texture_q"], sr)
+            self.eq_bands.append(("texture", b, a))
+
+        # 4. Footstep Edge
+        if abs(c["step_edge_db"]) > 0.1:
+            b, a = make_peaking_eq(self._safe_freq(c["step_edge_hz"]),
+                                   c["step_edge_db"], c["step_edge_q"], sr)
+            self.eq_bands.append(("edge", b, a))
+
+        # 5. Gunfire Cut
+        if abs(c["gunfire_db"]) > 0.1:
+            b, a = make_peaking_eq(self._safe_freq(c["gunfire_hz"]),
+                                   c["gunfire_db"], c["gunfire_q"], sr)
+            self.eq_bands.append(("gun", b, a))
+
+        # 6. DT990 Treble
+        if abs(c["treble_db"]) > 0.1:
+            b, a = make_peaking_eq(self._safe_freq(c["treble_hz"]),
+                                   c["treble_db"], c["treble_q"], sr)
+            self.eq_bands.append(("treble", b, a))
+
+        # Bandpass fuer Step-Radar-Erkennung (2-4kHz)
+        bp_lo = self._safe_freq(1500)
+        bp_hi = self._safe_freq(4500)
+        self.sos_radar = sig.butter(2, [bp_lo / nyq, bp_hi / nyq], btype='bandpass', output='sos')
+
+        # Pre-compute gains
         self.out_gain = 10 ** (c["output_gain_db"] / 20.0)
         self.gate_lin = 10 ** (c["gate_db"] / 20.0)
         self.comp_thresh = 10 ** (c["comp_threshold"] / 20.0)
 
-        # Filter-Zustaende pro Kanal (L/R)
-        self._init_states()
+        # Filter-States initialisieren
+        self._init_zi()
 
-    def _init_states(self):
-        """Initialisiert Filter-Zustaende."""
-        z = lambda sos: np.zeros((sos.shape[0], 2))
-        self.zi_hp = [z(self.sos_hp), z(self.sos_hp)]
-        self.zi_step = [z(self.sos_step), z(self.sos_step)]
-        self.zi_mid = [z(self.sos_mid), z(self.sos_mid)]
-        self.zi_gun = [z(self.sos_gun), z(self.sos_gun)]
-        if self.ba_treble:
-            b, a = self.ba_treble
-            self.zi_treble = [sig.lfilter_zi(b, a) * 0.0, sig.lfilter_zi(b, a) * 0.0]
+    def _init_zi(self):
+        """Filter-Zustaende fuer 2 Kanaele."""
+        # SOS-States
+        z_sos = lambda sos: np.zeros((sos.shape[0], 2))
+        self.zi_hp = [z_sos(self.sos_hp), z_sos(self.sos_hp)]
+        self.zi_lp = [z_sos(self.sos_lp), z_sos(self.sos_lp)]
+        self.zi_radar = [z_sos(self.sos_radar), z_sos(self.sos_radar)]
+
+        # IIR-States (b/a) fuer jedes EQ-Band, pro Kanal
+        self.zi_eq = []
+        for name, b, a in self.eq_bands:
+            zi_L = sig.lfilter_zi(b, a) * 0.0
+            zi_R = sig.lfilter_zi(b, a) * 0.0
+            self.zi_eq.append([zi_L, zi_R])
 
     def rebuild(self):
-        """Config hat sich geaendert → Filter neu bauen."""
-        self._build_filters()
+        self._build()
 
     def process(self, data):
-        """Verarbeitet einen Stereo-Block [frames, 2] → [frames, 2]."""
         if self.muted:
             return np.zeros_like(data)
 
@@ -292,34 +321,22 @@ class CompetitiveAudio:
         else:
             channels = [data.flatten().copy(), data.flatten().copy()]
 
-        for i in range(2):  # L=0, R=1
+        for i in range(2):
             x = channels[i]
 
-            # === 1. HIGHPASS — Bass Cut ===
+            # === 1. HIGHPASS — Rumble/Explosionen weg ===
             x, self.zi_hp[i] = sig.sosfilt(self.sos_hp, x, zi=self.zi_hp[i])
 
-            # === 2. DT 990 TREBLE TAME ===
-            if self.ba_treble and self.treble_mix < 0.99:
-                b, a = self.ba_treble
-                notched, self.zi_treble[i] = sig.lfilter(b, a, x, zi=self.zi_treble[i])
-                # Mix: Original + gedaempftes Treble
-                x = x * self.treble_mix + notched * (1.0 - self.treble_mix)
+            # === 2-7. PEAKING EQ BANDS (chirurgisch) ===
+            for band_idx, (name, b, a) in enumerate(self.eq_bands):
+                x, self.zi_eq[band_idx][i] = sig.lfilter(b, a, x, zi=self.zi_eq[band_idx][i])
 
-            # === 3. GUNFIRE CUT ===
-            if self.gun_cut < 0.99:
-                gun_band, self.zi_gun[i] = sig.sosfilt(self.sos_gun, x, zi=self.zi_gun[i])
-                x = x - gun_band * (1.0 - self.gun_cut)
+            # === 8. LOWPASS — Hiss weg ===
+            x, self.zi_lp[i] = sig.sosfilt(self.sos_lp, x, zi=self.zi_lp[i])
 
-            # === 4. FOOTSTEP BOOST ===
-            step_band, self.zi_step[i] = sig.sosfilt(self.sos_step, x, zi=self.zi_step[i])
-            x = x + step_band * (self.step_gain - 1.0)
-
-            # === 5. MID-CLARITY BOOST ===
-            mid_band, self.zi_mid[i] = sig.sosfilt(self.sos_mid, x, zi=self.zi_mid[i])
-            x = x + mid_band * (self.mid_lift - 1.0)
-
-            # Radar: Step-Energie tracken
-            rms = float(np.sqrt(np.mean(step_band ** 2)))
+            # Radar: Step-Band Energie messen (2-4kHz)
+            radar_band, self.zi_radar[i] = sig.sosfilt(self.sos_radar, x, zi=self.zi_radar[i])
+            rms = float(np.sqrt(np.mean(radar_band ** 2)))
             if i == 0:
                 self.step_energy_L = rms
             else:
@@ -329,19 +346,17 @@ class CompetitiveAudio:
 
         left, right = channels
 
-        # === 6. NOISE GATE ===
+        # === 9. NOISE GATE ===
         rms_total = np.sqrt(np.mean(left ** 2) + np.mean(right ** 2))
         if rms_total < self.gate_lin:
-            gate_factor = 0.02  # Sehr leise statt komplett aus (kein Klick)
-            left *= gate_factor
-            right *= gate_factor
+            left *= 0.02
+            right *= 0.02
 
-        # === 7. DYNAMIC COMPRESSION ===
+        # === 10. DYNAMIC COMPRESSION ===
         ratio = self.cfg["comp_ratio"]
         if ratio > 1.01:
             peak = max(np.max(np.abs(left)), np.max(np.abs(right)), 1e-10)
 
-            # Envelope Follower
             att = self.cfg["comp_attack"]
             rel = self.cfg["comp_release"]
             if peak > self.comp_env:
@@ -354,7 +369,8 @@ class CompetitiveAudio:
                 over_db = 20.0 * np.log10(self.comp_env / self.comp_thresh)
                 reduce_db = over_db * (1.0 - 1.0 / ratio)
                 comp_g = 10 ** (-reduce_db / 20.0)
-                makeup = 10 ** (reduce_db * 0.45 / 20.0)  # 45% Makeup
+                # 50% Makeup Gain — leise Steps deutlich anheben
+                makeup = 10 ** (reduce_db * 0.50 / 20.0)
             else:
                 comp_g = 1.0
                 makeup = 1.0
@@ -362,7 +378,8 @@ class CompetitiveAudio:
             left *= comp_g * makeup
             right *= comp_g * makeup
 
-        # === 8. SPATIAL ENHANCEMENT ===
+        # === 11. SPATIAL ENHANCEMENT ===
+        # Mid/Side: Side-Channel verstaerken = bessere Richtung
         w = self.cfg["spatial_width"]
         if abs(w - 1.0) > 0.01:
             mid = (left + right) * 0.5
@@ -371,21 +388,20 @@ class CompetitiveAudio:
             left = mid + side
             right = mid - side
 
-        # === 9. OUTPUT GAIN + SOFT LIMITER ===
+        # === 12. OUTPUT GAIN + SOFT LIMITER ===
         left *= self.out_gain
         right *= self.out_gain
         left = np.tanh(left)
         right = np.tanh(right)
 
-        # Radar-Daten aktualisieren
+        # Radar-Daten
         total = self.step_energy_L + self.step_energy_R
-        if total > 0.0005:
+        if total > 0.0003:
             self.peak_dir = (self.step_energy_R - self.step_energy_L) / total
-            self.step_power = min(1.0, total * 20.0)
+            self.step_power = min(1.0, total * 25.0)
         else:
-            self.step_power *= 0.85
+            self.step_power *= 0.82
 
-        # Output zusammenbauen
         out = np.column_stack([left, right])
         if data.ndim > 1 and data.shape[1] > 2:
             extra = np.zeros((len(left), data.shape[1] - 2), dtype=np.float32)
@@ -394,100 +410,78 @@ class CompetitiveAudio:
 
 
 # ============================================================
-# VISUELLER AUDIO-RADAR
+# RADAR
 # ============================================================
 class StepRadar:
-    """Zeigt Richtung und Staerke erkannter Schritte."""
-
-    SIZE = 320
+    SZ = 320
 
     def __init__(self):
-        self.cx = self.SIZE // 2
-        self.cy = self.SIZE // 2
-        self.r = self.SIZE // 2 - 35
+        self.cx = self.SZ // 2
+        self.cy = self.SZ // 2
+        self.r = self.SZ // 2 - 35
         self.trail = deque(maxlen=25)
 
     def draw(self, direction, power, cfg):
-        img = np.zeros((self.SIZE, self.SIZE, 3), dtype=np.uint8)
+        img = np.zeros((self.SZ, self.SZ, 3), dtype=np.uint8)
 
-        # Hintergrund
         cv2.circle(img, (self.cx, self.cy), self.r, (25, 25, 30), -1)
         cv2.circle(img, (self.cx, self.cy), self.r, (50, 50, 60), 2)
         cv2.circle(img, (self.cx, self.cy), self.r // 2, (35, 35, 40), 1)
-
-        # Kreuz
         cv2.line(img, (self.cx - 10, self.cy), (self.cx + 10, self.cy), (50, 50, 60), 1)
         cv2.line(img, (self.cx, self.cy - 10), (self.cx, self.cy + 10), (50, 50, 60), 1)
-
-        # L / R
         cv2.putText(img, "L", (6, self.cy + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (80, 80, 90), 1)
-        cv2.putText(img, "R", (self.SIZE - 18, self.cy + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (80, 80, 90), 1)
+        cv2.putText(img, "R", (self.SZ - 18, self.cy + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (80, 80, 90), 1)
 
-        # Richtungspunkt + Trail
         if power > 0.04:
             self.trail.append((direction, power))
-
             for idx, (d, p) in enumerate(self.trail):
                 a = (idx + 1) / len(self.trail)
                 px = int(self.cx + d * self.r * 0.85)
                 sz = int(2 + p * 10 * a)
-                br = int(60 * a)
-                cv2.circle(img, (px, self.cy), sz, (0, br, 0), -1)
+                cv2.circle(img, (px, self.cy), sz, (0, int(60 * a), 0), -1)
 
-            # Aktuell
             px = int(self.cx + direction * self.r * 0.85)
             sz = int(4 + power * 18)
-            if power > 0.7:
-                col = (0, 80, 255)    # Rot-Orange = SEHR nah
-            elif power > 0.4:
-                col = (0, 200, 255)   # Gelb = mittel
-            else:
-                col = (0, 200, 120)   # Gruen = leise
-
+            col = (0, 80, 255) if power > 0.7 else (0, 200, 255) if power > 0.4 else (0, 200, 120)
             cv2.circle(img, (px, self.cy), sz, col, -1)
             cv2.line(img, (self.cx, self.cy), (px, self.cy), col, 2)
 
-        # Info-Zeilen
         p = cfg["preset"].upper()
-        cv2.putText(img, f"[{p}] STEP:{cfg['step_boost_db']:.0f}dB MID:{cfg['step_mid_boost_db']:.0f}dB",
-                    (6, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (0, 180, 100), 1)
-        cv2.putText(img, f"COMP:{cfg['comp_ratio']:.1f}x SPA:{cfg['spatial_width']:.1f} BASS<{cfg['bass_cut_hz']}Hz",
-                    (6, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (130, 130, 140), 1)
-        cv2.putText(img, f"DT990: TREBLE:{cfg['treble_tame_db']:.0f}dB GUN:{cfg['gunfire_cut_db']:.0f}dB",
-                    (6, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (130, 130, 140), 1)
+        cv2.putText(img, f"[{p}] BODY:{cfg['step_body_db']:.0f}dB TEX:{cfg['step_texture_db']:.0f}dB EDGE:{cfg['step_edge_db']:.0f}dB",
+                    (6, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.30, (0, 180, 100), 1)
+        cv2.putText(img, f"MUD:{cfg['mud_cut_db']:.0f}dB GUN:{cfg['gunfire_db']:.0f}dB DT990:{cfg['treble_db']:.0f}dB",
+                    (6, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.30, (130, 130, 140), 1)
+        cv2.putText(img, f"COMP:{cfg['comp_ratio']:.1f}x SPA:{cfg['spatial_width']:.1f}x GAIN:{cfg['output_gain_db']:.0f}dB HP:{cfg['highpass_hz']}Hz",
+                    (6, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.28, (130, 130, 140), 1)
 
-        # Energie-Bar
-        bw = int(power * (self.SIZE - 20))
+        bw = int(power * (self.SZ - 20))
         bc = (0, 180, 100) if power < 0.4 else (0, 200, 255) if power < 0.7 else (0, 80, 255)
-        cv2.rectangle(img, (10, self.SIZE - 16), (10 + bw, self.SIZE - 6), bc, -1)
-        cv2.rectangle(img, (10, self.SIZE - 16), (self.SIZE - 10, self.SIZE - 6), (50, 50, 60), 1)
-
+        cv2.rectangle(img, (10, self.SZ - 16), (10 + bw, self.SZ - 6), bc, -1)
+        cv2.rectangle(img, (10, self.SZ - 16), (self.SZ - 10, self.SZ - 6), (50, 50, 60), 1)
         return img
 
 
 # ============================================================
-# GERAETE
+# DEVICES
 # ============================================================
 def list_devices():
     devs = sd.query_devices()
     print("\n  Audio-Geraete:")
-    print("  " + "-" * 65)
+    print("  " + "-" * 70)
     for i, d in enumerate(devs):
         inp, out = d['max_input_channels'], d['max_output_channels']
         tag = "[IN]    " if inp > 0 and out == 0 else "[OUT]   " if out > 0 and inp == 0 else "[IN/OUT]" if inp > 0 else "[---]   "
         mark = ""
         if i == sd.default.device[0]:
-            mark += " << DEFAULT INPUT"
+            mark += " << IN"
         if i == sd.default.device[1]:
-            mark += " << DEFAULT OUTPUT"
-        sr = int(d['default_samplerate'])
-        print(f"  {i:3d} {tag} {d['name'][:45]:<45} {sr}Hz  in:{inp} out:{out}{mark}")
-    print("  " + "-" * 65)
+            mark += " << OUT"
+        print(f"  {i:3d} {tag} {d['name'][:48]:<48} {int(d['default_samplerate'])}Hz in:{inp} out:{out}{mark}")
+    print("  " + "-" * 70)
     return devs
 
 
 def auto_find_capture(devs):
-    """Versucht die AVerMedia Capture Card zu finden."""
     for i, d in enumerate(devs):
         if d['max_input_channels'] >= 2:
             name = d['name'].lower()
@@ -504,36 +498,35 @@ def main():
     if sd is None:
         sys.exit(1)
 
-    parser = argparse.ArgumentParser(description="Warzone Competitive Audio — DT 990 Pro")
-    parser.add_argument("--list", action="store_true", help="Geraete auflisten und beenden")
-    parser.add_argument("--input", type=int, default=None, help="Input Device Index")
-    parser.add_argument("--output", type=int, default=None, help="Output Device Index")
+    parser = argparse.ArgumentParser(description="Warzone Competitive Audio V2")
+    parser.add_argument("--list", action="store_true")
+    parser.add_argument("--input", type=int, default=None)
+    parser.add_argument("--output", type=int, default=None)
     parser.add_argument("--preset", choices=["warzone", "multiplayer", "resurgence"])
-    parser.add_argument("--no-radar", action="store_true", help="Ohne visuellen Radar starten")
+    parser.add_argument("--no-radar", action="store_true")
     args = parser.parse_args()
 
     cfg = load_config()
 
     print()
-    print("  " + "=" * 55)
-    print("  WARZONE COMPETITIVE AUDIO")
-    print("  DT 990 Pro + GameDAC Edition")
-    print("  " + "=" * 55)
+    print("  " + "=" * 58)
+    print("  WARZONE COMPETITIVE AUDIO V2")
+    print("  Chirurgische Peaking-EQ | DT 990 Pro Edition")
+    print("  " + "=" * 58)
 
     devs = list_devices()
     if args.list:
         return
 
-    # Input bestimmen
     in_dev = args.input if args.input is not None else cfg["input_device"]
     if in_dev is None:
         auto = auto_find_capture(devs)
         if auto is not None:
             in_dev = auto
-            print(f"\n  Capture Card erkannt: [{auto}] {devs[auto]['name']}")
+            print(f"\n  Capture Card: [{auto}] {devs[auto]['name']}")
         else:
             in_dev = sd.default.device[0]
-            print(f"\n  Kein Capture Card erkannt — Default Input: [{in_dev}]")
+            print(f"\n  Default Input: [{in_dev}]")
 
     out_dev = args.output if args.output is not None else cfg["output_device"]
     if out_dev is None:
@@ -542,44 +535,36 @@ def main():
     cfg["input_device"] = in_dev
     cfg["output_device"] = out_dev
 
-    # Preset
     if args.preset:
         apply_preset(cfg, args.preset)
     elif cfg["preset"] in PRESETS:
         apply_preset(cfg, cfg["preset"])
-
     if args.no_radar:
         cfg["show_radar"] = False
 
-    # Samplerate vom Device
     sr = int(devs[in_dev]['default_samplerate'])
     cfg["samplerate"] = sr
     ch = min(devs[in_dev]['max_input_channels'], 2)
     cfg["channels"] = ch
 
-    lat_ms = cfg["blocksize"] / sr * 1000
-
     print(f"\n  Input:    [{in_dev}] {devs[in_dev]['name']}")
     print(f"  Output:   [{out_dev}] {devs[out_dev]['name']}")
-    print(f"  SR: {sr}Hz | CH: {ch} | Block: {cfg['blocksize']} (~{lat_ms:.1f}ms)")
-    print(f"\n  Preset:   {cfg['preset'].upper()}")
-    print(f"  Steps:    +{cfg['step_boost_db']}dB ({cfg['step_low_hz']}-{cfg['step_high_hz']}Hz)")
-    print(f"  Mid:      +{cfg['step_mid_boost_db']}dB (1-2.5kHz)")
-    print(f"  Bass Cut: <{cfg['bass_cut_hz']}Hz")
-    print(f"  DT990:    Treble {cfg['treble_tame_db']}dB @ 8kHz")
-    print(f"  Gunfire:  {cfg['gunfire_cut_db']}dB @ 4-6kHz")
-    print(f"  Comp:     {cfg['comp_ratio']}:1 @ {cfg['comp_threshold']}dB")
-    print(f"  Spatial:  {cfg['spatial_width']}x")
-    print(f"  Radar:    {'EIN' if cfg['show_radar'] else 'AUS'}")
-    print(f"\n  Tasten: 1=WZ 2=MP 3=RES | Q/W=Step E/R=Comp")
-    print(f"          A/S=Bass D/F=Spatial T/Z=Treble G/H=Gain")
-    print(f"          M=Mute V=Radar P=Print ESC=Quit")
-    print("  " + "=" * 55)
+    print(f"  SR: {sr}Hz | CH: {ch} | Block: {cfg['blocksize']} (~{cfg['blocksize']/sr*1000:.1f}ms)")
+    print(f"\n  Preset: {cfg['preset'].upper()}")
+    print(f"  EQ: Body +{cfg['step_body_db']}dB@{cfg['step_body_hz']}Hz"
+          f" | Tex +{cfg['step_texture_db']}dB@{cfg['step_texture_hz']}Hz"
+          f" | Edge +{cfg['step_edge_db']}dB@{cfg['step_edge_hz']}Hz")
+    print(f"  Cut: Mud {cfg['mud_cut_db']}dB@{cfg['mud_cut_hz']}Hz"
+          f" | Gun {cfg['gunfire_db']}dB@{cfg['gunfire_hz']}Hz"
+          f" | DT990 {cfg['treble_db']}dB@{cfg['treble_hz']}Hz")
+    print(f"  HP: {cfg['highpass_hz']}Hz | LP: {cfg['lowpass_hz']}Hz"
+          f" | Comp: {cfg['comp_ratio']}:1 | Spatial: {cfg['spatial_width']}x"
+          f" | Gain: {cfg['output_gain_db']}dB")
+    print(f"\n  Tasten: 1=WZ 2=MP 3=RES | Q/W=Body E/R=Texture A/S=Edge")
+    print(f"          D/F=Spatial T/Z=Comp G/H=Gain U/I=GunCut O=Mud M=Mute V=Radar ESC=Quit")
+    print("  " + "=" * 58)
 
-    # Audio Processor
-    proc = CompetitiveAudio(cfg)
-
-    # Radar
+    proc = CompetitiveAudioV2(cfg)
     radar = StepRadar() if (cfg["show_radar"] and cv2 is not None) else None
 
     def callback(indata, outdata, frames, time_info, status):
@@ -588,30 +573,21 @@ def main():
         except Exception:
             outdata[:] = indata
 
-    # Stream starten
     print("\n  Starte Audio-Stream...")
     try:
         stream = sd.Stream(
-            device=(in_dev, out_dev),
-            samplerate=sr,
-            blocksize=cfg["blocksize"],
-            channels=ch,
-            dtype='float32',
-            callback=callback,
-            latency='low',
+            device=(in_dev, out_dev), samplerate=sr, blocksize=cfg["blocksize"],
+            channels=ch, dtype='float32', callback=callback, latency='low',
         )
         stream.start()
         print("  LAEUFT!\n")
     except Exception as e:
         print(f"\n  FEHLER: {e}")
         print(f"  Tipp: python competitive_audio.py --list")
-        print(f"        python competitive_audio.py --input <NR> --output <NR>")
         return
 
-    # === Hauptschleife ===
     try:
         while True:
-            # Radar
             if radar and cfg["show_radar"] and cv2 is not None:
                 img = radar.draw(proc.peak_dir, proc.step_power, cfg)
                 cv2.imshow("Step Radar", img)
@@ -622,81 +598,88 @@ def main():
                 time.sleep(0.033)
                 key = 255
 
-            if key == 27:  # ESC
+            if key == 27:
                 break
 
-            # --- Presets ---
             elif key == ord('1'):
                 apply_preset(cfg, "warzone"); proc.rebuild()
-                print("  >> Preset: WARZONE")
+                print("  >> WARZONE")
             elif key == ord('2'):
                 apply_preset(cfg, "multiplayer"); proc.rebuild()
-                print("  >> Preset: MULTIPLAYER")
+                print("  >> MULTIPLAYER")
             elif key == ord('3'):
                 apply_preset(cfg, "resurgence"); proc.rebuild()
-                print("  >> Preset: RESURGENCE")
+                print("  >> RESURGENCE")
 
-            # --- Step Boost ---
+            # Step Body
             elif key == ord('q'):
-                cfg["step_boost_db"] = max(0, cfg["step_boost_db"] - 2); proc.rebuild()
-                print(f"  Step Boost: {cfg['step_boost_db']:.0f}dB")
+                cfg["step_body_db"] = max(0, cfg["step_body_db"] - 2); proc.rebuild()
+                print(f"  Body: {cfg['step_body_db']:.0f}dB @ {cfg['step_body_hz']}Hz")
             elif key == ord('w'):
-                cfg["step_boost_db"] = min(24, cfg["step_boost_db"] + 2); proc.rebuild()
-                print(f"  Step Boost: {cfg['step_boost_db']:.0f}dB")
+                cfg["step_body_db"] = min(18, cfg["step_body_db"] + 2); proc.rebuild()
+                print(f"  Body: {cfg['step_body_db']:.0f}dB @ {cfg['step_body_hz']}Hz")
 
-            # --- Compression ---
+            # Step Texture
             elif key == ord('e'):
-                cfg["comp_ratio"] = max(1.0, round(cfg["comp_ratio"] - 0.5, 1)); proc.rebuild()
-                print(f"  Compression: {cfg['comp_ratio']:.1f}:1")
+                cfg["step_texture_db"] = max(0, cfg["step_texture_db"] - 2); proc.rebuild()
+                print(f"  Texture: {cfg['step_texture_db']:.0f}dB @ {cfg['step_texture_hz']}Hz")
             elif key == ord('r'):
-                cfg["comp_ratio"] = min(8.0, round(cfg["comp_ratio"] + 0.5, 1)); proc.rebuild()
-                print(f"  Compression: {cfg['comp_ratio']:.1f}:1")
+                cfg["step_texture_db"] = min(18, cfg["step_texture_db"] + 2); proc.rebuild()
+                print(f"  Texture: {cfg['step_texture_db']:.0f}dB @ {cfg['step_texture_hz']}Hz")
 
-            # --- Bass Cut ---
+            # Step Edge
             elif key == ord('a'):
-                cfg["bass_cut_hz"] = max(20, cfg["bass_cut_hz"] - 10); proc.rebuild()
-                print(f"  Bass Cut: <{cfg['bass_cut_hz']}Hz")
+                cfg["step_edge_db"] = max(0, cfg["step_edge_db"] - 2); proc.rebuild()
+                print(f"  Edge: {cfg['step_edge_db']:.0f}dB @ {cfg['step_edge_hz']}Hz")
             elif key == ord('s'):
-                cfg["bass_cut_hz"] = min(300, cfg["bass_cut_hz"] + 10); proc.rebuild()
-                print(f"  Bass Cut: <{cfg['bass_cut_hz']}Hz")
+                cfg["step_edge_db"] = min(18, cfg["step_edge_db"] + 2); proc.rebuild()
+                print(f"  Edge: {cfg['step_edge_db']:.0f}dB @ {cfg['step_edge_hz']}Hz")
 
-            # --- Spatial ---
+            # Spatial
             elif key == ord('d'):
                 cfg["spatial_width"] = max(0.5, round(cfg["spatial_width"] - 0.1, 1))
                 print(f"  Spatial: {cfg['spatial_width']:.1f}x")
             elif key == ord('f'):
-                cfg["spatial_width"] = min(2.5, round(cfg["spatial_width"] + 0.1, 1))
+                cfg["spatial_width"] = min(3.0, round(cfg["spatial_width"] + 0.1, 1))
                 print(f"  Spatial: {cfg['spatial_width']:.1f}x")
 
-            # --- Treble Tame ---
+            # Compression
             elif key == ord('t'):
-                cfg["treble_tame_db"] = max(-12, cfg["treble_tame_db"] - 1); proc.rebuild()
-                print(f"  DT990 Treble: {cfg['treble_tame_db']:.0f}dB")
+                cfg["comp_ratio"] = max(1.0, round(cfg["comp_ratio"] - 0.5, 1)); proc.rebuild()
+                print(f"  Comp: {cfg['comp_ratio']:.1f}:1")
             elif key == ord('z'):
-                cfg["treble_tame_db"] = min(0, cfg["treble_tame_db"] + 1); proc.rebuild()
-                print(f"  DT990 Treble: {cfg['treble_tame_db']:.0f}dB")
+                cfg["comp_ratio"] = min(8.0, round(cfg["comp_ratio"] + 0.5, 1)); proc.rebuild()
+                print(f"  Comp: {cfg['comp_ratio']:.1f}:1")
 
-            # --- Output Gain ---
+            # Output Gain
             elif key == ord('g'):
                 cfg["output_gain_db"] = max(-12, cfg["output_gain_db"] - 1); proc.rebuild()
-                print(f"  Output: {cfg['output_gain_db']:.0f}dB")
+                print(f"  Gain: {cfg['output_gain_db']:.0f}dB")
             elif key == ord('h'):
-                cfg["output_gain_db"] = min(12, cfg["output_gain_db"] + 1); proc.rebuild()
-                print(f"  Output: {cfg['output_gain_db']:.0f}dB")
+                cfg["output_gain_db"] = min(18, cfg["output_gain_db"] + 1); proc.rebuild()
+                print(f"  Gain: {cfg['output_gain_db']:.0f}dB")
 
-            # --- Mute ---
+            # Gunfire Cut
+            elif key == ord('u'):
+                cfg["gunfire_db"] = min(0, cfg["gunfire_db"] + 1); proc.rebuild()
+                print(f"  Gun: {cfg['gunfire_db']:.0f}dB")
+            elif key == ord('i'):
+                cfg["gunfire_db"] = max(-15, cfg["gunfire_db"] - 1); proc.rebuild()
+                print(f"  Gun: {cfg['gunfire_db']:.0f}dB")
+
+            # Mud Cut Toggle
+            elif key == ord('o'):
+                cfg["mud_cut_on"] = not cfg["mud_cut_on"]; proc.rebuild()
+                print(f"  Mud Cut: {'EIN' if cfg['mud_cut_on'] else 'AUS'}")
+
             elif key == ord('m'):
                 proc.muted = not proc.muted
                 print(f"  {'MUTED' if proc.muted else 'UNMUTED'}")
-
-            # --- Radar Toggle ---
             elif key == ord('v'):
                 cfg["show_radar"] = not cfg["show_radar"]
                 if not cfg["show_radar"] and cv2 is not None:
                     cv2.destroyAllWindows()
                 print(f"  Radar: {'EIN' if cfg['show_radar'] else 'AUS'}")
-
-            # --- Print Config ---
             elif key == ord('p'):
                 print(f"\n  === CONFIG ===")
                 for k, v in sorted(cfg.items()):
