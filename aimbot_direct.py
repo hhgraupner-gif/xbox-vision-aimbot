@@ -321,13 +321,21 @@ class SmoothTracker:
         self.osc_count = 0      # Wie oft Richtung gewechselt
 
     def update(self, mx, my, bbox_h=0):
+        # Dynamischer Alpha: Close-Fight = schneller folgen
+        if bbox_h > 120:
+            alpha = 0.8   # Fast direkt aufs Ziel (Slide/Jump tracken)
+        elif bbox_h > 80:
+            alpha = 0.65
+        else:
+            alpha = self.alpha  # Standard 0.5
+
         if self.x is None:
             self.x, self.y = mx, my
             self.prev_x, self.prev_y = mx, my
         else:
             self.prev_x, self.prev_y = self.x, self.y
-            self.x += self.alpha * (mx - self.x)
-            self.y += self.alpha * (my - self.y)
+            self.x += alpha * (mx - self.x)
+            self.y += alpha * (my - self.y)
 
         self.target_h = bbox_h
         self.frames += 1
@@ -391,20 +399,21 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
 
     # CLOSE-FIGHT STICKY: Abgestuft nach Ziel-Groesse
     # Grosse Box = naher Gegner = EXTREMER Kleber
+    # Radius MUSS gross genug sein um Slide/Jump/Strafe abzufangen!
     if sticky_h > 120:
-        sticky_radius = 150      # Grosser Fangbereich
-        sticky_bonus = 0.08      # Fast unmoeglich wegzureissen
-        min_lock = 12            # ~200ms Minimum-Lock bei 60FPS
+        sticky_radius = 350      # Riesig — Slide/Jump kann nicht entkommen
+        sticky_bonus = 0.05      # Praktisch unzerstoerbar
+        min_lock = 18            # ~300ms Minimum-Lock bei 60FPS
     elif sticky_h > 80:
-        sticky_radius = 100
-        sticky_bonus = 0.15
-        min_lock = 8             # ~133ms
+        sticky_radius = 220
+        sticky_bonus = 0.10
+        min_lock = 12            # ~200ms
     elif sticky_h > 50:
-        sticky_radius = 70
-        sticky_bonus = 0.3
-        min_lock = 5             # ~83ms
+        sticky_radius = 130
+        sticky_bonus = 0.25
+        min_lock = 7             # ~116ms
     else:
-        sticky_radius = 60
+        sticky_radius = 70
         sticky_bonus = 0.5
         min_lock = 3             # ~50ms
 
