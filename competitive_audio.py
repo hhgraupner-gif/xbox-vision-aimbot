@@ -51,8 +51,8 @@ DEFAULT_CFG = {
     # RANKED PRO MAX — Alte Preset 6 Basis + Distanz + Position
     # ══════════════════════════════════════════════════════════
     #
-    # Band 1: Sub-Step (120Hz) — Naehe-Gefuehl, Schritte direkt neben dir
-    "sub_step_hz": 120, "sub_step_db": 8.0, "sub_step_q": 1.8,
+    # Band 1: Sub-Step (120Hz) — Nur leicht, kein Druck auf Open-Back
+    "sub_step_hz": 120, "sub_step_db": 3.0, "sub_step_q": 1.8,
     # Band 2: Step Body (200Hz) — Aufprall-Gewicht
     "step_body_hz": 200, "step_body_db": 14.0, "step_body_q": 2.0,
     # Band 3: Mud Cut (500Hz) — Ambient raus
@@ -69,13 +69,13 @@ DEFAULT_CFG = {
     "treble_hz": 8000, "treble_db": -5.0, "treble_q": 3.0,
     #
     # Bandpass
-    "highpass_hz": 60, "lowpass_hz": 11000,
-    # Compression — Aggressiv: Ferne Steps fast so laut wie nahe
-    "comp_ratio": 8.0, "comp_threshold": -24.0, "comp_attack": 0.001, "comp_release": 0.03,
+    "highpass_hz": 80, "lowpass_hz": 11000,
+    # Compression — Zurueck auf bewaehrt, kein Ohr-Druck
+    "comp_ratio": 6.0, "comp_threshold": -18.0, "comp_attack": 0.002, "comp_release": 0.04,
     # Noise Gate
-    "gate_db": -52.0,
-    # Spatial — Breit fuer praezise Links/Rechts Ortung
-    "spatial_width": 2.0,
+    "gate_db": -50.0,
+    # Spatial — 1.6 bewaehrt, kein Phasen-Druck
+    "spatial_width": 1.6,
     # Output
     "output_gain_db": 5.0,
     "show_radar": True,
