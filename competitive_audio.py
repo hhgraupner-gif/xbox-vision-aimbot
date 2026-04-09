@@ -48,52 +48,33 @@ DEFAULT_CFG = {
     "samplerate": 48000, "blocksize": 512, "channels": 2,
     "preset": "ranked_pro",
     # ══════════════════════════════════════════════════════════
-    # RANKED PRO v2 — Research-basiert (ArtIsWar, GadgetryTech, Pro-Konsens 2026)
-    # Optimiert fuer: Rohes HDMI Audio + DT 990 Pro (250 Ohm)
+    # RANKED PRO — Basierend auf altem Preset 6 (RANKED)
+    # User-getestet und fuer gut befunden auf Raw HDMI (Device 18)
     # ══════════════════════════════════════════════════════════
     #
-    # Band 1: Sub-Step (150Hz) — Distanz-Gefuehl, Aufprall auf Beton
-    #   Pro-Quelle: DT990 Warzone Guide (+6dB @ 110-150Hz, Q:3.0)
-    "sub_step_hz": 150, "sub_step_db": 6.0, "sub_step_q": 2.5,
+    # Band 1: Step Body (200Hz)
+    "step_body_hz": 200, "step_body_db": 14.0, "step_body_q": 2.0,
+    # Band 2: Mud Cut (500Hz)
+    "mud_cut_hz": 500, "mud_cut_db": -7.0, "mud_cut_q": 1.2, "mud_cut_on": True,
+    # Band 3: Step Texture (2400Hz)
+    "step_texture_hz": 2400, "step_texture_db": 16.0, "step_texture_q": 2.0,
+    # Band 4: Step Edge (4400Hz)
+    "step_edge_hz": 4400, "step_edge_db": 9.0, "step_edge_q": 1.5,
+    # Band 5: Gunfire Suppression (5500Hz)
+    "gunfire_hz": 5500, "gunfire_db": -10.0, "gunfire_q": 2.0,
+    # Band 6: DT 990 Treble Fix (8000Hz)
+    "treble_hz": 8000, "treble_db": -5.0, "treble_q": 3.0,
     #
-    # Band 2: Step Body (350Hz) — Gewicht/Impact von Schritten
-    #   Pro-Konsens: 150-450Hz Boost Bereich
-    "step_body_hz": 350, "step_body_db": 5.0, "step_body_q": 2.0,
-    #
-    # Band 3: Mud Cut (600Hz) — Ambient-Muell (Fahrzeuge, Wind, Explosions-Nachhall)
-    #   Pro-Konsens: 500-800Hz Cut
-    "mud_cut_hz": 600, "mud_cut_db": -5.0, "mud_cut_q": 1.2, "mud_cut_on": True,
-    #
-    # Band 4: Step Texture (2500Hz) — Schritt-Details, Reloads, Tueren
-    #   Pro-Konsens: 1-5kHz +4-8dB (Kern-Bereich fuer Klarheit)
-    "step_texture_hz": 2500, "step_texture_db": 7.0, "step_texture_q": 1.8,
-    #
-    # Band 5: Step Edge (4500Hz) — Definition, Richtungs-Cues
-    #   Oberer Clarity-Bereich
-    "step_edge_hz": 4500, "step_edge_db": 4.0, "step_edge_q": 1.5,
-    #
-    # Band 6: Gunfire Suppression (5500Hz) — Schuss-Daempfung
-    #   Aggressiv schneiden damit Schuesse nicht Steps ueberdecken
-    "gunfire_hz": 5500, "gunfire_db": -8.0, "gunfire_q": 2.0,
-    #
-    # Band 7: DT 990 Pro Treble Fix (8000Hz) — Zaehmt die Spitze
-    #   DT 990 hat bekannten +10dB Spike bei 8kHz
-    "treble_hz": 8000, "treble_db": -6.0, "treble_q": 3.0,
-    #
-    # Bandpass — Pro: Highpass 80Hz (Sub-Bass weg, aber Distanz-Feeling behalten)
-    "highpass_hz": 80, "lowpass_hz": 10500,
-    #
-    # Compression — Stark: Leise Steps durch Waende/Decken hoerbar machen
-    "comp_ratio": 5.0, "comp_threshold": -22.0, "comp_attack": 0.002, "comp_release": 0.04,
-    #
-    # Noise Gate — Stille bleibt still
+    # Bandpass
+    "highpass_hz": 80, "lowpass_hz": 11000,
+    # Compression
+    "comp_ratio": 6.5, "comp_threshold": -18.0, "comp_attack": 0.002, "comp_release": 0.04,
+    # Noise Gate
     "gate_db": -50.0,
-    #
-    # Spatial — Breit fuer Richtungserkennung (DT 990 Open-Back profitiert)
-    "spatial_width": 1.7,
-    #
-    # Output Gain
-    "output_gain_db": 3.0,
+    # Spatial
+    "spatial_width": 1.6,
+    # Output
+    "output_gain_db": 5.0,
     "show_radar": True,
 }
 
@@ -154,7 +135,6 @@ class Processor:
 
         self.eqs = []
         for nm, fk, dk, qk, on in [
-            ("sub",  "sub_step_hz", "sub_step_db", "sub_step_q", True),
             ("body", "step_body_hz", "step_body_db", "step_body_q", True),
             ("mud",  "mud_cut_hz", "mud_cut_db", "mud_cut_q", c["mud_cut_on"]),
             ("tex",  "step_texture_hz", "step_texture_db", "step_texture_q", True),
@@ -282,8 +262,8 @@ class Radar:
         # Status
         if bypass:
             cv2.putText(img, ">>> BYPASS <<<", (80,self.SZ//2), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,255), 2)
-        cv2.putText(img, f"[RANKED PRO v2] SUB:{cfg['sub_step_db']:.0f} BODY:{cfg['step_body_db']:.0f} TEX:{cfg['step_texture_db']:.0f} EDGE:{cfg['step_edge_db']:.0f}",
-                    (6,16), cv2.FONT_HERSHEY_SIMPLEX, 0.28, (0,180,100), 1)
+        cv2.putText(img, f"[RANKED PRO] BODY:{cfg['step_body_db']:.0f} TEX:{cfg['step_texture_db']:.0f} EDGE:{cfg['step_edge_db']:.0f}",
+                    (6,16), cv2.FONT_HERSHEY_SIMPLEX, 0.30, (0,180,100), 1)
         cv2.putText(img, f"MUD:{cfg['mud_cut_db']:.0f} GUN:{cfg['gunfire_db']:.0f} DT990:{cfg['treble_db']:.0f} SPA:{cfg['spatial_width']:.1f}",
                     (6,32), cv2.FONT_HERSHEY_SIMPLEX, 0.30, (130,130,140), 1)
         cv2.putText(img, f"COMP:{cfg['comp_ratio']:.1f}:1 GAIN:{cfg['output_gain_db']:.0f}dB HP:{cfg['highpass_hz']}Hz",
@@ -419,8 +399,8 @@ def main():
     print(f"\n  IN:  [{in_dev}] {devs[in_dev]['name']}")
     print(f"  OUT: [{out_dev}] {devs[out_dev]['name']}")
     print(f"  {sr}Hz | Stereo | {bs} samples (~{bs/sr*1000:.1f}ms)")
-    print(f"\n  [RANKED PRO v2]"
-          f" Sub:+{cfg['sub_step_db']:.0f}dB Body:+{cfg['step_body_db']:.0f}dB Tex:+{cfg['step_texture_db']:.0f}dB Edge:+{cfg['step_edge_db']:.0f}dB"
+    print(f"\n  [RANKED PRO]"
+          f" Body:+{cfg['step_body_db']:.0f}dB Tex:+{cfg['step_texture_db']:.0f}dB Edge:+{cfg['step_edge_db']:.0f}dB"
           f" Mud:{cfg['mud_cut_db']:.0f}dB Gun:{cfg['gunfire_db']:.0f}dB")
     print(f"  Comp:{cfg['comp_ratio']:.1f}:1 Spatial:{cfg['spatial_width']:.1f}x"
           f" Gain:{cfg['output_gain_db']:.0f}dB DT990:{cfg['treble_db']:.0f}dB")
