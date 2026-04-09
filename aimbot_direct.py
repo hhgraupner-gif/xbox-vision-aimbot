@@ -85,10 +85,10 @@ DEFAULT_CONFIG = {
     "model_mode": "fps",
     "confidence": 0.40,
     "fov_radius": 180,
-    "strength": 0.75,
-    "deadzone": 8,
-    "max_move": 40,
-    "cooldown_frames": 1,
+    "strength": 1.2,
+    "deadzone": 5,
+    "max_move": 65,
+    "cooldown_frames": 0,
     "use_roi_crop": True,
     "roi_size": 640,
     "target_fps": 60,
@@ -343,8 +343,8 @@ class SmoothTracker:
             # Velocity berechnen (EMA-geglaettet)
             raw_vx = self.x - self.prev_x
             raw_vy = self.y - self.prev_y
-            self.vx = 0.6 * self.vx + 0.4 * raw_vx
-            self.vy = 0.6 * self.vy + 0.4 * raw_vy
+            self.vx = 0.5 * self.vx + 0.5 * raw_vx
+            self.vy = 0.5 * self.vy + 0.5 * raw_vy
 
         self.target_h = bbox_h
         self.frames += 1
@@ -729,9 +729,9 @@ def main():
                                 # Staerke dynamisch: nah = aggressiver
                                 dyn_str = strength
                                 if det_h > 120:
-                                    dyn_str = min(strength * 1.8, 2.0)  # Close: brutal
+                                    dyn_str = min(strength * 2.0, 3.0)  # Close: maximal
                                 elif det_h > 80:
-                                    dyn_str = min(strength * 1.4, 1.5)  # Mid: stark
+                                    dyn_str = min(strength * 1.6, 2.5)  # Mid: sehr stark
 
                                 mx = dx * dyn_str
                                 my = dy * dyn_str
@@ -740,9 +740,10 @@ def main():
                                 my = max(-lim, min(lim, my))
                                 ix = int(round(mx))
                                 iy = int(round(my))
-                                if abs(ix) > 1 or abs(iy) > 1:
+                                # Sende JEDEN Wert, egal wie klein
+                                if ix != 0 or iy != 0:
                                     try:
-                                        kmbox_net.move_auto(ix, iy, 40)
+                                        kmbox_net.move_auto(ix, iy, 60)
                                         cooldown = cfg["cooldown_frames"]
                                     except Exception:
                                         try:
