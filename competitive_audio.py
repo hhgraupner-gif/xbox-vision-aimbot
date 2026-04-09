@@ -2,24 +2,10 @@
 WARZONE COMPETITIVE AUDIO V2 — DT 990 Pro Edition
 ====================================================
 Chirurgische Peaking-EQ Filter auf exakten Footstep-Frequenzen.
-Basierend auf Spectrogram-Analyse von FPS-Footsteps.
 
-SIGNAL-KETTE:
-  1. Highpass 100Hz (5th order) — Rumble/Explosionen komplett weg
-  2. Peaking +8dB @ 200Hz Q=1.8 — Footstep BODY (Thud/Aufprall)
-  3. Peaking -4dB @ 600Hz Q=1.5 — MUD CUT (Waffen-Body/Ambient raus)
-  4. Peaking +8dB @ 2400Hz Q=2.5 — Footstep TEXTURE (Schritte/Richtung)
-  5. Peaking +5dB @ 4400Hz Q=1.2 — Footstep EDGE (Klarheit/Definition)
-  6. Peaking -6dB @ 5500Hz Q=2.0 — Gunfire CRACK Suppression
-  7. Notch  -5dB @ 8000Hz Q=3.0 — DT 990 Pro Treble-Spitze zaehmen
-  8. Lowpass 12kHz (2nd order) — Hiss/Rauschen abschneiden
-  9. Noise Gate
-  10. Dynamic Compression mit Makeup-Gain
-  11. Stereo Spatial Enhancement (Side-Channel verstaerkt)
-  12. Soft Limiter
-
-INSTALLATION:
-  pip install sounddevice numpy scipy opencv-python
+STREAMING:
+  Versuch 1: Duplex Stream (synchroner Clock = beste Stabilitaet)
+  Versuch 2: Ring-Buffer mit Drift-Korrektur (2 separate Streams)
 
 STEUERUNG:
   1/2/3   = Preset: Warzone / Multiplayer / Resurgence
@@ -42,6 +28,7 @@ import os
 import json
 import time
 import argparse
+import threading
 from collections import deque
 
 import numpy as np
@@ -58,71 +45,23 @@ try:
 except ImportError:
     cv2 = None
 
-# ============================================================
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "audio_config.json")
 
 DEFAULT_CFG = {
-    "input_device":   None,
-    "output_device":  None,
-    "samplerate":     48000,
-    "blocksize":      512,      # ~10ms bei 48kHz — guter Kompromiss Latenz/Stabilitaet
-    "channels":       2,
-    "preset":         "warzone",
-
-    # === CHIRURGISCHE EQ BANDS ===
-    # Footstep Body (Thud/Aufprall auf Boden)
-    "step_body_hz":     200,
-    "step_body_db":     8.0,
-    "step_body_q":      1.8,
-
-    # Mud Cut (Waffen-Body, Ambient-Muell)
-    "mud_cut_hz":       600,
-    "mud_cut_db":       -4.0,
-    "mud_cut_q":        1.5,
-    "mud_cut_on":       True,
-
-    # Footstep Texture (Schritte hoerbar, Richtung)
-    "step_texture_hz":  2400,
-    "step_texture_db":  8.0,
-    "step_texture_q":   2.5,
-
-    # Footstep Edge (Klarheit/Definition)
-    "step_edge_hz":     4400,
-    "step_edge_db":     5.0,
-    "step_edge_q":      1.2,
-
-    # Gunfire Crack Suppression
-    "gunfire_hz":       5500,
-    "gunfire_db":       -6.0,
-    "gunfire_q":        2.0,
-
-    # DT990 Treble Tame
-    "treble_hz":        8000,
-    "treble_db":        -5.0,
-    "treble_q":         3.0,
-
-    # Highpass / Lowpass
-    "highpass_hz":      100,
-    "lowpass_hz":       12000,
-
-    # Dynamic Compression
-    "comp_ratio":       4.0,
-    "comp_threshold":   -18.0,
-    "comp_attack":      0.003,
-    "comp_release":     0.06,
-
-    # Noise Gate
-    "gate_db":          -46.0,
-
-    # Spatial
-    "spatial_width":    1.6,
-
-    # Output
-    "output_gain_db":   2.0,
-
-    # Radar
-    "show_radar":       True,
+    "input_device": None, "output_device": None,
+    "samplerate": 48000, "blocksize": 512, "channels": 2,
+    "preset": "warzone",
+    "step_body_hz": 200, "step_body_db": 8.0, "step_body_q": 1.8,
+    "mud_cut_hz": 600, "mud_cut_db": -4.0, "mud_cut_q": 1.5, "mud_cut_on": True,
+    "step_texture_hz": 2400, "step_texture_db": 8.0, "step_texture_q": 2.5,
+    "step_edge_hz": 4400, "step_edge_db": 5.0, "step_edge_q": 1.2,
+    "gunfire_hz": 5500, "gunfire_db": -6.0, "gunfire_q": 2.0,
+    "treble_hz": 8000, "treble_db": -5.0, "treble_q": 3.0,
+    "highpass_hz": 100, "lowpass_hz": 12000,
+    "comp_ratio": 4.0, "comp_threshold": -18.0, "comp_attack": 0.003, "comp_release": 0.06,
+    "gate_db": -46.0, "spatial_width": 1.6, "output_gain_db": 2.0,
+    "show_radar": True,
 }
 
 PRESETS = {
@@ -180,133 +119,69 @@ def apply_preset(cfg, name):
         cfg["preset"] = name
 
 
-# ============================================================
-# PARAMETRIC PEAKING EQ — Audio EQ Cookbook (Robert Bristow-Johnson)
-# ============================================================
 def make_peaking_eq(fc, gain_db, Q, fs):
-    """Erzeugt einen Peaking-EQ als b/a Koeffizienten.
-    fc: Centerfrequenz Hz, gain_db: Gain in dB, Q: Guete, fs: Samplerate.
-    Basiert auf Audio EQ Cookbook."""
-    A = 10 ** (gain_db / 40.0)  # sqrt(10^(dB/20))
+    A = 10 ** (gain_db / 40.0)
     w0 = 2.0 * np.pi * fc / fs
     alpha = np.sin(w0) / (2.0 * Q)
-
     b0 = 1.0 + alpha * A
     b1 = -2.0 * np.cos(w0)
     b2 = 1.0 - alpha * A
     a0 = 1.0 + alpha / A
     a1 = -2.0 * np.cos(w0)
     a2 = 1.0 - alpha / A
-
-    b = np.array([b0 / a0, b1 / a0, b2 / a0])
-    a = np.array([1.0, a1 / a0, a2 / a0])
-    return b, a
+    return np.array([b0/a0, b1/a0, b2/a0]), np.array([1.0, a1/a0, a2/a0])
 
 
 # ============================================================
-# AUDIO PROCESSOR V2
+# AUDIO PROCESSOR
 # ============================================================
 class CompetitiveAudioV2:
-    """Chirurgische Audio-Verarbeitung mit Peaking-EQ auf Step-Frequenzen."""
-
     def __init__(self, cfg):
         self.cfg = cfg
         self.sr = cfg["samplerate"]
         self.nyq = self.sr / 2.0
         self.muted = False
         self.comp_env = 0.0
-
-        # Radar
         self.step_energy_L = 0.0
         self.step_energy_R = 0.0
         self.peak_dir = 0.0
         self.step_power = 0.0
-
         self._build()
 
-    def _safe_freq(self, hz):
+    def _sf(self, hz):
         return max(20.0, min(float(hz), self.nyq * 0.95))
 
     def _build(self):
-        """Alle Filter bauen."""
-        sr = self.sr
-        nyq = self.nyq
-        c = self.cfg
-
-        # === HIGHPASS (Butterworth 5th order) ===
-        f_hp = self._safe_freq(c["highpass_hz"])
-        self.sos_hp = sig.butter(5, f_hp / nyq, btype='highpass', output='sos')
-
-        # === LOWPASS (Butterworth 2nd order) ===
-        f_lp = self._safe_freq(c["lowpass_hz"])
-        self.sos_lp = sig.butter(2, f_lp / nyq, btype='lowpass', output='sos')
-
-        # === PEAKING EQ BANDS ===
+        sr, nyq, c = self.sr, self.nyq, self.cfg
+        self.sos_hp = sig.butter(5, self._sf(c["highpass_hz"]) / nyq, btype='highpass', output='sos')
+        self.sos_lp = sig.butter(2, self._sf(c["lowpass_hz"]) / nyq, btype='lowpass', output='sos')
         self.eq_bands = []
-
-        # 1. Footstep Body
-        if abs(c["step_body_db"]) > 0.1:
-            b, a = make_peaking_eq(self._safe_freq(c["step_body_hz"]),
-                                   c["step_body_db"], c["step_body_q"], sr)
-            self.eq_bands.append(("body", b, a))
-
-        # 2. Mud Cut
-        if c["mud_cut_on"] and abs(c["mud_cut_db"]) > 0.1:
-            b, a = make_peaking_eq(self._safe_freq(c["mud_cut_hz"]),
-                                   c["mud_cut_db"], c["mud_cut_q"], sr)
-            self.eq_bands.append(("mud", b, a))
-
-        # 3. Footstep Texture
-        if abs(c["step_texture_db"]) > 0.1:
-            b, a = make_peaking_eq(self._safe_freq(c["step_texture_hz"]),
-                                   c["step_texture_db"], c["step_texture_q"], sr)
-            self.eq_bands.append(("texture", b, a))
-
-        # 4. Footstep Edge
-        if abs(c["step_edge_db"]) > 0.1:
-            b, a = make_peaking_eq(self._safe_freq(c["step_edge_hz"]),
-                                   c["step_edge_db"], c["step_edge_q"], sr)
-            self.eq_bands.append(("edge", b, a))
-
-        # 5. Gunfire Cut
-        if abs(c["gunfire_db"]) > 0.1:
-            b, a = make_peaking_eq(self._safe_freq(c["gunfire_hz"]),
-                                   c["gunfire_db"], c["gunfire_q"], sr)
-            self.eq_bands.append(("gun", b, a))
-
-        # 6. DT990 Treble
-        if abs(c["treble_db"]) > 0.1:
-            b, a = make_peaking_eq(self._safe_freq(c["treble_hz"]),
-                                   c["treble_db"], c["treble_q"], sr)
-            self.eq_bands.append(("treble", b, a))
-
-        # Bandpass fuer Step-Radar-Erkennung (2-4kHz)
-        bp_lo = self._safe_freq(1500)
-        bp_hi = self._safe_freq(4500)
-        self.sos_radar = sig.butter(2, [bp_lo / nyq, bp_hi / nyq], btype='bandpass', output='sos')
-
-        # Pre-compute gains
+        for key, hz_k, db_k, q_k, cond in [
+            ("body", "step_body_hz", "step_body_db", "step_body_q", True),
+            ("mud", "mud_cut_hz", "mud_cut_db", "mud_cut_q", c["mud_cut_on"]),
+            ("tex", "step_texture_hz", "step_texture_db", "step_texture_q", True),
+            ("edge", "step_edge_hz", "step_edge_db", "step_edge_q", True),
+            ("gun", "gunfire_hz", "gunfire_db", "gunfire_q", True),
+            ("treb", "treble_hz", "treble_db", "treble_q", True),
+        ]:
+            if cond and abs(c[db_k]) > 0.1:
+                b, a = make_peaking_eq(self._sf(c[hz_k]), c[db_k], c[q_k], sr)
+                self.eq_bands.append((key, b, a))
+        bp_lo, bp_hi = self._sf(1500), self._sf(4500)
+        self.sos_radar = sig.butter(2, [bp_lo/nyq, bp_hi/nyq], btype='bandpass', output='sos')
         self.out_gain = 10 ** (c["output_gain_db"] / 20.0)
         self.gate_lin = 10 ** (c["gate_db"] / 20.0)
         self.comp_thresh = 10 ** (c["comp_threshold"] / 20.0)
-
-        # Filter-States initialisieren
         self._init_zi()
 
     def _init_zi(self):
-        """Filter-Zustaende fuer 2 Kanaele."""
-        # SOS-States
-        z_sos = lambda sos: np.zeros((sos.shape[0], 2))
-        self.zi_hp = [z_sos(self.sos_hp), z_sos(self.sos_hp)]
-        self.zi_lp = [z_sos(self.sos_lp), z_sos(self.sos_lp)]
-        self.zi_radar = [z_sos(self.sos_radar), z_sos(self.sos_radar)]
-
-        # IIR-States (b/a) fuer jedes EQ-Band, pro Kanal
+        z = lambda sos: np.zeros((sos.shape[0], 2))
+        self.zi_hp = [z(self.sos_hp), z(self.sos_hp)]
+        self.zi_lp = [z(self.sos_lp), z(self.sos_lp)]
+        self.zi_radar = [z(self.sos_radar), z(self.sos_radar)]
         self.zi_eq = []
-        for name, b, a in self.eq_bands:
-            zi_L = sig.lfilter_zi(b, a) * 0.0
-            zi_R = sig.lfilter_zi(b, a) * 0.0
-            self.zi_eq.append([zi_L, zi_R])
+        for _, b, a in self.eq_bands:
+            self.zi_eq.append([sig.lfilter_zi(b, a) * 0, sig.lfilter_zi(b, a) * 0])
 
     def rebuild(self):
         self._build()
@@ -314,98 +189,48 @@ class CompetitiveAudioV2:
     def process(self, data):
         if self.muted:
             return np.zeros_like(data)
-
         ch = min(data.shape[1] if data.ndim > 1 else 1, 2)
-        if ch >= 2:
-            channels = [data[:, 0].copy(), data[:, 1].copy()]
-        else:
-            channels = [data.flatten().copy(), data.flatten().copy()]
-
+        chs = [data[:, 0].copy(), data[:, 1].copy()] if ch >= 2 else [data.flatten().copy()] * 2
         for i in range(2):
-            x = channels[i]
-
-            # === 1. HIGHPASS — Rumble/Explosionen weg ===
+            x = chs[i]
             x, self.zi_hp[i] = sig.sosfilt(self.sos_hp, x, zi=self.zi_hp[i])
-
-            # === 2-7. PEAKING EQ BANDS (chirurgisch) ===
-            for band_idx, (name, b, a) in enumerate(self.eq_bands):
-                x, self.zi_eq[band_idx][i] = sig.lfilter(b, a, x, zi=self.zi_eq[band_idx][i])
-
-            # === 8. LOWPASS — Hiss weg ===
+            for bi, (_, b, a) in enumerate(self.eq_bands):
+                x, self.zi_eq[bi][i] = sig.lfilter(b, a, x, zi=self.zi_eq[bi][i])
             x, self.zi_lp[i] = sig.sosfilt(self.sos_lp, x, zi=self.zi_lp[i])
-
-            # Radar: Step-Band Energie messen (2-4kHz)
-            radar_band, self.zi_radar[i] = sig.sosfilt(self.sos_radar, x, zi=self.zi_radar[i])
-            rms = float(np.sqrt(np.mean(radar_band ** 2)))
-            if i == 0:
-                self.step_energy_L = rms
-            else:
-                self.step_energy_R = rms
-
-            channels[i] = x
-
-        left, right = channels
-
-        # === 9. NOISE GATE ===
-        rms_total = np.sqrt(np.mean(left ** 2) + np.mean(right ** 2))
-        if rms_total < self.gate_lin:
-            left *= 0.02
-            right *= 0.02
-
-        # === 10. DYNAMIC COMPRESSION ===
+            rb, self.zi_radar[i] = sig.sosfilt(self.sos_radar, x, zi=self.zi_radar[i])
+            rms = float(np.sqrt(np.mean(rb ** 2)))
+            if i == 0: self.step_energy_L = rms
+            else: self.step_energy_R = rms
+            chs[i] = x
+        L, R = chs
+        if np.sqrt(np.mean(L**2) + np.mean(R**2)) < self.gate_lin:
+            L *= 0.02; R *= 0.02
         ratio = self.cfg["comp_ratio"]
         if ratio > 1.01:
-            peak = max(np.max(np.abs(left)), np.max(np.abs(right)), 1e-10)
-
-            att = self.cfg["comp_attack"]
-            rel = self.cfg["comp_release"]
-            if peak > self.comp_env:
-                self.comp_env += att * (peak - self.comp_env)
-            else:
-                self.comp_env += rel * (peak - self.comp_env)
+            pk = max(np.max(np.abs(L)), np.max(np.abs(R)), 1e-10)
+            if pk > self.comp_env: self.comp_env += self.cfg["comp_attack"] * (pk - self.comp_env)
+            else: self.comp_env += self.cfg["comp_release"] * (pk - self.comp_env)
             self.comp_env = max(self.comp_env, 1e-10)
-
             if self.comp_env > self.comp_thresh:
-                over_db = 20.0 * np.log10(self.comp_env / self.comp_thresh)
-                reduce_db = over_db * (1.0 - 1.0 / ratio)
-                comp_g = 10 ** (-reduce_db / 20.0)
-                # 50% Makeup Gain — leise Steps deutlich anheben
-                makeup = 10 ** (reduce_db * 0.50 / 20.0)
-            else:
-                comp_g = 1.0
-                makeup = 1.0
-
-            left *= comp_g * makeup
-            right *= comp_g * makeup
-
-        # === 11. SPATIAL ENHANCEMENT ===
-        # Mid/Side: Side-Channel verstaerken = bessere Richtung
+                odb = 20 * np.log10(self.comp_env / self.comp_thresh)
+                rdb = odb * (1 - 1/ratio)
+                cg = 10 ** (-rdb/20); mu = 10 ** (rdb*0.5/20)
+            else: cg, mu = 1.0, 1.0
+            L *= cg * mu; R *= cg * mu
         w = self.cfg["spatial_width"]
-        if abs(w - 1.0) > 0.01:
-            mid = (left + right) * 0.5
-            side = (left - right) * 0.5
-            side *= w
-            left = mid + side
-            right = mid - side
-
-        # === 12. OUTPUT GAIN + SOFT LIMITER ===
-        left *= self.out_gain
-        right *= self.out_gain
-        left = np.tanh(left)
-        right = np.tanh(right)
-
-        # Radar-Daten
-        total = self.step_energy_L + self.step_energy_R
-        if total > 0.0003:
-            self.peak_dir = (self.step_energy_R - self.step_energy_L) / total
-            self.step_power = min(1.0, total * 25.0)
-        else:
-            self.step_power *= 0.82
-
-        out = np.column_stack([left, right])
+        if abs(w - 1) > 0.01:
+            m = (L + R) * 0.5; s = (L - R) * 0.5 * w
+            L = m + s; R = m - s
+        L *= self.out_gain; R *= self.out_gain
+        L = np.tanh(L); R = np.tanh(R)
+        t = self.step_energy_L + self.step_energy_R
+        if t > 0.0003:
+            self.peak_dir = (self.step_energy_R - self.step_energy_L) / t
+            self.step_power = min(1.0, t * 25)
+        else: self.step_power *= 0.82
+        out = np.column_stack([L, R])
         if data.ndim > 1 and data.shape[1] > 2:
-            extra = np.zeros((len(left), data.shape[1] - 2), dtype=np.float32)
-            out = np.column_stack([out, extra])
+            out = np.column_stack([out, np.zeros((len(L), data.shape[1]-2), dtype=np.float32)])
         return out.astype(np.float32)
 
 
@@ -414,51 +239,87 @@ class CompetitiveAudioV2:
 # ============================================================
 class StepRadar:
     SZ = 320
-
     def __init__(self):
-        self.cx = self.SZ // 2
-        self.cy = self.SZ // 2
-        self.r = self.SZ // 2 - 35
+        self.cx, self.cy = self.SZ//2, self.SZ//2
+        self.r = self.SZ//2 - 35
         self.trail = deque(maxlen=25)
-
-    def draw(self, direction, power, cfg):
+    def draw(self, d, pw, cfg):
         img = np.zeros((self.SZ, self.SZ, 3), dtype=np.uint8)
-
-        cv2.circle(img, (self.cx, self.cy), self.r, (25, 25, 30), -1)
-        cv2.circle(img, (self.cx, self.cy), self.r, (50, 50, 60), 2)
-        cv2.circle(img, (self.cx, self.cy), self.r // 2, (35, 35, 40), 1)
-        cv2.line(img, (self.cx - 10, self.cy), (self.cx + 10, self.cy), (50, 50, 60), 1)
-        cv2.line(img, (self.cx, self.cy - 10), (self.cx, self.cy + 10), (50, 50, 60), 1)
-        cv2.putText(img, "L", (6, self.cy + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (80, 80, 90), 1)
-        cv2.putText(img, "R", (self.SZ - 18, self.cy + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (80, 80, 90), 1)
-
-        if power > 0.04:
-            self.trail.append((direction, power))
-            for idx, (d, p) in enumerate(self.trail):
-                a = (idx + 1) / len(self.trail)
-                px = int(self.cx + d * self.r * 0.85)
-                sz = int(2 + p * 10 * a)
-                cv2.circle(img, (px, self.cy), sz, (0, int(60 * a), 0), -1)
-
-            px = int(self.cx + direction * self.r * 0.85)
-            sz = int(4 + power * 18)
-            col = (0, 80, 255) if power > 0.7 else (0, 200, 255) if power > 0.4 else (0, 200, 120)
+        cv2.circle(img, (self.cx, self.cy), self.r, (25,25,30), -1)
+        cv2.circle(img, (self.cx, self.cy), self.r, (50,50,60), 2)
+        cv2.circle(img, (self.cx, self.cy), self.r//2, (35,35,40), 1)
+        cv2.line(img, (self.cx-10, self.cy), (self.cx+10, self.cy), (50,50,60), 1)
+        cv2.line(img, (self.cx, self.cy-10), (self.cx, self.cy+10), (50,50,60), 1)
+        cv2.putText(img, "L", (6, self.cy+5), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (80,80,90), 1)
+        cv2.putText(img, "R", (self.SZ-18, self.cy+5), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (80,80,90), 1)
+        if pw > 0.04:
+            self.trail.append((d, pw))
+            for i2, (dd, pp) in enumerate(self.trail):
+                a = (i2+1)/len(self.trail)
+                cv2.circle(img, (int(self.cx+dd*self.r*0.85), self.cy), int(2+pp*10*a), (0,int(60*a),0), -1)
+            px = int(self.cx + d*self.r*0.85)
+            sz = int(4 + pw*18)
+            col = (0,80,255) if pw > 0.7 else (0,200,255) if pw > 0.4 else (0,200,120)
             cv2.circle(img, (px, self.cy), sz, col, -1)
             cv2.line(img, (self.cx, self.cy), (px, self.cy), col, 2)
-
         p = cfg["preset"].upper()
         cv2.putText(img, f"[{p}] BODY:{cfg['step_body_db']:.0f}dB TEX:{cfg['step_texture_db']:.0f}dB EDGE:{cfg['step_edge_db']:.0f}dB",
-                    (6, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.30, (0, 180, 100), 1)
+                    (6,16), cv2.FONT_HERSHEY_SIMPLEX, 0.30, (0,180,100), 1)
         cv2.putText(img, f"MUD:{cfg['mud_cut_db']:.0f}dB GUN:{cfg['gunfire_db']:.0f}dB DT990:{cfg['treble_db']:.0f}dB",
-                    (6, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.30, (130, 130, 140), 1)
+                    (6,32), cv2.FONT_HERSHEY_SIMPLEX, 0.30, (130,130,140), 1)
         cv2.putText(img, f"COMP:{cfg['comp_ratio']:.1f}x SPA:{cfg['spatial_width']:.1f}x GAIN:{cfg['output_gain_db']:.0f}dB HP:{cfg['highpass_hz']}Hz",
-                    (6, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.28, (130, 130, 140), 1)
-
-        bw = int(power * (self.SZ - 20))
-        bc = (0, 180, 100) if power < 0.4 else (0, 200, 255) if power < 0.7 else (0, 80, 255)
-        cv2.rectangle(img, (10, self.SZ - 16), (10 + bw, self.SZ - 6), bc, -1)
-        cv2.rectangle(img, (10, self.SZ - 16), (self.SZ - 10, self.SZ - 6), (50, 50, 60), 1)
+                    (6,48), cv2.FONT_HERSHEY_SIMPLEX, 0.28, (130,130,140), 1)
+        bw = int(pw * (self.SZ-20))
+        bc = (0,180,100) if pw < 0.4 else (0,200,255) if pw < 0.7 else (0,80,255)
+        cv2.rectangle(img, (10, self.SZ-16), (10+bw, self.SZ-6), bc, -1)
+        cv2.rectangle(img, (10, self.SZ-16), (self.SZ-10, self.SZ-6), (50,50,60), 1)
         return img
+
+
+# ============================================================
+# RING BUFFER (Profi-Niveau)
+# ============================================================
+class RingBuf:
+    """Thread-safe Ring-Buffer mit Drift-Korrektur."""
+    def __init__(self, cap, nch):
+        self.buf = np.zeros((cap, nch), dtype=np.float32)
+        self.cap = cap
+        self.wp = 0
+        self.rp = 0
+        self.lock = threading.Lock()
+        self.level = 0
+
+    def write(self, data):
+        n = len(data)
+        with self.lock:
+            end = self.wp + n
+            if end <= self.cap:
+                self.buf[self.wp:end] = data
+            else:
+                p1 = self.cap - self.wp
+                self.buf[self.wp:] = data[:p1]
+                self.buf[:n-p1] = data[p1:]
+            self.wp = end % self.cap
+            self.level = min(self.level + n, self.cap)
+
+    def read(self, n):
+        with self.lock:
+            out = np.zeros((n, self.buf.shape[1]), dtype=np.float32)
+            avail = min(self.level, n)
+            if avail > 0:
+                end = self.rp + avail
+                if end <= self.cap:
+                    out[:avail] = self.buf[self.rp:end]
+                else:
+                    p1 = self.cap - self.rp
+                    out[:p1] = self.buf[self.rp:]
+                    out[p1:avail] = self.buf[:avail-p1]
+                self.rp = (self.rp + avail) % self.cap
+                self.level -= avail
+            return out
+
+    def fill(self):
+        return self.level / self.cap
 
 
 # ============================================================
@@ -472,10 +333,8 @@ def list_devices():
         inp, out = d['max_input_channels'], d['max_output_channels']
         tag = "[IN]    " if inp > 0 and out == 0 else "[OUT]   " if out > 0 and inp == 0 else "[IN/OUT]" if inp > 0 else "[---]   "
         mark = ""
-        if i == sd.default.device[0]:
-            mark += " << IN"
-        if i == sd.default.device[1]:
-            mark += " << OUT"
+        if i == sd.default.device[0]: mark += " << IN"
+        if i == sd.default.device[1]: mark += " << OUT"
         print(f"  {i:3d} {tag} {d['name'][:48]:<48} {int(d['default_samplerate'])}Hz in:{inp} out:{out}{mark}")
     print("  " + "-" * 70)
     return devs
@@ -484,9 +343,8 @@ def list_devices():
 def auto_find_capture(devs):
     for i, d in enumerate(devs):
         if d['max_input_channels'] >= 2:
-            name = d['name'].lower()
             for kw in ["avermedia", "gc571", "capture", "game capture", "live gamer"]:
-                if kw in name:
+                if kw in d['name'].lower():
                     return i
     return None
 
@@ -546,10 +404,11 @@ def main():
     cfg["samplerate"] = sr
     ch = min(devs[in_dev]['max_input_channels'], 2)
     cfg["channels"] = ch
+    blocksize = cfg["blocksize"]
 
     print(f"\n  Input:    [{in_dev}] {devs[in_dev]['name']}")
     print(f"  Output:   [{out_dev}] {devs[out_dev]['name']}")
-    print(f"  SR: {sr}Hz | CH: {ch} | Block: {cfg['blocksize']} (~{cfg['blocksize']/sr*1000:.1f}ms)")
+    print(f"  SR: {sr}Hz | CH: {ch} | Block: {blocksize} (~{blocksize/sr*1000:.1f}ms)")
     print(f"\n  Preset: {cfg['preset'].upper()}")
     print(f"  EQ: Body +{cfg['step_body_db']}dB@{cfg['step_body_hz']}Hz"
           f" | Tex +{cfg['step_texture_db']}dB@{cfg['step_texture_hz']}Hz"
@@ -567,61 +426,105 @@ def main():
     proc = CompetitiveAudioV2(cfg)
     radar = StepRadar() if (cfg["show_radar"] and cv2 is not None) else None
 
-    # === BLOCKING I/O — Kein Callback, kein Queue, kein Stottern ===
-    import threading
-
-    print("\n  Starte Audio (Blocking I/O)...")
-
+    # =================================================================
+    # STREAMING: Duplex (best) → Fallback Ring-Buffer
+    # =================================================================
+    stream_mode = None
+    duplex_stream = None
     in_stream = None
     out_stream = None
     audio_running = True
+    audio_threads = []
 
+    # --- VERSUCH 1: DUPLEX STREAM ---
+    print("\n  Versuche Duplex Stream...")
     try:
-        in_stream = sd.InputStream(
-            device=in_dev, samplerate=sr, blocksize=cfg["blocksize"],
-            channels=ch, dtype='float32',
-        )
-        out_stream = sd.OutputStream(
-            device=out_dev, samplerate=sr, blocksize=cfg["blocksize"],
-            channels=ch, dtype='float32',
-        )
-        in_stream.start()
-        out_stream.start()
-
-        # Pre-Buffer: 3 Bloecke Stille vorschreiben → Sicherheitspuffer gegen Stottern
-        silence = np.zeros((cfg["blocksize"], ch), dtype=np.float32)
-        for _ in range(3):
-            out_stream.write(silence)
-
-        print(f"  Input:  LAEUFT ({cfg['blocksize']} samples, ~{cfg['blocksize']/sr*1000:.1f}ms)")
-        print(f"  Output: LAEUFT (Pre-Buffer: 3 Bloecke)\n")
-    except Exception as e:
-        print(f"\n  FEHLER: {e}")
-        print(f"  python competitive_audio.py --list")
-        if in_stream:
-            in_stream.close()
-        if out_stream:
-            out_stream.close()
-        return
-
-    def audio_loop():
-        """Tight Loop: Read → Process → Write. Kein Queue noetig."""
-        while audio_running:
+        def duplex_cb(indata, outdata, frames, time_info, status):
             try:
-                data, overflowed = in_stream.read(cfg["blocksize"])
-                processed = proc.process(data)
-                out_stream.write(processed)
+                outdata[:] = proc.process(indata)[:outdata.shape[0], :outdata.shape[1]]
             except Exception:
-                pass
+                outdata[:] = indata
 
-    # Audio-Loop in eigenem Thread (hohe Prioritaet)
-    audio_thread = threading.Thread(target=audio_loop, daemon=True)
-    audio_thread.start()
+        duplex_stream = sd.Stream(
+            device=(in_dev, out_dev), samplerate=sr, blocksize=blocksize,
+            channels=ch, dtype='float32', callback=duplex_cb,
+        )
+        duplex_stream.start()
+        stream_mode = "duplex"
+        print(f"  DUPLEX LAEUFT! (synchroner Clock, ~{blocksize/sr*1000:.1f}ms)\n")
+    except Exception as e:
+        print(f"  Duplex nicht moeglich: {e}")
 
+    # --- VERSUCH 2: RING-BUFFER ---
+    if stream_mode != "duplex":
+        print("  Starte Ring-Buffer Modus...")
+        buf_secs = 0.3
+        buf_cap = int(sr * buf_secs)
+        rb = RingBuf(buf_cap, ch)
+
+        try:
+            in_stream = sd.InputStream(
+                device=in_dev, samplerate=sr, blocksize=blocksize,
+                channels=ch, dtype='float32',
+            )
+            out_stream = sd.OutputStream(
+                device=out_dev, samplerate=sr, blocksize=blocksize,
+                channels=ch, dtype='float32',
+            )
+            in_stream.start()
+            out_stream.start()
+
+            # Pre-Fill 40%
+            rb.write(np.zeros((int(buf_cap * 0.4), ch), dtype=np.float32))
+            stream_mode = "ringbuf"
+            print(f"  RING-BUFFER LAEUFT! (Buffer: {buf_secs}s, ~{blocksize/sr*1000:.1f}ms)\n")
+        except Exception as e:
+            print(f"  FEHLER: {e}")
+            if in_stream: in_stream.close()
+            if out_stream: out_stream.close()
+            return
+
+        def t_input():
+            while audio_running:
+                try:
+                    data, _ = in_stream.read(blocksize)
+                    processed = proc.process(data)
+                    rb.write(processed)
+                except Exception:
+                    pass
+
+        def t_output():
+            while audio_running:
+                try:
+                    data = rb.read(blocksize)
+                    out_stream.write(data)
+                    f = rb.fill()
+                    if f > 0.75:
+                        rb.read(blocksize)
+                    elif f < 0.2:
+                        time.sleep(blocksize / sr * 0.25)
+                except Exception:
+                    pass
+
+        ti = threading.Thread(target=t_input, daemon=True)
+        to = threading.Thread(target=t_output, daemon=True)
+        ti.start()
+        to.start()
+        audio_threads = [ti, to]
+
+    # =================================================================
+    # UI LOOP
+    # =================================================================
     try:
         while True:
             if radar and cfg["show_radar"] and cv2 is not None:
                 img = radar.draw(proc.peak_dir, proc.step_power, cfg)
+                # Ring-Buffer Level anzeigen
+                if stream_mode == "ringbuf":
+                    fl = rb.fill()
+                    cv2.putText(img, f"BUF:{fl*100:.0f}%", (240, 16),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.30,
+                                (0,200,100) if 0.2 < fl < 0.75 else (0,80,255), 1)
                 cv2.imshow("Step Radar", img)
 
             if cv2 is not None and cfg["show_radar"]:
@@ -630,100 +533,45 @@ def main():
                 time.sleep(0.033)
                 key = 255
 
-            if key == 27:
-                break
-
-            elif key == ord('1'):
-                apply_preset(cfg, "warzone"); proc.rebuild()
-                print("  >> WARZONE")
-            elif key == ord('2'):
-                apply_preset(cfg, "multiplayer"); proc.rebuild()
-                print("  >> MULTIPLAYER")
-            elif key == ord('3'):
-                apply_preset(cfg, "resurgence"); proc.rebuild()
-                print("  >> RESURGENCE")
-
-            # Step Body
-            elif key == ord('q'):
-                cfg["step_body_db"] = max(0, cfg["step_body_db"] - 2); proc.rebuild()
-                print(f"  Body: {cfg['step_body_db']:.0f}dB @ {cfg['step_body_hz']}Hz")
-            elif key == ord('w'):
-                cfg["step_body_db"] = min(18, cfg["step_body_db"] + 2); proc.rebuild()
-                print(f"  Body: {cfg['step_body_db']:.0f}dB @ {cfg['step_body_hz']}Hz")
-
-            # Step Texture
-            elif key == ord('e'):
-                cfg["step_texture_db"] = max(0, cfg["step_texture_db"] - 2); proc.rebuild()
-                print(f"  Texture: {cfg['step_texture_db']:.0f}dB @ {cfg['step_texture_hz']}Hz")
-            elif key == ord('r'):
-                cfg["step_texture_db"] = min(18, cfg["step_texture_db"] + 2); proc.rebuild()
-                print(f"  Texture: {cfg['step_texture_db']:.0f}dB @ {cfg['step_texture_hz']}Hz")
-
-            # Step Edge
-            elif key == ord('a'):
-                cfg["step_edge_db"] = max(0, cfg["step_edge_db"] - 2); proc.rebuild()
-                print(f"  Edge: {cfg['step_edge_db']:.0f}dB @ {cfg['step_edge_hz']}Hz")
-            elif key == ord('s'):
-                cfg["step_edge_db"] = min(18, cfg["step_edge_db"] + 2); proc.rebuild()
-                print(f"  Edge: {cfg['step_edge_db']:.0f}dB @ {cfg['step_edge_hz']}Hz")
-
-            # Spatial
-            elif key == ord('d'):
-                cfg["spatial_width"] = max(0.5, round(cfg["spatial_width"] - 0.1, 1))
-                print(f"  Spatial: {cfg['spatial_width']:.1f}x")
-            elif key == ord('f'):
-                cfg["spatial_width"] = min(3.0, round(cfg["spatial_width"] + 0.1, 1))
-                print(f"  Spatial: {cfg['spatial_width']:.1f}x")
-
-            # Compression
-            elif key == ord('t'):
-                cfg["comp_ratio"] = max(1.0, round(cfg["comp_ratio"] - 0.5, 1)); proc.rebuild()
-                print(f"  Comp: {cfg['comp_ratio']:.1f}:1")
-            elif key == ord('z'):
-                cfg["comp_ratio"] = min(8.0, round(cfg["comp_ratio"] + 0.5, 1)); proc.rebuild()
-                print(f"  Comp: {cfg['comp_ratio']:.1f}:1")
-
-            # Output Gain
-            elif key == ord('g'):
-                cfg["output_gain_db"] = max(-12, cfg["output_gain_db"] - 1); proc.rebuild()
-                print(f"  Gain: {cfg['output_gain_db']:.0f}dB")
-            elif key == ord('h'):
-                cfg["output_gain_db"] = min(18, cfg["output_gain_db"] + 1); proc.rebuild()
-                print(f"  Gain: {cfg['output_gain_db']:.0f}dB")
-
-            # Gunfire Cut
-            elif key == ord('u'):
-                cfg["gunfire_db"] = min(0, cfg["gunfire_db"] + 1); proc.rebuild()
-                print(f"  Gun: {cfg['gunfire_db']:.0f}dB")
-            elif key == ord('i'):
-                cfg["gunfire_db"] = max(-15, cfg["gunfire_db"] - 1); proc.rebuild()
-                print(f"  Gun: {cfg['gunfire_db']:.0f}dB")
-
-            # Mud Cut Toggle
-            elif key == ord('o'):
-                cfg["mud_cut_on"] = not cfg["mud_cut_on"]; proc.rebuild()
-                print(f"  Mud Cut: {'EIN' if cfg['mud_cut_on'] else 'AUS'}")
-
-            elif key == ord('m'):
-                proc.muted = not proc.muted
-                print(f"  {'MUTED' if proc.muted else 'UNMUTED'}")
+            if key == 27: break
+            elif key == ord('1'): apply_preset(cfg, "warzone"); proc.rebuild(); print("  >> WARZONE")
+            elif key == ord('2'): apply_preset(cfg, "multiplayer"); proc.rebuild(); print("  >> MULTIPLAYER")
+            elif key == ord('3'): apply_preset(cfg, "resurgence"); proc.rebuild(); print("  >> RESURGENCE")
+            elif key == ord('q'): cfg["step_body_db"] = max(0, cfg["step_body_db"]-2); proc.rebuild(); print(f"  Body: {cfg['step_body_db']:.0f}dB")
+            elif key == ord('w'): cfg["step_body_db"] = min(18, cfg["step_body_db"]+2); proc.rebuild(); print(f"  Body: {cfg['step_body_db']:.0f}dB")
+            elif key == ord('e'): cfg["step_texture_db"] = max(0, cfg["step_texture_db"]-2); proc.rebuild(); print(f"  Tex: {cfg['step_texture_db']:.0f}dB")
+            elif key == ord('r'): cfg["step_texture_db"] = min(18, cfg["step_texture_db"]+2); proc.rebuild(); print(f"  Tex: {cfg['step_texture_db']:.0f}dB")
+            elif key == ord('a'): cfg["step_edge_db"] = max(0, cfg["step_edge_db"]-2); proc.rebuild(); print(f"  Edge: {cfg['step_edge_db']:.0f}dB")
+            elif key == ord('s'): cfg["step_edge_db"] = min(18, cfg["step_edge_db"]+2); proc.rebuild(); print(f"  Edge: {cfg['step_edge_db']:.0f}dB")
+            elif key == ord('d'): cfg["spatial_width"] = max(0.5, round(cfg["spatial_width"]-0.1, 1)); print(f"  Spatial: {cfg['spatial_width']:.1f}x")
+            elif key == ord('f'): cfg["spatial_width"] = min(3.0, round(cfg["spatial_width"]+0.1, 1)); print(f"  Spatial: {cfg['spatial_width']:.1f}x")
+            elif key == ord('t'): cfg["comp_ratio"] = max(1.0, round(cfg["comp_ratio"]-0.5, 1)); proc.rebuild(); print(f"  Comp: {cfg['comp_ratio']:.1f}:1")
+            elif key == ord('z'): cfg["comp_ratio"] = min(8.0, round(cfg["comp_ratio"]+0.5, 1)); proc.rebuild(); print(f"  Comp: {cfg['comp_ratio']:.1f}:1")
+            elif key == ord('g'): cfg["output_gain_db"] = max(-12, cfg["output_gain_db"]-1); proc.rebuild(); print(f"  Gain: {cfg['output_gain_db']:.0f}dB")
+            elif key == ord('h'): cfg["output_gain_db"] = min(18, cfg["output_gain_db"]+1); proc.rebuild(); print(f"  Gain: {cfg['output_gain_db']:.0f}dB")
+            elif key == ord('u'): cfg["gunfire_db"] = min(0, cfg["gunfire_db"]+1); proc.rebuild(); print(f"  Gun: {cfg['gunfire_db']:.0f}dB")
+            elif key == ord('i'): cfg["gunfire_db"] = max(-15, cfg["gunfire_db"]-1); proc.rebuild(); print(f"  Gun: {cfg['gunfire_db']:.0f}dB")
+            elif key == ord('o'): cfg["mud_cut_on"] = not cfg["mud_cut_on"]; proc.rebuild(); print(f"  Mud: {'EIN' if cfg['mud_cut_on'] else 'AUS'}")
+            elif key == ord('m'): proc.muted = not proc.muted; print(f"  {'MUTED' if proc.muted else 'UNMUTED'}")
             elif key == ord('v'):
                 cfg["show_radar"] = not cfg["show_radar"]
-                if not cfg["show_radar"] and cv2 is not None:
-                    cv2.destroyAllWindows()
+                if not cfg["show_radar"] and cv2: cv2.destroyAllWindows()
                 print(f"  Radar: {'EIN' if cfg['show_radar'] else 'AUS'}")
             elif key == ord('p'):
-                print(f"\n  === CONFIG ===")
+                print(f"\n  === CONFIG ({stream_mode}) ===")
                 for k, v in sorted(cfg.items()):
-                    if k not in ("input_device", "output_device"):
-                        print(f"    {k}: {v}")
+                    if k not in ("input_device", "output_device"): print(f"    {k}: {v}")
                 print()
 
     except KeyboardInterrupt:
         print("\n  Ctrl+C")
     finally:
         audio_running = False
-        audio_thread.join(timeout=1)
+        for t in audio_threads:
+            t.join(timeout=1)
+        if duplex_stream:
+            duplex_stream.stop()
+            duplex_stream.close()
         if in_stream:
             in_stream.stop()
             in_stream.close()
@@ -732,8 +580,7 @@ def main():
             out_stream.close()
         save_config(cfg)
         print(f"  Config gespeichert: {CONFIG_FILE}")
-        if cv2 is not None:
-            cv2.destroyAllWindows()
+        if cv2: cv2.destroyAllWindows()
         print("  Beendet.")
 
 
