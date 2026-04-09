@@ -85,9 +85,9 @@ DEFAULT_CONFIG = {
     "model_mode": "fps",
     "confidence": 0.40,
     "fov_radius": 180,
-    "strength": 1.2,
-    "deadzone": 5,
-    "max_move": 65,
+    "strength": 1.8,
+    "deadzone": 3,
+    "max_move": 90,
     "cooldown_frames": 0,
     "use_roi_crop": True,
     "roi_size": 640,
@@ -324,13 +324,13 @@ class SmoothTracker:
     def update(self, mx, my, bbox_h=0):
         # Dynamischer Alpha: Close = instant, Range = schnell
         if bbox_h > 120:
-            alpha = 0.90
+            alpha = 0.95  # Close: sofort
         elif bbox_h > 80:
-            alpha = 0.75
+            alpha = 0.85
         elif bbox_h > 50:
-            alpha = 0.65
+            alpha = 0.75
         else:
-            alpha = 0.55
+            alpha = 0.65
 
         if self.x is None:
             self.x, self.y = mx, my
@@ -730,12 +730,13 @@ def main():
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
                                 # AGGRESSIVE TRACKING mit move_auto
-                                # Staerke dynamisch: nah = aggressiver
                                 dyn_str = strength
                                 if det_h > 120:
-                                    dyn_str = min(strength * 2.0, 3.0)  # Close: maximal
+                                    dyn_str = min(strength * 2.5, 5.0)  # Close: alles
                                 elif det_h > 80:
-                                    dyn_str = min(strength * 1.6, 2.5)  # Mid: sehr stark
+                                    dyn_str = min(strength * 2.0, 4.0)  # Mid: brutal
+                                elif det_h > 50:
+                                    dyn_str = min(strength * 1.5, 3.0)  # Range: stark
 
                                 mx = dx * dyn_str
                                 my = dy * dyn_str
@@ -744,10 +745,9 @@ def main():
                                 my = max(-lim, min(lim, my))
                                 ix = int(round(mx))
                                 iy = int(round(my))
-                                # Sende JEDEN Wert, egal wie klein
                                 if ix != 0 or iy != 0:
                                     try:
-                                        kmbox_net.move_auto(ix, iy, 60)
+                                        kmbox_net.move_auto(ix, iy, 80)
                                         cooldown = cfg["cooldown_frames"]
                                     except Exception:
                                         try:
