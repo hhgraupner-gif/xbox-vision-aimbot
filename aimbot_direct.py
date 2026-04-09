@@ -85,9 +85,9 @@ DEFAULT_CONFIG = {
     "model_mode": "fps",
     "confidence": 0.40,
     "fov_radius": 180,
-    "strength": 1.0,
-    "deadzone": 3,
-    "max_move": 35,
+    "strength": 0.85,
+    "deadzone": 4,
+    "max_move": 28,
     "cooldown_frames": 0,
     "use_roi_crop": True,
     "roi_size": 640,
@@ -702,7 +702,7 @@ def main():
                 tracker.update(tx, ty, bbox_h=det_h)
 
                 # Velocity Prediction: Sanft voraus zielen bei Bewegung
-                pred = tracker.get_predicted_position(lead_frames=1.5)
+                pred = tracker.get_predicted_position(lead_frames=1.0)
                 pos = pred if pred else tracker.get_position()
 
                 if pos:
@@ -742,9 +742,9 @@ def main():
                                 mx = dx * dyn_str
                                 my = dy * dyn_str
 
-                                # Daempfung bei kleinem Offset (Anti-Overshoot)
-                                if dist < 30:
-                                    damp = dist / 30.0  # 0..1
+                                # Daempfung bei kleinem Offset (Anti-Pendel)
+                                if dist < 40:
+                                    damp = dist / 40.0
                                     mx *= damp
                                     my *= damp
 
