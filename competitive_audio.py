@@ -295,10 +295,12 @@ class Radar:
 # ============================================================
 def list_devices():
     devs = sd.query_devices()
-    print("\n  Audio-Geraete:")
+    print("\n  Aktive Audio-Geraete:")
     print("  " + "-" * 70)
     for i, d in enumerate(devs):
         inp, out = d['max_input_channels'], d['max_output_channels']
+        if inp == 0 and out == 0:
+            continue
         tag = "[IN] " if inp>0 and out==0 else "[OUT]" if out>0 and inp==0 else "[I/O]" if inp>0 else "[---]"
         mk = ""
         if i == sd.default.device[0]: mk += " <<IN"
