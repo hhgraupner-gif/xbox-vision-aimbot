@@ -66,7 +66,7 @@ DEFAULT_CFG = {
     "input_device":   None,
     "output_device":  None,
     "samplerate":     48000,
-    "blocksize":      1024,     # groesserer Buffer = stabiler (kein Micro-Stottern)
+    "blocksize":      256,      # ~5ms bei 48kHz — minimal, weil Blocking IO stabil ist
     "channels":       2,
     "preset":         "warzone",
 
@@ -567,72 +567,50 @@ def main():
     proc = CompetitiveAudioV2(cfg)
     radar = StepRadar() if (cfg["show_radar"] and cv2 is not None) else None
 
-    # === ZWEI SEPARATE STREAMS (loest "Illegal combination" Fehler) ===
-    import queue
-    audio_q = queue.Queue(maxsize=128)
-    last_block = [np.zeros((cfg["blocksize"], ch), dtype=np.float32)]  # Letzter Block fuer Luecken
+    # === BLOCKING I/O — Kein Callback, kein Queue, kein Stottern ===
+    import threading
 
-    def in_callback(indata, frames, time_info, status):
-        """Capture Card liest Audio → in Queue."""
-        try:
-            processed = proc.process(indata.copy())
-            last_block[0] = processed.copy()
-            try:
-                audio_q.put_nowait(processed)
-            except queue.Full:
-                # Queue voll → aeltesten Block wegwerfen, neuen rein
-                try:
-                    audio_q.get_nowait()
-                except queue.Empty:
-                    pass
-                audio_q.put_nowait(processed)
-        except Exception:
-            try:
-                audio_q.put_nowait(indata.copy())
-            except queue.Full:
-                pass
-
-    def out_callback(outdata, frames, time_info, status):
-        """Queue → Kopfhoerer."""
-        try:
-            data = audio_q.get_nowait()
-            outdata[:] = data[:outdata.shape[0], :outdata.shape[1]]
-        except queue.Empty:
-            # Kein neuer Block → letzten wiederholen (statt Stille = kein Knackser)
-            outdata[:] = last_block[0][:outdata.shape[0], :outdata.shape[1]] * 0.7
-
-    print("\n  Starte Audio-Streams (Dual-Stream Modus)...")
-
-    # Samplerate: Nutze die Rate des Input-Geraets
-    out_sr = int(devs[out_dev]['default_samplerate'])
-    # Beide muessen gleiche SR haben; falls verschieden, nehme Input-SR
-    use_sr = sr
+    print("\n  Starte Audio (Blocking I/O)...")
 
     in_stream = None
     out_stream = None
+    audio_running = True
+
     try:
         in_stream = sd.InputStream(
             device=in_dev, samplerate=use_sr, blocksize=cfg["blocksize"],
-            channels=ch, dtype='float32', callback=in_callback,
+            channels=ch, dtype='float32',
         )
         out_stream = sd.OutputStream(
             device=out_dev, samplerate=use_sr, blocksize=cfg["blocksize"],
-            channels=ch, dtype='float32', callback=out_callback,
+            channels=ch, dtype='float32',
         )
         in_stream.start()
         out_stream.start()
-        print("  Input-Stream:  LAEUFT")
-        print("  Output-Stream: LAEUFT\n")
+        print(f"  Input:  LAEUFT ({cfg['blocksize']} samples, ~{cfg['blocksize']/use_sr*1000:.1f}ms)")
+        print(f"  Output: LAEUFT\n")
     except Exception as e:
         print(f"\n  FEHLER: {e}")
-        print(f"\n  Versuche andere Geraete-Kombination:")
         print(f"  python competitive_audio.py --list")
-        print(f"  python competitive_audio.py --input <NR> --output <NR>")
         if in_stream:
             in_stream.close()
         if out_stream:
             out_stream.close()
         return
+
+    def audio_loop():
+        """Tight Loop: Read → Process → Write. Kein Queue noetig."""
+        while audio_running:
+            try:
+                data, overflowed = in_stream.read(cfg["blocksize"])
+                processed = proc.process(data)
+                out_stream.write(processed)
+            except Exception:
+                pass
+
+    # Audio-Loop in eigenem Thread (hohe Prioritaet)
+    audio_thread = threading.Thread(target=audio_loop, daemon=True)
+    audio_thread.start()
 
     try:
         while True:
@@ -738,6 +716,8 @@ def main():
     except KeyboardInterrupt:
         print("\n  Ctrl+C")
     finally:
+        audio_running = False
+        audio_thread.join(timeout=1)
         if in_stream:
             in_stream.stop()
             in_stream.close()
