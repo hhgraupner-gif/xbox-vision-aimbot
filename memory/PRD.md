@@ -1,60 +1,40 @@
-# Xbox Vision AI — PRD (Product Requirements Document)
+# Xbox Vision AI — Aimbot PRD
 
 ## Ziel
-Computer Vision AI Aimbot fuer Xbox (RemotePlay) mit:
-- Feind-Erkennung via YOLO/ONNX
-- Hardware-Input via KMBox Net (aktuell) → Titan Two (ab 08.04)
-- Spiel: Call of Duty Black Ops 7 / Warzone
+Computer Vision AI fuer RemotePlay Xbox (BO7/Warzone). Erkennt Gegner via YOLO, gibt sanfte Aim-Hilfe ("Soft Assist"), laeuft lokal auf Windows PC mit Capture Card.
 
-## Hardware-Setup
-- **Capture:** AVerMedia GC571 (1440p@60FPS Capture, 1080p intern)
-- **GPU:** AMD RX 7800 XT (DirectML)
-- **Input aktuell:** KMBox Net → XIM Matrix → Xbox
-- **Input neu (08.04):** Titan Two → Xbox (direkt, 1:1 praezise)
-- **Controller:** Scuf Envision Pro (PC, XInput)
+## Hardware-Kette
+AVerMedia GC571 → OpenCV Capture → YOLO ONNX (DirectML) → KMBox Net (aktuell) / Titan Two (ab Freitag)
 
-## Code-Architektur
-```
-/app/
-├── aimbot_direct.py       # v14 Hauptscript (Capture + AI + Tracking + Input)
-├── minimap_reader.py      # Minimap HSV-Farberkennung (Teammates/Feinde)
-├── titan_two.py           # Titan Two Kommunikation (GCV Protokoll)
-├── aimbot_gpc.gpc         # GPC Script fuer Titan Two (Macros, Aim, Anti-Recoil)
-├── TITAN_TWO_SETUP.md     # Setup-Anleitung Deutsch
-├── backend/
-│   ├── yolo_onnx.py       # ONNX Runtime Inference
-│   ├── kmbox_net.py       # KMBox UDP Client
-│   └── sunxds_0.5.6.onnx  # SunOner FPS Modell (30k+ Bilder)
-```
+## Erledigte Features
+- [x] Threaded Capture + Inference (70-90 FPS)
+- [x] YOLOv8 ONNX mit DirectML GPU
+- [x] Custom BO7 V4/V5 Modell
+- [x] Dead-Body Filter (Breite > Hoehe)
+- [x] Sky-Filter (obere 10%) + Ground-Filter (untere 12%)
+- [x] Loot-Box Filter (min_box_height)
+- [x] Teammate-Schutz via Namensschild-Farberkennung (Blau/Gruen/Gelb/Orange)
+- [x] Soft Assist Aiming (sanftes Nudging statt Hard-Lock)
+- [x] ROI Cropping (640x640 Mitte)
+- [x] Config Hotkeys (STR, FOV, DZ, CD, Conf)
+- [x] Overlay Toggle (V-Taste fuer FPS Boost)
+- [x] Minimap Reader (Legacy)
+- [x] Titan Two Scripts vorbereitet (titan_two.py, aimbot_gpc.gpc)
+- [x] **Sticky Aim Close-Fight** (Abgestufte Ziel-Klebrigkeit basierend auf Bbox-Groesse, 2026-04-09)
 
-## Abgeschlossene Features
-- [x] YOLO Feind-Erkennung (SunOner FPS Modell)
-- [x] KMBox Net Integration
-- [x] Threaded Capture + Inference (70-90 FPS, <1ms AI)
-- [x] ROI-Cropping (640x640 Mitte)
-- [x] Display-Throttle + Performance-Optimierungen
-- [x] Minimap-Reader (Teammate blau/gruen, Feinde rot)
-- [x] Teammate-Schutz (filtert Ziele in Teammate-Richtung)
-- [x] Live Minimap-Kalibrierung (IJKL + Groesse)
-- [x] Config-System (auto-save/load config.json)
-- [x] Velocity Prediction (2 Frames voraus)
-- [x] Dynamic Strength (anpassbar nach Distanz)
-- [x] Sticky Target (bleibt auf aktuellem Ziel)
-- [x] Dead-Body Filter, Sky-Filter, Ground-Loot Filter
-- [x] Titan Two Code vorbereitet (Python + GPC + Anleitung)
-- [x] Macro-Definitionen (Dropshot, Snaking, Slide-Cancel, Bunny Hop, Auto-Fire, YY)
-- [x] Anti-Recoil Profile (11 Waffen-Profile)
-- [x] Nano/Full Modell-Switch
+## Offene Issues
+- [ ] Leichtes Jittern bei engen Ziel-Clustern (P1 — durch Sticky Aim stark reduziert)
+- [ ] KMBox/XIM Deadzone Problem (P0 — wird durch Titan Two geloest)
+- [ ] Iron Sights verdecken YOLO Detection (P2 — Workaround: Red Dot benutzen)
 
-## In Arbeit / Wartend
-- [ ] Titan Two Hardware-Integration (Geraet kommt 08.04.2026)
-- [ ] Scuf Envision Pro + Titan Two Merger
-- [ ] Anti-Recoil Feintuning (Werte pro Waffe im Spiel testen)
-- [ ] Macro Timing Feintuning (Werte im Spiel anpassen)
+## Naechste Schritte
+1. **Titan Two Setup** (Freitag) — Hardware anschliessen, Gtuner IV konfigurieren, GPC Script laden
+2. Sensitivity-Tuning mit Titan Two (1:1 Analog-Stick statt Maus-Emulation)
+3. Anti-Recoil Profile im Spiel testen
+4. Macro-Timing (Dropshot, Snaking, Slide-Cancel)
 
-## Backlog
-- [ ] Custom BO7 YOLO Modell trainieren (bessere Erkennung)
-- [ ] Triggerbot (erst nach Teammate-Erkennung zuverlaessig)
-- [ ] Aim-Humanisierung (Bezier-Kurven, Random-Delays)
-- [ ] Waffen-Profile in Config (verschiedene Settings pro Waffe)
-- [ ] Kill-Feed Reader (Ziel wechseln nach Kill)
+## Backlog (P2)
+- [ ] Besseres YOLO-Modell (mAP50 > 0.65)
+- [ ] Triggerbot (erst bei 100% Teammate-Schutz)
+- [ ] Aim-Humanisierung (Bezier-Kurven)
+- [ ] Kill-Feed Reader

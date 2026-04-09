@@ -300,7 +300,7 @@ class FastInference:
 # TRACKER MIT VELOCITY PREDICTION
 # ============================================================
 class SmoothTracker:
-    """Verfolgt ein Ziel mit EMA-Glaettung + Oszillations-Erkennung."""
+    """Verfolgt ein Ziel mit EMA-Glaettung + Oszillations-Erkennung + Sticky Aim."""
 
     def __init__(self):
         self.reset()
@@ -314,12 +314,13 @@ class SmoothTracker:
         self.frames = 0
         self.lost = 0
         self.target_id = None
+        self.target_h = 0       # Bbox-Hoehe des aktuellen Ziels
         # Anti-Oszillation: Trackt Richtungswechsel
         self.prev_dx = 0.0
         self.prev_dy = 0.0
         self.osc_count = 0      # Wie oft Richtung gewechselt
 
-    def update(self, mx, my):
+    def update(self, mx, my, bbox_h=0):
         if self.x is None:
             self.x, self.y = mx, my
             self.prev_x, self.prev_y = mx, my
@@ -328,6 +329,7 @@ class SmoothTracker:
             self.x += self.alpha * (mx - self.x)
             self.y += self.alpha * (my - self.y)
 
+        self.target_h = bbox_h
         self.frames += 1
         self.lost = 0
 
@@ -373,8 +375,12 @@ class SmoothTracker:
 # ============================================================
 # ZIELAUSWAHL MIT TEAMMATE-SCHUTZ + STICKY TARGET
 # ============================================================
-def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos=None, frame=None):
-    """Waehlt das beste Ziel. frame = Original-Frame fuer Teammate-Farberkennung."""
+def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos=None, frame=None, sticky_h=0, sticky_frames=0):
+    """Waehlt das beste Ziel mit CLOSE-FIGHT STICKY AIM.
+    
+    sticky_h:      Bbox-Hoehe des aktuell getrackten Ziels (groesser = naeher)
+    sticky_frames: Wie viele Frames das aktuelle Ziel schon gelockt ist
+    """
     cx, cy = frame_w / 2.0, frame_h / 2.0
     fov = cfg["fov_radius"]
     dead_ratio = cfg["dead_body_ratio"]
@@ -382,6 +388,25 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
     sky = cfg["sky_filter_ratio"]
     ground = cfg["ground_filter_ratio"]
     tm_protect = cfg["teammate_protection"] and frame is not None
+
+    # CLOSE-FIGHT STICKY: Abgestuft nach Ziel-Groesse
+    # Grosse Box = naher Gegner = EXTREMER Kleber
+    if sticky_h > 120:
+        sticky_radius = 150      # Grosser Fangbereich
+        sticky_bonus = 0.08      # Fast unmoeglich wegzureissen
+        min_lock = 12            # ~200ms Minimum-Lock bei 60FPS
+    elif sticky_h > 80:
+        sticky_radius = 100
+        sticky_bonus = 0.15
+        min_lock = 8             # ~133ms
+    elif sticky_h > 50:
+        sticky_radius = 70
+        sticky_bonus = 0.3
+        min_lock = 5             # ~83ms
+    else:
+        sticky_radius = 60
+        sticky_bonus = 0.5
+        min_lock = 3             # ~50ms
 
     best = None
     best_score = float('inf')
@@ -418,15 +443,21 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
         # Score berechnen
         score = dist
 
-        # Groesse-Bonus
+        # Groesse-Bonus (naehere Ziele bevorzugen)
         if bh > 80:
             score *= 0.7
 
-        # STICKY TARGET
+        # STICKY AIM — Close-Fight Kleber
         if sticky_pos is not None:
             stick_dist = math.sqrt((tx - sticky_pos[0]) ** 2 + (ty - sticky_pos[1]) ** 2)
-            if stick_dist < 60:
-                score *= 0.5
+            if stick_dist < sticky_radius:
+                # Dieses Ziel ist unser aktuelles — massiver Bonus
+                score *= sticky_bonus
+
+                # MINIMUM LOCK: Innerhalb der Lock-Zeit ist dieses Ziel
+                # praktisch unschlagbar (Score wird auf fast 0 gesetzt)
+                if sticky_frames < min_lock:
+                    score *= 0.01
 
         if score < best_score:
             best_score = score
@@ -623,12 +654,19 @@ def main():
             # Zielauswahl + Aim (JEDEN Frame — Latenz-kritisch!)
             targets = [d for d in all_dets if d["class_name"] in TARGET_CLASSES]
             sticky = tracker.get_raw_position()
-            tx, ty, tdet = pick_best_target(targets, fw, fh, cfg, sticky_pos=sticky, frame=frame)
+            tx, ty, tdet = pick_best_target(
+                targets, fw, fh, cfg,
+                sticky_pos=sticky, frame=frame,
+                sticky_h=tracker.target_h,
+                sticky_frames=tracker.frames,
+            )
 
             aim_pos = None
 
             if tx is not None:
-                tracker.update(tx, ty)
+                # Bbox-Hoehe des gewaehlten Ziels an Tracker weitergeben
+                det_h = tdet["bbox"][3] - tdet["bbox"][1] if tdet else 0
+                tracker.update(tx, ty, bbox_h=det_h)
                 pos = tracker.get_position()
                 if pos:
                     aim_pos = pos
@@ -704,8 +742,16 @@ def main():
 
                 if aim_pos and active and tracker.locked:
                     ax, ay = int(aim_pos[0]), int(aim_pos[1])
-                    cv2.line(frame, (hcx, hcy), (ax, ay), (0, 200, 100), 1)
-                    cv2.circle(frame, (ax, ay), 5, (0, 200, 100), -1)
+                    # Close-Fight: Dickere Linie + groesserer Punkt = sichtbarer Sticky
+                    if tracker.target_h > 120:
+                        cv2.line(frame, (hcx, hcy), (ax, ay), (0, 255, 255), 2)
+                        cv2.circle(frame, (ax, ay), 8, (0, 255, 255), -1)
+                    elif tracker.target_h > 80:
+                        cv2.line(frame, (hcx, hcy), (ax, ay), (0, 220, 180), 2)
+                        cv2.circle(frame, (ax, ay), 6, (0, 220, 180), -1)
+                    else:
+                        cv2.line(frame, (hcx, hcy), (ax, ay), (0, 200, 100), 1)
+                        cv2.circle(frame, (ax, ay), 5, (0, 200, 100), -1)
 
                 mode = "ON" if active else "OFF"
                 nano = "NANO" if cfg["use_nano"] else "FULL"
@@ -713,8 +759,12 @@ def main():
                 tm_t = f"TM:{tm_count}" if cfg["minimap_enabled"] else ""
                 en_t = f"EN:{en_count}" if cfg["minimap_enabled"] and en_count > 0 else ""
                 prot = "SCHUTZ" if cfg["teammate_protection"] else ""
+                # Sticky-Anzeige
+                sticky_info = ""
+                if tracker.locked and tracker.target_h > 80:
+                    sticky_info = f"STICKY({tracker.frames}f)"
 
-                cv2.putText(frame, f"FPS:{fps:.0f} AI:{inf_ms:.0f}ms {nano} {roi_t} | {mode} {tm_t} {en_t} {prot}",
+                cv2.putText(frame, f"FPS:{fps:.0f} AI:{inf_ms:.0f}ms {nano} {roi_t} | {mode} {tm_t} {en_t} {prot} {sticky_info}",
                             (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 200, 100), 2)
                 cv2.putText(frame, f"STR:{strength:.1f} DZ:{cfg['deadzone']} CD:{cfg['cooldown_frames']} FOV:{cfg['fov_radius']}",
                             (10, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
