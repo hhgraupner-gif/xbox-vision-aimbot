@@ -66,7 +66,7 @@ DEFAULT_CFG = {
     "input_device":   None,
     "output_device":  None,
     "samplerate":     48000,
-    "blocksize":      512,
+    "blocksize":      1024,     # groesserer Buffer = stabiler (kein Micro-Stottern)
     "channels":       2,
     "preset":         "warzone",
 
@@ -569,15 +569,23 @@ def main():
 
     # === ZWEI SEPARATE STREAMS (loest "Illegal combination" Fehler) ===
     import queue
-    audio_q = queue.Queue(maxsize=64)
+    audio_q = queue.Queue(maxsize=128)
+    last_block = [np.zeros((cfg["blocksize"], ch), dtype=np.float32)]  # Letzter Block fuer Luecken
 
     def in_callback(indata, frames, time_info, status):
         """Capture Card liest Audio → in Queue."""
         try:
             processed = proc.process(indata.copy())
-            audio_q.put_nowait(processed)
-        except queue.Full:
-            pass
+            last_block[0] = processed.copy()
+            try:
+                audio_q.put_nowait(processed)
+            except queue.Full:
+                # Queue voll → aeltesten Block wegwerfen, neuen rein
+                try:
+                    audio_q.get_nowait()
+                except queue.Empty:
+                    pass
+                audio_q.put_nowait(processed)
         except Exception:
             try:
                 audio_q.put_nowait(indata.copy())
@@ -590,7 +598,8 @@ def main():
             data = audio_q.get_nowait()
             outdata[:] = data[:outdata.shape[0], :outdata.shape[1]]
         except queue.Empty:
-            outdata[:] = 0  # Stille wenn Queue leer
+            # Kein neuer Block → letzten wiederholen (statt Stille = kein Knackser)
+            outdata[:] = last_block[0][:outdata.shape[0], :outdata.shape[1]] * 0.7
 
     print("\n  Starte Audio-Streams (Dual-Stream Modus)...")
 
@@ -604,11 +613,11 @@ def main():
     try:
         in_stream = sd.InputStream(
             device=in_dev, samplerate=use_sr, blocksize=cfg["blocksize"],
-            channels=ch, dtype='float32', callback=in_callback, latency='low',
+            channels=ch, dtype='float32', callback=in_callback,
         )
         out_stream = sd.OutputStream(
             device=out_dev, samplerate=use_sr, blocksize=cfg["blocksize"],
-            channels=ch, dtype='float32', callback=out_callback, latency='low',
+            channels=ch, dtype='float32', callback=out_callback,
         )
         in_stream.start()
         out_stream.start()
