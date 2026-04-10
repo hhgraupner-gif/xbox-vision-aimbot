@@ -64,8 +64,8 @@ DEFAULT_CFG = {
     "band_a_comp_ratio": 3.5,
     "band_a_comp_thresh": -18.0,
     #
-    # Band B: Mud Zone — Schneiden, aggressiv gaten
-    "band_b_gain_db": -5.0,
+    # Band B: Mud Zone — Weniger schneiden, Raum-Info behalten fuer Hinter-Dir
+    "band_b_gain_db": -2.0,
     "band_b_comp_ratio": 2.0,
     "band_b_comp_thresh": -15.0,
     #
@@ -85,8 +85,8 @@ DEFAULT_CFG = {
     # Transient Enhancer: Verstaerkt Attack von Steps
     "transient_attack": 0.6,  # 0=aus, 1=maximal
     #
-    # Spatial
-    "spatial_width": 1.6,
+    # Spatial — Breiter fuer Hinter-Dir Wahrnehmung
+    "spatial_width": 2.0,
     #
     # Master
     "output_gain_db": 4.0,
