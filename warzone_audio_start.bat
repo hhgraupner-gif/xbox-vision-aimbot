@@ -11,7 +11,7 @@ echo.
 echo          eRayz Audio - Competitive Warzone Engine
 echo.
 echo    ============================================================
-echo              MULTIBAND PRO  |  Version 4.0
+echo              SURGICAL PRO v6  |  Version 6.0
 echo    ============================================================
 echo.
 echo.
@@ -37,12 +37,13 @@ echo    ------------------------------------------------------------
 echo.
 echo      Steuerung:
 echo.
-echo        [Q/W] Band A (Steps Low)  -/+
-echo        [E/R] Band B (Mud Zone)   -/+
-echo        [A/S] Band C (Step Detail)-/+
-echo        [D/F] Band D (Gunfire)    -/+
+echo        [Q/W] Step Body 250Hz     -/+
+echo        [E/R] Step Texture 2kHz   -/+
+echo        [A/S] Step Direction 3kHz -/+
+echo        [D/F] Step Clarity 4.5kHz -/+
 echo        [G/H] Output Gain         -/+
 echo        [X/C] Spatial             -/+
+echo        [U/I] Gunfire Cut         -/+
 echo.
 echo        [B] Bypass    [M] Mute
 echo        [V] Radar     [P] Settings
