@@ -11,12 +11,11 @@ echo.
 echo          eRayz Audio - Competitive Warzone Engine
 echo.
 echo    ============================================================
-echo                         Version 3.0
+echo              MULTIBAND PRO  |  Version 4.0
 echo    ============================================================
 echo.
 echo.
 
-:: Check if engine exists
 cd /d %USERPROFILE%\Downloads
 if not exist "erayz_audio.py" (
     echo      [X] erayz_audio.py nicht gefunden!
@@ -36,14 +35,17 @@ echo      Starte mit gespeicherten Einstellungen...
 echo.
 echo    ------------------------------------------------------------
 echo.
-echo      Hotkeys:
+echo      Steuerung:
 echo.
-echo        [1] Warzone    [2] Multiplayer
-echo        [3] Resurgence [4] Rebirth Island
-echo        [5] Heavens    [6] RANKED (Pro)
+echo        [Q/W] Band A (Steps Low)  -/+
+echo        [E/R] Band B (Mud Zone)   -/+
+echo        [A/S] Band C (Step Detail)-/+
+echo        [D/F] Band D (Gunfire)    -/+
+echo        [G/H] Output Gain         -/+
+echo        [X/C] Spatial             -/+
 echo.
-echo        [B] Bypass     [M] Mute
-echo        [V] Radar      [P] Settings
+echo        [B] Bypass    [M] Mute
+echo        [V] Radar     [P] Settings
 echo        [ESC] Beenden
 echo.
 echo    ------------------------------------------------------------

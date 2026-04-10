@@ -5,48 +5,36 @@ title eRayz Audio - Setup
 mode con: cols=60 lines=42
 color 0F
 
-:: ============================================================
-:: PAGE 1 - WELCOME
-:: ============================================================
 cls
 echo.
-echo.
-echo     ________  ________  ________  ___    ___ ________
-echo    /_  __/  \/ /  _/  \//  _/   \/  /   /  // __/   /
-echo     / / / /\  // // /\  // // /\ / /   / / /__ / /\ 
-echo    / / / /  \// // /  \// // /  / /   / / /___/ /  \
-echo   /_/ /_/   /___/_/   /___/_/  /_/   /_/ /____/_/   
 echo.
 echo          eRayz Audio - Competitive Warzone Engine
 echo.
 echo    ============================================================
-echo                         Version 3.0
+echo              MULTIBAND PRO  |  Version 4.0
 echo    ============================================================
 echo.
+echo.
+echo      Features:
+echo.
+echo        [+] 4-Band Frequency Splitting
+echo        [+] Per-Band Compression
+echo        [+] Transient Enhancer
+echo        [+] Footstep Enhancement
+echo        [+] Gunfire Suppression
+echo        [+] Spatial Audio Widening
+echo        [+] Live Step-Radar
 echo.
 echo      Optimiert fuer:
 echo.
 echo        [+] Beyerdynamic DT 990 Pro
-echo        [+] SteelSeries GameDAC
-echo        [+] AVerMedia Capture Cards
-echo.
-echo      Features:
-echo.
-echo        [+] 6-Band Surgical EQ
-echo        [+] Footstep Enhancement
-echo        [+] Gunfire Suppression
-echo        [+] Dynamic Compression
-echo        [+] Spatial Audio Widening
-echo        [+] Live Step-Radar
+echo        [+] 48000Hz HDMI Capture
 echo.
 echo    ============================================================
 echo.
 echo      Druecke eine beliebige Taste zum Starten...
 pause >nul
 
-:: ============================================================
-:: PAGE 2 - PYTHON CHECK
-:: ============================================================
 cls
 echo.
 echo    ============================================================
@@ -84,10 +72,6 @@ for /f "tokens=*" %%v in ('python --version 2^>^&1') do set PYVER=%%v
 echo      [OK] %PYVER% erkannt
 echo.
 echo.
-
-:: ============================================================
-:: PAGE 3 - INSTALL DEPENDENCIES
-:: ============================================================
 echo      [~] Installiere Audio-Komponenten...
 echo.
 echo      +------------------------------------------+
@@ -113,10 +97,6 @@ echo.
 echo      [OK] Alle Komponenten installiert
 echo.
 echo.
-
-:: ============================================================
-:: PAGE 4 - DOWNLOAD ENGINE
-:: ============================================================
 echo      [~] Lade eRayz Audio Engine...
 echo.
 
@@ -138,19 +118,20 @@ if exist "erayz_audio.py" (
 echo.
 echo.
 
-:: ============================================================
-:: PAGE 5 - DEVICE SETUP
-:: ============================================================
 echo    ============================================================
 echo      Audio-Geraete Konfiguration
 echo    ============================================================
+echo.
+echo      WICHTIG: Waehle ein HDMI Capture Device als Input
+echo      und deine Kopfhoerer als Output.
+echo      Beide muessen auf 48000Hz laufen!
 echo.
 python erayz_audio.py --list
 echo.
 echo    ------------------------------------------------------------
 echo.
 echo      Waehle dein INPUT Device
-echo      (Game Audio / Capture Card)
+echo      (HDMI Capture Card / Game Audio)
 echo.
 set /p INPUT_DEV=      Device Nr: 
 echo.
@@ -159,9 +140,6 @@ echo      (Kopfhoerer / Headset)
 echo.
 set /p OUTPUT_DEV=      Device Nr: 
 
-:: ============================================================
-:: PAGE 6 - LAUNCH
-:: ============================================================
 cls
 echo.
 echo.
@@ -176,14 +154,17 @@ echo      Output: Device %OUTPUT_DEV%
 echo.
 echo    ============================================================
 echo.
-echo      Hotkeys:
+echo      Steuerung:
 echo.
-echo        [1] Warzone    [2] Multiplayer
-echo        [3] Resurgence [4] Rebirth Island
-echo        [5] Heavens    [6] RANKED (Pro)
+echo        [Q/W] Band A (Steps Low)  -/+
+echo        [E/R] Band B (Mud Zone)   -/+
+echo        [A/S] Band C (Step Detail)-/+
+echo        [D/F] Band D (Gunfire)    -/+
+echo        [G/H] Output Gain         -/+
+echo        [X/C] Spatial             -/+
 echo.
-echo        [B] Bypass     [M] Mute
-echo        [V] Radar      [P] Settings
+echo        [B] Bypass    [M] Mute
+echo        [V] Radar     [P] Settings
 echo        [ESC] Beenden
 echo.
 echo    ============================================================
@@ -192,7 +173,7 @@ echo      Starte Engine...
 echo.
 timeout /t 2 /nobreak >nul
 
-python erayz_audio.py --input %INPUT_DEV% --output %OUTPUT_DEV% --preset ranked
+python erayz_audio.py --input %INPUT_DEV% --output %OUTPUT_DEV%
 
 echo.
 echo    ============================================================
