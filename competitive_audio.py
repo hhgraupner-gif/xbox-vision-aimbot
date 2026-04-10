@@ -47,50 +47,45 @@ DEFAULT_CFG = {
     "samplerate": 48000, "blocksize": 256, "channels": 2,
     "preset": "multiband_pro",
     # ══════════════════════════════════════════════════════════
-    # MULTIBAND PRO — 4-Band Split Processing
-    #
-    # Band A: 80-300Hz   → Footstep Body (Boost + Compress)
-    # Band B: 300-1500Hz → Mud Zone (Cut + Gate)
-    # Band C: 1500-5500Hz→ Footstep Detail (Boost + Heavy Compress)
-    # Band D: 5500-11kHz → Gunfire/Treble (Cut + Limit)
+    # WALLHACK EARS — Scheiss auf Sound, NUR STEPS
     # ══════════════════════════════════════════════════════════
     #
     # Crossover Frequencies
-    "xover_1": 300, "xover_2": 1500, "xover_3": 5500,
-    "highpass_hz": 80, "lowpass_hz": 11000,
+    "xover_1": 300, "xover_2": 1200, "xover_3": 5000,
+    "highpass_hz": 100, "lowpass_hz": 8000,
     #
-    # Band A: Footstep Body
-    "band_a_gain_db": 11.0,
-    "band_a_comp_ratio": 5.0,
-    "band_a_comp_thresh": -28.0,
+    # Band A: Footstep Body — ALLES HOCHZIEHEN
+    "band_a_gain_db": 18.0,
+    "band_a_comp_ratio": 12.0,
+    "band_a_comp_thresh": -35.0,
     #
-    # Band B: Mud Zone — Weniger schneiden, Raum-Info behalten fuer Hinter-Dir
-    "band_b_gain_db": -2.0,
-    "band_b_comp_ratio": 2.0,
-    "band_b_comp_thresh": -15.0,
+    # Band B: Mud Zone — KOMPLETT WEG
+    "band_b_gain_db": -12.0,
+    "band_b_comp_ratio": 1.0,
+    "band_b_comp_thresh": -10.0,
     #
-    # Band C: Footstep Detail — Leise/ferne Steps hochziehen
-    "band_c_gain_db": 16.0,
-    "band_c_comp_ratio": 8.0,
-    "band_c_comp_thresh": -30.0,
+    # Band C: Footstep Detail — MAXIMUM. Jeder Step ein Erdbeben.
+    "band_c_gain_db": 22.0,
+    "band_c_comp_ratio": 15.0,
+    "band_c_comp_thresh": -38.0,
     #
-    # Band D: Gunfire/Treble — Runterziehen + Limiten
-    "band_d_gain_db": -8.0,
-    "band_d_comp_ratio": 10.0,
-    "band_d_comp_thresh": -12.0,
+    # Band D: Gunfire — TOT. Schuesse existieren nicht mehr.
+    "band_d_gain_db": -18.0,
+    "band_d_comp_ratio": 20.0,
+    "band_d_comp_thresh": -10.0,
     #
-    # DT 990 Pro: Notch bei 8kHz
-    "dt990_notch_hz": 8000, "dt990_notch_db": -5.0, "dt990_notch_q": 3.0,
+    # DT 990 Pro: Treble komplett weg
+    "dt990_notch_hz": 8000, "dt990_notch_db": -10.0, "dt990_notch_q": 2.0,
     #
-    # Transient Enhancer: Verstaerkt Attack von Steps
-    "transient_attack": 0.6,  # 0=aus, 1=maximal
+    # Transient Enhancer: MAXIMUM
+    "transient_attack": 1.0,
     #
-    # Spatial — Breiter fuer Hinter-Dir Wahrnehmung
-    "spatial_width": 2.0,
+    # Spatial — Breit
+    "spatial_width": 2.2,
     #
-    # Master
-    "output_gain_db": 4.0,
-    "gate_db": -58.0,
+    # Master — Laut + Gate fast aus
+    "output_gain_db": 8.0,
+    "gate_db": -65.0,
     "show_radar": True,
 }
 
