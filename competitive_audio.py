@@ -60,9 +60,9 @@ DEFAULT_CFG = {
     "highpass_hz": 80, "lowpass_hz": 11000,
     #
     # Band A: Footstep Body
-    "band_a_gain_db": 12.0,
-    "band_a_comp_ratio": 4.0,
-    "band_a_comp_thresh": -20.0,
+    "band_a_gain_db": 9.0,
+    "band_a_comp_ratio": 3.5,
+    "band_a_comp_thresh": -18.0,
     #
     # Band B: Mud Zone — Schneiden, aggressiv gaten
     "band_b_gain_db": -5.0,
@@ -71,8 +71,8 @@ DEFAULT_CFG = {
     #
     # Band C: Footstep Detail — Der Geldband. Alles hoerbar machen.
     "band_c_gain_db": 14.0,
-    "band_c_comp_ratio": 7.0,
-    "band_c_comp_thresh": -26.0,
+    "band_c_comp_ratio": 5.5,
+    "band_c_comp_thresh": -22.0,
     #
     # Band D: Gunfire/Treble — Runterziehen + Limiten
     "band_d_gain_db": -8.0,
