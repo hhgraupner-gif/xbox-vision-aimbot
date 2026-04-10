@@ -60,19 +60,19 @@ DEFAULT_CFG = {
     "highpass_hz": 80, "lowpass_hz": 11000,
     #
     # Band A: Footstep Body
-    "band_a_gain_db": 9.0,
-    "band_a_comp_ratio": 3.5,
-    "band_a_comp_thresh": -18.0,
+    "band_a_gain_db": 11.0,
+    "band_a_comp_ratio": 5.0,
+    "band_a_comp_thresh": -28.0,
     #
     # Band B: Mud Zone — Weniger schneiden, Raum-Info behalten fuer Hinter-Dir
     "band_b_gain_db": -2.0,
     "band_b_comp_ratio": 2.0,
     "band_b_comp_thresh": -15.0,
     #
-    # Band C: Footstep Detail — Der Geldband. Alles hoerbar machen.
-    "band_c_gain_db": 14.0,
-    "band_c_comp_ratio": 5.5,
-    "band_c_comp_thresh": -22.0,
+    # Band C: Footstep Detail — Leise/ferne Steps hochziehen
+    "band_c_gain_db": 16.0,
+    "band_c_comp_ratio": 8.0,
+    "band_c_comp_thresh": -30.0,
     #
     # Band D: Gunfire/Treble — Runterziehen + Limiten
     "band_d_gain_db": -8.0,
@@ -90,7 +90,7 @@ DEFAULT_CFG = {
     #
     # Master
     "output_gain_db": 4.0,
-    "gate_db": -52.0,
+    "gate_db": -58.0,
     "show_radar": True,
 }
 
