@@ -52,22 +52,22 @@ DEFAULT_CFG = {
     #
     # Crossover Frequencies
     "xover_1": 300, "xover_2": 1200, "xover_3": 5000,
-    "highpass_hz": 100, "lowpass_hz": 8000,
+    "highpass_hz": 140, "lowpass_hz": 8000,
     #
-    # Band A: Footstep Body — ALLES HOCHZIEHEN
-    "band_a_gain_db": 18.0,
-    "band_a_comp_ratio": 12.0,
-    "band_a_comp_thresh": -35.0,
+    # Band A: Footstep Body — Weniger Bass, kein Wummern
+    "band_a_gain_db": 8.0,
+    "band_a_comp_ratio": 6.0,
+    "band_a_comp_thresh": -25.0,
     #
     # Band B: Mud Zone — KOMPLETT WEG
     "band_b_gain_db": -12.0,
     "band_b_comp_ratio": 1.0,
     "band_b_comp_thresh": -10.0,
     #
-    # Band C: Footstep Detail — MAXIMUM. Jeder Step ein Erdbeben.
+    # Band C: Footstep Detail — Gleich aggressiv, weniger Druck
     "band_c_gain_db": 22.0,
-    "band_c_comp_ratio": 15.0,
-    "band_c_comp_thresh": -38.0,
+    "band_c_comp_ratio": 12.0,
+    "band_c_comp_thresh": -32.0,
     #
     # Band D: Gunfire — TOT. Schuesse existieren nicht mehr.
     "band_d_gain_db": -18.0,
@@ -81,10 +81,10 @@ DEFAULT_CFG = {
     "transient_attack": 1.0,
     #
     # Spatial — Breit
-    "spatial_width": 2.2,
+    "spatial_width": 1.8,
     #
     # Master — Laut + Gate fast aus
-    "output_gain_db": 8.0,
+    "output_gain_db": 6.0,
     "gate_db": -65.0,
     "show_radar": True,
 }
