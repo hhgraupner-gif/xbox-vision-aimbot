@@ -85,9 +85,9 @@ DEFAULT_CONFIG = {
     "model_mode": "fps",
     "confidence": 0.40,
     "fov_radius": 180,
-    "strength": 1.1,
-    "deadzone": 3,
-    "max_move": 38,
+    "strength": 2.0,
+    "deadzone": 2,
+    "max_move": 55,
     "cooldown_frames": 1,
     "use_roi_crop": True,
     "roi_size": 640,
@@ -368,7 +368,7 @@ class SmoothTracker:
     def check_oscillation(self, dx, dy):
         """Erkennt ob Aim hin-und-her pendelt. Returns damping factor 0.0-1.0."""
         if (dx * self.prev_dx < 0) or (dy * self.prev_dy < 0):
-            self.osc_count = min(self.osc_count + 2, 8)  # Schneller erkennen
+            self.osc_count = min(self.osc_count + 1, 8)
         else:
             self.osc_count = max(self.osc_count - 1, 0)
 
@@ -376,11 +376,11 @@ class SmoothTracker:
         self.prev_dy = dy
 
         if self.osc_count >= 6:
-            return 0.05  # Fast komplett stoppen
+            return 0.1   # Fast stoppen bei starkem Pendeln
         elif self.osc_count >= 4:
-            return 0.15
+            return 0.3
         elif self.osc_count >= 2:
-            return 0.4
+            return 0.6
         return 1.0
 
     def mark_lost(self):
@@ -728,22 +728,24 @@ def main():
                                 cooldown = cfg["cooldown_frames"]
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
-                                # PER-FRAME TRACKING mit move()
+                                # PER-FRAME TRACKING mit move() — STRONG LOCK-ON
                                 dyn_str = strength
                                 if det_h > 120:
-                                    dyn_str = strength * 1.5
+                                    dyn_str = strength * 2.0   # Nahkampf: Volle Power
                                 elif det_h > 80:
-                                    dyn_str = strength * 1.2
+                                    dyn_str = strength * 1.5   # Mittel-Distanz: Stark
+                                elif det_h > 50:
+                                    dyn_str = strength * 1.2   # Weiter weg: Leicht staerker
 
-                                # Anti-Oszillation: Wenn Pendeln erkannt → stark bremsen
+                                # Anti-Oszillation: Wenn Pendeln erkannt → bremsen
                                 osc_damp = tracker.check_oscillation(dx, dy)
 
                                 mx = dx * dyn_str * osc_damp
                                 my = dy * dyn_str * osc_damp
 
-                                # Daempfung bei kleinem Offset (Anti-Pendel)
-                                if dist < 40:
-                                    damp = (dist / 40.0) ** 2  # Quadratisch = noch sanfter nah am Ziel
+                                # Sanfte Daempfung NUR ganz nah am Ziel (Anti-Pendel)
+                                if dist < 15:
+                                    damp = dist / 15.0  # Linear — nicht zu aggressiv
                                     mx *= damp
                                     my *= damp
 
@@ -752,7 +754,13 @@ def main():
                                 my = max(-lim, min(lim, my))
                                 ix = int(round(mx))
                                 iy = int(round(my))
+
+                                # XIM Deadzone Bypass: Mindestens 5px senden
                                 if ix != 0 or iy != 0:
+                                    if 0 < abs(ix) < 5:
+                                        ix = 5 if ix > 0 else -5
+                                    if 0 < abs(iy) < 5:
+                                        iy = 5 if iy > 0 else -5
                                     try:
                                         kmbox_net.move(ix, iy)
                                         cooldown = cfg["cooldown_frames"]
