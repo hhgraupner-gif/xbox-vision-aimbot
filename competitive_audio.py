@@ -63,24 +63,20 @@ DEFAULT_CFG = {
     "lowpass_hz": 8000,
     #
     # Per-Band Gain
-    "gain_a_db": 10.0,     # Step Thump — moderate
-    "gain_b_db": -10.0,    # Mud — kill
-    "gain_c_db": 18.0,     # Step Detail — MAX
-    "gain_d_db": -15.0,    # Gunfire — kill
+    "gain_a_db": 8.0,      # Step Thump — nur Transienten
+    "gain_b_db": -20.0,    # Mud — KOMPLETT TOT
+    "gain_c_db": 20.0,     # Step Detail — NUR STEPS
+    "gain_d_db": -20.0,    # Gunfire — TOT
     #
     # Per-Band Compression (Soft-Knee)
-    "comp_a_ratio": 5.0,  "comp_a_thresh": -25.0,
-    "comp_b_ratio": 1.0,  "comp_b_thresh": -10.0,   # Keine Comp fuer Mud (wird eh gekillt)
-    "comp_c_ratio": 10.0, "comp_c_thresh": -32.0,    # Aggressive Comp = leise Steps laut
-    "comp_d_ratio": 20.0, "comp_d_thresh": -8.0,     # Limiter = Gunfire platt
+    "comp_a_ratio": 8.0,  "comp_a_thresh": -30.0,
+    "comp_b_ratio": 1.0,  "comp_b_thresh": -10.0,
+    "comp_c_ratio": 12.0, "comp_c_thresh": -35.0,
+    "comp_d_ratio": 20.0, "comp_d_thresh": -8.0,
     #
-    # TRANSIENT DETECTION — Das Herzstück
-    # Fast Envelope: ~1ms attack → faengt Transients
-    # Slow Envelope: ~50ms attack → trackt Sustained Level
-    # Ratio fast/slow > threshold = TRANSIENT (Step!)
-    # Ratio fast/slow < threshold = SUSTAINED (Ambient/Gunfire) → ducken
-    "transient_sensitivity": 1.5,   # Wie stark Transienten geboostet werden (0-3)
-    "sustain_kill": 0.6,            # Wie stark Sustained geduckt wird (0-1)
+    # TRANSIENT — MAXIMAL. Nur Steps durchlassen.
+    "transient_sensitivity": 2.5,
+    "sustain_kill": 0.95,
     #
     # DT 990 Pro Fix
     "dt990_hz": 8000, "dt990_db": -8.0, "dt990_q": 2.5,
