@@ -83,12 +83,12 @@ DEFAULT_CONFIG = {
     "kmbox_uuid": "C14AE466",
     "capture_device": 0,
     "model_mode": "fps",
-    "confidence": 0.40,
-    "fov_radius": 180,
-    "strength": 2.0,
-    "deadzone": 2,
-    "max_move": 55,
-    "cooldown_frames": 1,
+    "confidence": 0.35,
+    "fov_radius": 220,
+    "strength": 3.5,
+    "deadzone": 1,
+    "max_move": 80,
+    "cooldown_frames": 0,
     "use_roi_crop": True,
     "roi_size": 640,
     "target_fps": 60,
@@ -97,7 +97,7 @@ DEFAULT_CONFIG = {
     "dead_body_ratio": 1.0,
     "sky_filter_ratio": 0.10,
     "ground_filter_ratio": 0.88,
-    "min_box_height": 45,
+    "min_box_height": 35,
     "minimap_enabled": True,
     "minimap_x": 40,
     "minimap_y": 140,
@@ -322,15 +322,15 @@ class SmoothTracker:
         self.osc_count = 0
 
     def update(self, mx, my, bbox_h=0):
-        # Dynamischer Alpha: Close = instant, Range = schnell
+        # BEAST MODE: Maximaler Snap — fast keine Glaettung
         if bbox_h > 120:
-            alpha = 0.95  # Close: sofort
+            alpha = 0.98  # Close: INSTANT
         elif bbox_h > 80:
-            alpha = 0.85
+            alpha = 0.92
         elif bbox_h > 50:
-            alpha = 0.75
+            alpha = 0.85
         else:
-            alpha = 0.65
+            alpha = 0.78
 
         if self.x is None:
             self.x, self.y = mx, my
@@ -366,21 +366,19 @@ class SmoothTracker:
         return (px, py)
 
     def check_oscillation(self, dx, dy):
-        """Erkennt ob Aim hin-und-her pendelt. Returns damping factor 0.0-1.0."""
+        """Erkennt Pendeln — BEAST MODE: Sehr tolerant."""
         if (dx * self.prev_dx < 0) or (dy * self.prev_dy < 0):
-            self.osc_count = min(self.osc_count + 1, 8)
+            self.osc_count = min(self.osc_count + 1, 10)
         else:
-            self.osc_count = max(self.osc_count - 1, 0)
+            self.osc_count = max(self.osc_count - 2, 0)  # Schneller erholen
 
         self.prev_dx = dx
         self.prev_dy = dy
 
-        if self.osc_count >= 6:
-            return 0.1   # Fast stoppen bei starkem Pendeln
-        elif self.osc_count >= 4:
-            return 0.3
-        elif self.osc_count >= 2:
-            return 0.6
+        if self.osc_count >= 8:
+            return 0.2   # Nur bei STARKEM Pendeln bremsen
+        elif self.osc_count >= 5:
+            return 0.5
         return 1.0
 
     def mark_lost(self):
@@ -421,25 +419,23 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
     ground = cfg["ground_filter_ratio"]
     tm_protect = cfg["teammate_protection"] and frame is not None
 
-    # CLOSE-FIGHT STICKY: Abgestuft nach Ziel-Groesse
-    # Grosse Box = naher Gegner = EXTREMER Kleber
-    # Radius MUSS gross genug sein um Slide/Jump/Strafe abzufangen!
+    # BEAST MODE STICKY: Maximaler Kleber
     if sticky_h > 120:
-        sticky_radius = 450      # Halber Bildschirm — NICHTS entkommt
-        sticky_bonus = 0.02      # Quasi unmoeglicher Zielwechsel
-        min_lock = 25            # ~420ms bei 60FPS
+        sticky_radius = 550      # Fast ganzer Bildschirm
+        sticky_bonus = 0.01      # UNMOEGLICH zu wechseln
+        min_lock = 35            # ~580ms bei 60FPS
     elif sticky_h > 80:
-        sticky_radius = 300
-        sticky_bonus = 0.06
-        min_lock = 16            # ~267ms
+        sticky_radius = 400
+        sticky_bonus = 0.03
+        min_lock = 22            # ~367ms
     elif sticky_h > 50:
-        sticky_radius = 180
-        sticky_bonus = 0.15
-        min_lock = 10            # ~167ms
+        sticky_radius = 250
+        sticky_bonus = 0.08
+        min_lock = 14            # ~233ms
     else:
-        sticky_radius = 100      # Auch auf Range deutlich stickier
-        sticky_bonus = 0.30
-        min_lock = 5             # ~83ms
+        sticky_radius = 150
+        sticky_bonus = 0.15
+        min_lock = 8             # ~133ms
 
     best = None
     best_score = float('inf')
@@ -461,9 +457,9 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
         if cls in IGNORE_CLASSES:
             continue
 
-        # Zielpunkt: Mitte X, OBERKOERPER Y (35% von oben)
+        # Zielpunkt: Mitte X, KOPF/OBERKOERPER Y (28% von oben)
         tx = (x1 + x2) / 2.0
-        ty = y1 + (y2 - y1) * 0.35
+        ty = y1 + (y2 - y1) * 0.28
 
         dist = math.sqrt((tx - cx) ** 2 + (ty - cy) ** 2)
         if dist > fov:
@@ -476,9 +472,11 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
         # Score berechnen
         score = dist
 
-        # Groesse-Bonus (naehere Ziele bevorzugen)
-        if bh > 80:
-            score *= 0.7
+        # Groesse-Bonus (naehere Ziele STARK bevorzugen)
+        if bh > 100:
+            score *= 0.5
+        elif bh > 80:
+            score *= 0.65
 
         # STICKY AIM — Close-Fight Kleber
         if sticky_pos is not None:
@@ -701,8 +699,8 @@ def main():
                 det_h = tdet["bbox"][3] - tdet["bbox"][1] if tdet else 0
                 tracker.update(tx, ty, bbox_h=det_h)
 
-                # Kein Velocity Prediction — direkt auf aktuelle Position
-                pos = tracker.get_position()
+                # BEAST MODE: Velocity Prediction AN — zielt VORAUS
+                pos = tracker.get_predicted_position(lead_frames=2.0)
 
                 if pos:
                     aim_pos = pos
@@ -728,24 +726,24 @@ def main():
                                 cooldown = cfg["cooldown_frames"]
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
-                                # PER-FRAME TRACKING mit move() — STRONG LOCK-ON
+                                # ═══ BEAST MODE TRACKING ═══
                                 dyn_str = strength
                                 if det_h > 120:
-                                    dyn_str = strength * 2.0   # Nahkampf: Volle Power
+                                    dyn_str = strength * 2.5   # Nahkampf: BRUTAL
                                 elif det_h > 80:
-                                    dyn_str = strength * 1.5   # Mittel-Distanz: Stark
+                                    dyn_str = strength * 2.0   # Mittel: Sehr stark
                                 elif det_h > 50:
-                                    dyn_str = strength * 1.2   # Weiter weg: Leicht staerker
+                                    dyn_str = strength * 1.5   # Weiter: Stark
 
-                                # Anti-Oszillation: Wenn Pendeln erkannt → bremsen
+                                # Anti-Oszillation (tolerant im Beast Mode)
                                 osc_damp = tracker.check_oscillation(dx, dy)
 
                                 mx = dx * dyn_str * osc_damp
                                 my = dy * dyn_str * osc_damp
 
-                                # Sanfte Daempfung NUR ganz nah am Ziel (Anti-Pendel)
-                                if dist < 15:
-                                    damp = dist / 15.0  # Linear — nicht zu aggressiv
+                                # Minimal-Daempfung nur direkt am Ziel
+                                if dist < 8:
+                                    damp = dist / 8.0
                                     mx *= damp
                                     my *= damp
 
@@ -755,12 +753,12 @@ def main():
                                 ix = int(round(mx))
                                 iy = int(round(my))
 
-                                # XIM Deadzone Bypass: Mindestens 5px senden
+                                # XIM Deadzone Bypass: Mindestens 8px
                                 if ix != 0 or iy != 0:
-                                    if 0 < abs(ix) < 5:
-                                        ix = 5 if ix > 0 else -5
-                                    if 0 < abs(iy) < 5:
-                                        iy = 5 if iy > 0 else -5
+                                    if 0 < abs(ix) < 8:
+                                        ix = 8 if ix > 0 else -8
+                                    if 0 < abs(iy) < 8:
+                                        iy = 8 if iy > 0 else -8
                                     try:
                                         kmbox_net.move(ix, iy)
                                         cooldown = cfg["cooldown_frames"]
