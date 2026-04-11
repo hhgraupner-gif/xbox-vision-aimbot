@@ -123,9 +123,9 @@ DEFAULT_CONFIG = {
     "model_mode": "fps",
     "confidence": 0.35,
     "fov_radius": 220,
-    "strength": 3.5,
-    "deadzone": 1,
-    "max_move": 80,
+    "strength": 2.3,
+    "deadzone": 2,
+    "max_move": 50,
     "cooldown_frames": 0,
     "use_roi_crop": True,
     "roi_size": 640,
@@ -839,16 +839,9 @@ def main():
                                     titan.set_anti_recoil(recoil_y)
 
                             elif input_mode == "kmbox" and async_kmbox:
-                                # ═══ MAXIMUM OVERDRIVE TRACKING ═══
+                                # ═══ KALMAN TRACKING — Sauber ═══
                                 dyn_str = strength
-
-                                # Distance-based boost
-                                if det_h > 120:
-                                    dyn_str = strength * 1.8
-                                elif det_h > 80:
-                                    dyn_str = strength * 1.4
-                                elif det_h > 50:
-                                    dyn_str = strength * 1.2
+                                # Kein Close-Boost — Kalman regelt das
 
                                 # CONFIDENCE BOOST: Deaktiviert (verursacht Pendeln)
                                 # dyn_str bleibt wie oben
