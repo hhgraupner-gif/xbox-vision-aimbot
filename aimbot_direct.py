@@ -807,11 +807,11 @@ def main():
                 vx, vy = tracker.get_velocity()
                 speed = math.sqrt(vx * vx + vy * vy)
                 if speed > 8.0:
-                    lead = 3.5    # Sprint/Slide: Weit voraus zielen
+                    lead = 2.0    # Sprint: Moderat voraus
                 elif speed > 4.0:
-                    lead = 2.5    # Laufen: Moderat voraus
+                    lead = 1.0    # Laufen: Leicht voraus
                 elif speed > 1.5:
-                    lead = 1.5    # Langsam: Leicht voraus
+                    lead = 0.5    # Langsam: Minimal
                 else:
                     lead = 0.0    # Stehend: Direkt drauf
 
@@ -850,11 +850,11 @@ def main():
 
                                 # Distance-based boost
                                 if det_h > 120:
-                                    dyn_str = strength * 2.5
+                                    dyn_str = strength * 1.8
                                 elif det_h > 80:
-                                    dyn_str = strength * 2.0
+                                    dyn_str = strength * 1.4
                                 elif det_h > 50:
-                                    dyn_str = strength * 1.5
+                                    dyn_str = strength * 1.2
 
                                 # CONFIDENCE BOOST: Sichere Detection = volle Power
                                 if last_conf > 0.65:
@@ -868,9 +868,9 @@ def main():
                                 my = dy * dyn_str * osc_damp
 
                                 # Minimal-Daempfung nah am Ziel
-                                if dist < 15:
-                                    mx *= dist / 15.0
-                                    my *= dist / 15.0
+                                if dist < 20:
+                                    mx *= dist / 20.0
+                                    my *= dist / 20.0
 
                                 lim = cfg["max_move"]
                                 mx = max(-lim, min(lim, mx))
