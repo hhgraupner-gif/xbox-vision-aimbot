@@ -381,7 +381,7 @@ class KalmanTracker:
         # Process Noise (wie viel sich der Gegner pro Frame aendert)
         q_pos = 0.5
         q_vel = 2.0
-        q_acc = 4.0
+        q_acc = 0.5  # Reduziert — weniger Ueberschiessen bei Richtungswechsel
         self.Q = np.diag([q_pos, q_pos, q_vel, q_vel, q_acc, q_acc]).astype(np.float64)
 
         # Measurement Noise (wie ungenau ist die YOLO-Detection)
@@ -807,13 +807,11 @@ def main():
                 vx, vy = tracker.get_velocity()
                 speed = math.sqrt(vx * vx + vy * vy)
                 if speed > 8.0:
-                    lead = 2.0    # Sprint: Moderat voraus
+                    lead = 1.0
                 elif speed > 4.0:
-                    lead = 1.0    # Laufen: Leicht voraus
-                elif speed > 1.5:
-                    lead = 0.5    # Langsam: Minimal
+                    lead = 0.5
                 else:
-                    lead = 0.0    # Stehend: Direkt drauf
+                    lead = 0.0
 
                 pos = tracker.get_predicted_position(lead_frames=lead)
 
@@ -825,12 +823,8 @@ def main():
                         dy = pos[1] - scr_cy
                         dist = math.sqrt(dx * dx + dy * dy)
 
-                        # DYNAMIC FOV: Wenn gelockt → enger fokussieren
-                        effective_fov = cfg["fov_radius"]
-                        if tracker.frames > 5:
-                            effective_fov = cfg["fov_radius"] * 0.7
-
-                        if dist > cfg["deadzone"] and dist < effective_fov:
+                        # FOV Check — kein Dynamic FOV
+                        if dist > cfg["deadzone"] and dist < cfg["fov_radius"]:
                             if input_mode == "titan" and titan:
                                 sx, sy = pixels_to_stick(
                                     dx, dy, fw, fh,
@@ -856,11 +850,8 @@ def main():
                                 elif det_h > 50:
                                     dyn_str = strength * 1.2
 
-                                # CONFIDENCE BOOST: Sichere Detection = volle Power
-                                if last_conf > 0.65:
-                                    dyn_str *= 1.3
-                                elif last_conf > 0.50:
-                                    dyn_str *= 1.1
+                                # CONFIDENCE BOOST: Deaktiviert (verursacht Pendeln)
+                                # dyn_str bleibt wie oben
 
                                 osc_damp = tracker.check_oscillation(dx, dy)
 
