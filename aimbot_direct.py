@@ -85,9 +85,9 @@ DEFAULT_CONFIG = {
     "model_mode": "fps",
     "confidence": 0.36,
     "fov_radius": 210,
-    "strength": 2.8,
+    "strength": 3.2,
     "deadzone": 2,
-    "max_move": 65,
+    "max_move": 70,
     "cooldown_frames": 0,
     "use_roi_crop": True,
     "roi_size": 640,
@@ -520,9 +520,9 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
         if cls in IGNORE_CLASSES:
             continue
 
-        # Zielpunkt: Mitte X, KOPF/OBERKOERPER Y (28% von oben)
+        # Zielpunkt: Mitte der Box (50%) — stabilster Punkt, weniger Jitter
         tx = (x1 + x2) / 2.0
-        ty = y1 + (y2 - y1) * 0.28
+        ty = (y1 + y2) / 2.0
 
         dist = math.sqrt((tx - cx) ** 2 + (ty - cy) ** 2)
         if dist > fov:
@@ -789,12 +789,12 @@ def main():
                                 cooldown = cfg["cooldown_frames"]
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
-                                # ═══ MAX TRACKING (Anti-Pendel Safe) ═══
+                                # ═══ MAX TRACKING (Center Mass — Stabil) ═══
                                 dyn_str = strength
                                 if det_h > 120:
-                                    dyn_str = strength * 1.6   # Nahkampf: Stark aber safe
+                                    dyn_str = strength * 1.8   # Nahkampf: Stark
                                 elif det_h > 80:
-                                    dyn_str = strength * 1.3   # Mittel: Moderat
+                                    dyn_str = strength * 1.4   # Mittel: Gut
                                 # Fern: Basis-Strength reicht (Kalman predicted)
 
                                 # Anti-Oszillation (reagiert schnell)
