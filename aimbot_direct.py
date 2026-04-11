@@ -83,12 +83,12 @@ DEFAULT_CONFIG = {
     "kmbox_uuid": "C14AE466",
     "capture_device": 0,
     "model_mode": "fps",
-    "confidence": 0.40,
-    "fov_radius": 180,
-    "strength": 2.0,
-    "deadzone": 2,
-    "max_move": 55,
-    "cooldown_frames": 1,
+    "confidence": 0.35,
+    "fov_radius": 220,
+    "strength": 3.5,
+    "deadzone": 1,
+    "max_move": 80,
+    "cooldown_frames": 0,
     "use_roi_crop": True,
     "roi_size": 640,
     "target_fps": 60,
@@ -97,7 +97,7 @@ DEFAULT_CONFIG = {
     "dead_body_ratio": 1.0,
     "sky_filter_ratio": 0.10,
     "ground_filter_ratio": 0.88,
-    "min_box_height": 45,
+    "min_box_height": 35,
     "minimap_enabled": True,
     "minimap_x": 40,
     "minimap_y": 140,
@@ -297,22 +297,23 @@ class FastInference:
 
 
 # ============================================================
-# TRACKER MIT VELOCITY PREDICTION
+# KALMAN FILTER TRACKER — Militaer-Grade Zielerfassung
 # ============================================================
-class SmoothTracker:
-    """Verfolgt ein Ziel mit EMA-Glaettung + Velocity Prediction + Oszillations-Erkennung."""
+class KalmanTracker:
+    """2D Kalman Filter: Trackt Position + Velocity + Acceleration.
+    
+    State-Vektor: [x, y, vx, vy, ax, ay]
+    - Praezise Vorhersage wohin sich das Ziel BEWEGT
+    - Filtert Detection-Jitter/Rauschen raus
+    - Passt sich an Geschwindigkeits-Aenderungen an (Strafe, Sprint)
+    """
 
     def __init__(self):
         self.reset()
 
     def reset(self):
-        self.x = None
-        self.y = None
-        self.prev_x = None
-        self.prev_y = None
-        self.vx = 0.0           # Geschwindigkeit X (px/frame)
-        self.vy = 0.0           # Geschwindigkeit Y (px/frame)
-        self.alpha = 0.5
+        self.state = None       # [x, y, vx, vy, ax, ay]
+        self.P = None           # Error Covariance Matrix
         self.frames = 0
         self.lost = 0
         self.target_id = None
@@ -321,87 +322,145 @@ class SmoothTracker:
         self.prev_dy = 0.0
         self.osc_count = 0
 
+        # Kalman Matrizen (dt=1 frame)
+        dt = 1.0
+        # State Transition: Position += Vel*dt + 0.5*Acc*dt^2, Vel += Acc*dt
+        self.F = np.array([
+            [1, 0, dt, 0, 0.5*dt*dt, 0],
+            [0, 1, 0, dt, 0, 0.5*dt*dt],
+            [0, 0, 1, 0, dt, 0],
+            [0, 0, 0, 1, 0, dt],
+            [0, 0, 0, 0, 1, 0],
+            [0, 0, 0, 0, 0, 1],
+        ], dtype=np.float64)
+
+        # Observation: Wir messen nur Position (x, y)
+        self.H = np.array([
+            [1, 0, 0, 0, 0, 0],
+            [0, 1, 0, 0, 0, 0],
+        ], dtype=np.float64)
+
+        # Process Noise (wie viel sich der Gegner pro Frame aendert)
+        q_pos = 0.5
+        q_vel = 2.0
+        q_acc = 4.0
+        self.Q = np.diag([q_pos, q_pos, q_vel, q_vel, q_acc, q_acc]).astype(np.float64)
+
+        # Measurement Noise (wie ungenau ist die YOLO-Detection)
+        self.R_base = np.diag([8.0, 8.0]).astype(np.float64)
+
     def update(self, mx, my, bbox_h=0):
-        # Dynamischer Alpha: Close = instant, Range = schnell
+        """Neue Messung einarbeiten."""
+        z = np.array([mx, my], dtype=np.float64)
+
+        # Adaptive Measurement Noise: Naeher = genauere Detection
         if bbox_h > 120:
-            alpha = 0.95  # Close: sofort
+            r_scale = 0.3   # Close: Detection sehr genau
         elif bbox_h > 80:
-            alpha = 0.85
+            r_scale = 0.5
         elif bbox_h > 50:
-            alpha = 0.75
+            r_scale = 0.8
         else:
-            alpha = 0.65
+            r_scale = 1.2   # Weit weg: Detection ungenauer
+        R = self.R_base * r_scale
 
-        if self.x is None:
-            self.x, self.y = mx, my
-            self.prev_x, self.prev_y = mx, my
+        if self.state is None:
+            # Erste Messung: Initialisiere State
+            self.state = np.array([mx, my, 0, 0, 0, 0], dtype=np.float64)
+            self.P = np.diag([1, 1, 10, 10, 20, 20]).astype(np.float64)
         else:
-            self.prev_x, self.prev_y = self.x, self.y
-            self.x += alpha * (mx - self.x)
-            self.y += alpha * (my - self.y)
+            # === PREDICT ===
+            self.state = self.F @ self.state
+            self.P = self.F @ self.P @ self.F.T + self.Q
 
-            # Velocity berechnen (EMA-geglaettet)
-            raw_vx = self.x - self.prev_x
-            raw_vy = self.y - self.prev_y
-            self.vx = 0.5 * self.vx + 0.5 * raw_vx
-            self.vy = 0.5 * self.vy + 0.5 * raw_vy
+            # === UPDATE ===
+            y = z - self.H @ self.state                     # Innovation
+            S = self.H @ self.P @ self.H.T + R              # Innovation Covariance
+            K = self.P @ self.H.T @ np.linalg.inv(S)        # Kalman Gain
+            self.state = self.state + K @ y                  # State Update
+            I = np.eye(6)
+            self.P = (I - K @ self.H) @ self.P              # Covariance Update
 
         self.target_h = bbox_h
         self.frames += 1
         self.lost = 0
 
     def get_predicted_position(self, lead_frames=2.5):
-        """Position + Velocity Prediction (zielt VORAUS).
-        Nur bei echtem Movement — ignoriert Box-Jitter."""
-        if self.x is None:
+        """Kalman-Praediktion: Wo ist das Ziel in N Frames?
+        Nutzt Position + Velocity + Acceleration."""
+        if self.state is None:
             return None
-        if self.frames < 3:
-            return (self.x, self.y)
-        # Nur vorhersagen wenn Geschwindigkeit > Jitter-Schwelle (2px/frame)
-        speed = math.sqrt(self.vx * self.vx + self.vy * self.vy)
-        if speed < 2.0:
-            return (self.x, self.y)
-        px = self.x + self.vx * lead_frames
-        py = self.y + self.vy * lead_frames
+        if self.frames < 2:
+            return (self.state[0], self.state[1])
+
+        x, y, vx, vy, ax, ay = self.state
+        speed = math.sqrt(vx * vx + vy * vy)
+
+        # Nur vorhersagen wenn echte Bewegung (nicht Jitter)
+        if speed < 1.5:
+            return (x, y)
+
+        # Physik: pos + vel*t + 0.5*acc*t^2
+        t = lead_frames
+        px = x + vx * t + 0.5 * ax * t * t
+        py = y + vy * t + 0.5 * ay * t * t
         return (px, py)
 
+    def get_position(self):
+        """Aktuelle gefilterte Position."""
+        if self.state is None:
+            return None
+        return (self.state[0], self.state[1])
+
+    def get_raw_position(self):
+        if self.state is None:
+            return None
+        return (self.state[0], self.state[1])
+
+    def get_velocity(self):
+        """Geschwindigkeit in px/frame."""
+        if self.state is None:
+            return (0, 0)
+        return (self.state[2], self.state[3])
+
     def check_oscillation(self, dx, dy):
-        """Erkennt ob Aim hin-und-her pendelt. Returns damping factor 0.0-1.0."""
+        """Erkennt Pendeln — BEAST MODE: Sehr tolerant."""
         if (dx * self.prev_dx < 0) or (dy * self.prev_dy < 0):
-            self.osc_count = min(self.osc_count + 1, 8)
+            self.osc_count = min(self.osc_count + 1, 10)
         else:
-            self.osc_count = max(self.osc_count - 1, 0)
+            self.osc_count = max(self.osc_count - 2, 0)
 
         self.prev_dx = dx
         self.prev_dy = dy
 
-        if self.osc_count >= 6:
-            return 0.1   # Fast stoppen bei starkem Pendeln
-        elif self.osc_count >= 4:
-            return 0.3
-        elif self.osc_count >= 2:
-            return 0.6
+        if self.osc_count >= 8:
+            return 0.2
+        elif self.osc_count >= 5:
+            return 0.5
         return 1.0
 
     def mark_lost(self):
+        """Ziel verloren — Kalman predicted weiter fuer ein paar Frames."""
         self.lost += 1
-        if self.lost > 4:
+        if self.lost <= 3 and self.state is not None:
+            # Predict-Only (kein Update) — Kalman sagt voraus wo Ziel sein sollte
+            self.state = self.F @ self.state
+            self.P = self.F @ self.P @ self.F.T + self.Q
+        elif self.lost > 5:
             self.reset()
-
-    def get_position(self):
-        """Gibt geglättete Position zurueck."""
-        if self.x is None:
-            return None
-        return (self.x, self.y)
-
-    def get_raw_position(self):
-        if self.x is None:
-            return None
-        return (self.x, self.y)
 
     @property
     def locked(self):
-        return self.frames >= 1 and self.lost == 0
+        return self.frames >= 1 and self.lost <= 2  # Kalman kann 2 Frames ohne Messung halten
+
+    # Alias fuer Kompatibilitaet
+    @property
+    def x(self):
+        return self.state[0] if self.state is not None else None
+
+    @property
+    def y(self):
+        return self.state[1] if self.state is not None else None
 
 
 # ============================================================
@@ -421,25 +480,23 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
     ground = cfg["ground_filter_ratio"]
     tm_protect = cfg["teammate_protection"] and frame is not None
 
-    # CLOSE-FIGHT STICKY: Abgestuft nach Ziel-Groesse
-    # Grosse Box = naher Gegner = EXTREMER Kleber
-    # Radius MUSS gross genug sein um Slide/Jump/Strafe abzufangen!
+    # BEAST MODE STICKY: Maximaler Kleber
     if sticky_h > 120:
-        sticky_radius = 450      # Halber Bildschirm — NICHTS entkommt
-        sticky_bonus = 0.02      # Quasi unmoeglicher Zielwechsel
-        min_lock = 25            # ~420ms bei 60FPS
+        sticky_radius = 550      # Fast ganzer Bildschirm
+        sticky_bonus = 0.01      # UNMOEGLICH zu wechseln
+        min_lock = 35            # ~580ms bei 60FPS
     elif sticky_h > 80:
-        sticky_radius = 300
-        sticky_bonus = 0.06
-        min_lock = 16            # ~267ms
+        sticky_radius = 400
+        sticky_bonus = 0.03
+        min_lock = 22            # ~367ms
     elif sticky_h > 50:
-        sticky_radius = 180
-        sticky_bonus = 0.15
-        min_lock = 10            # ~167ms
+        sticky_radius = 250
+        sticky_bonus = 0.08
+        min_lock = 14            # ~233ms
     else:
-        sticky_radius = 100      # Auch auf Range deutlich stickier
-        sticky_bonus = 0.30
-        min_lock = 5             # ~83ms
+        sticky_radius = 150
+        sticky_bonus = 0.15
+        min_lock = 8             # ~133ms
 
     best = None
     best_score = float('inf')
@@ -461,9 +518,9 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
         if cls in IGNORE_CLASSES:
             continue
 
-        # Zielpunkt: Mitte X, OBERKOERPER Y (35% von oben)
+        # Zielpunkt: Mitte X, KOPF/OBERKOERPER Y (28% von oben)
         tx = (x1 + x2) / 2.0
-        ty = y1 + (y2 - y1) * 0.35
+        ty = y1 + (y2 - y1) * 0.28
 
         dist = math.sqrt((tx - cx) ** 2 + (ty - cy) ** 2)
         if dist > fov:
@@ -476,9 +533,11 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
         # Score berechnen
         score = dist
 
-        # Groesse-Bonus (naehere Ziele bevorzugen)
-        if bh > 80:
-            score *= 0.7
+        # Groesse-Bonus (naehere Ziele STARK bevorzugen)
+        if bh > 100:
+            score *= 0.5
+        elif bh > 80:
+            score *= 0.65
 
         # STICKY AIM — Close-Fight Kleber
         if sticky_pos is not None:
@@ -629,7 +688,7 @@ def main():
     print(f"  1/2=STR  3/4=FOV  5/6=DZ  7/8=Conf  9/0=CD  ESC=Quit")
     print("=" * 60)
 
-    tracker = SmoothTracker()
+    tracker = KalmanTracker()
     active = True
     fc = 0
     fps = 0.0
@@ -701,8 +760,8 @@ def main():
                 det_h = tdet["bbox"][3] - tdet["bbox"][1] if tdet else 0
                 tracker.update(tx, ty, bbox_h=det_h)
 
-                # Kein Velocity Prediction — direkt auf aktuelle Position
-                pos = tracker.get_position()
+                # BEAST MODE: Velocity Prediction AN — zielt VORAUS
+                pos = tracker.get_predicted_position(lead_frames=2.0)
 
                 if pos:
                     aim_pos = pos
@@ -728,24 +787,24 @@ def main():
                                 cooldown = cfg["cooldown_frames"]
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
-                                # PER-FRAME TRACKING mit move() — STRONG LOCK-ON
+                                # ═══ BEAST MODE TRACKING ═══
                                 dyn_str = strength
                                 if det_h > 120:
-                                    dyn_str = strength * 2.0   # Nahkampf: Volle Power
+                                    dyn_str = strength * 2.5   # Nahkampf: BRUTAL
                                 elif det_h > 80:
-                                    dyn_str = strength * 1.5   # Mittel-Distanz: Stark
+                                    dyn_str = strength * 2.0   # Mittel: Sehr stark
                                 elif det_h > 50:
-                                    dyn_str = strength * 1.2   # Weiter weg: Leicht staerker
+                                    dyn_str = strength * 1.5   # Weiter: Stark
 
-                                # Anti-Oszillation: Wenn Pendeln erkannt → bremsen
+                                # Anti-Oszillation (tolerant im Beast Mode)
                                 osc_damp = tracker.check_oscillation(dx, dy)
 
                                 mx = dx * dyn_str * osc_damp
                                 my = dy * dyn_str * osc_damp
 
-                                # Sanfte Daempfung NUR ganz nah am Ziel (Anti-Pendel)
-                                if dist < 15:
-                                    damp = dist / 15.0  # Linear — nicht zu aggressiv
+                                # Minimal-Daempfung nur direkt am Ziel
+                                if dist < 8:
+                                    damp = dist / 8.0
                                     mx *= damp
                                     my *= damp
 
@@ -755,12 +814,12 @@ def main():
                                 ix = int(round(mx))
                                 iy = int(round(my))
 
-                                # XIM Deadzone Bypass: Mindestens 5px senden
+                                # XIM Deadzone Bypass: Mindestens 8px
                                 if ix != 0 or iy != 0:
-                                    if 0 < abs(ix) < 5:
-                                        ix = 5 if ix > 0 else -5
-                                    if 0 < abs(iy) < 5:
-                                        iy = 5 if iy > 0 else -5
+                                    if 0 < abs(ix) < 8:
+                                        ix = 8 if ix > 0 else -8
+                                    if 0 < abs(iy) < 8:
+                                        iy = 8 if iy > 0 else -8
                                     try:
                                         kmbox_net.move(ix, iy)
                                         cooldown = cfg["cooldown_frames"]
