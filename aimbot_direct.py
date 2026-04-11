@@ -121,11 +121,11 @@ DEFAULT_CONFIG = {
     "kmbox_uuid": "C14AE466",
     "capture_device": 0,
     "model_mode": "fps",
-    "confidence": 0.35,
-    "fov_radius": 220,
-    "strength": 3.5,
-    "deadzone": 1,
-    "max_move": 80,
+    "confidence": 0.38,
+    "fov_radius": 200,
+    "strength": 2.2,
+    "deadzone": 2,
+    "max_move": 55,
     "cooldown_frames": 0,
     "use_roi_crop": True,
     "roi_size": 640,
@@ -462,19 +462,21 @@ class KalmanTracker:
         return (self.state[2], self.state[3])
 
     def check_oscillation(self, dx, dy):
-        """Erkennt Pendeln — BEAST MODE: Sehr tolerant."""
+        """Erkennt Pendeln — reagiert schnell, erholt sich schnell."""
         if (dx * self.prev_dx < 0) or (dy * self.prev_dy < 0):
-            self.osc_count = min(self.osc_count + 1, 10)
+            self.osc_count = min(self.osc_count + 2, 10)  # Schnell erkennen
         else:
-            self.osc_count = max(self.osc_count - 2, 0)
+            self.osc_count = max(self.osc_count - 1, 0)
 
         self.prev_dx = dx
         self.prev_dy = dy
 
-        if self.osc_count >= 8:
-            return 0.2
-        elif self.osc_count >= 5:
-            return 0.5
+        if self.osc_count >= 7:
+            return 0.1   # Hart bremsen
+        elif self.osc_count >= 4:
+            return 0.3
+        elif self.osc_count >= 2:
+            return 0.6
         return 1.0
 
     def mark_lost(self):
@@ -801,17 +803,15 @@ def main():
                 last_conf = tdet.get("confidence", 0.5) if tdet else 0.5
                 tracker.update(tx, ty, bbox_h=det_h)
 
-                # ADAPTIVE LEAD: Schnellere Ziele = mehr Voraussage
+                # ADAPTIVE LEAD: Reduziert — kein Ueberschiessen
                 vx, vy = tracker.get_velocity()
                 speed = math.sqrt(vx * vx + vy * vy)
                 if speed > 8.0:
-                    lead = 3.5    # Sprint/Slide: Weit voraus zielen
+                    lead = 2.0    # Sprint: Moderat voraus
                 elif speed > 4.0:
-                    lead = 2.5    # Laufen: Moderat voraus
-                elif speed > 1.5:
-                    lead = 1.5    # Langsam: Leicht voraus
+                    lead = 1.2    # Laufen: Leicht voraus
                 else:
-                    lead = 0.0    # Stehend: Direkt drauf
+                    lead = 0.0    # Stehend/Langsam: Direkt drauf
 
                 pos = tracker.get_predicted_position(lead_frames=lead)
 
@@ -843,21 +843,17 @@ def main():
                                     titan.set_anti_recoil(recoil_y)
 
                             elif input_mode == "kmbox" and async_kmbox:
-                                # ═══ MAXIMUM OVERDRIVE TRACKING ═══
+                                # ═══ KALMAN TRACKING — BALANCED ═══
                                 dyn_str = strength
 
-                                # Distance-based boost
+                                # Distance-based boost (moderater)
                                 if det_h > 120:
-                                    dyn_str = strength * 2.5
+                                    dyn_str = strength * 1.8
                                 elif det_h > 80:
-                                    dyn_str = strength * 2.0
-                                elif det_h > 50:
-                                    dyn_str = strength * 1.5
+                                    dyn_str = strength * 1.4
 
-                                # CONFIDENCE BOOST: Sichere Detection = volle Power
+                                # Confidence Boost (leicht)
                                 if last_conf > 0.65:
-                                    dyn_str *= 1.3
-                                elif last_conf > 0.50:
                                     dyn_str *= 1.1
 
                                 osc_damp = tracker.check_oscillation(dx, dy)
@@ -865,10 +861,10 @@ def main():
                                 mx = dx * dyn_str * osc_damp
                                 my = dy * dyn_str * osc_damp
 
-                                # Minimal-Daempfung nur direkt am Ziel
-                                if dist < 8:
-                                    mx *= dist / 8.0
-                                    my *= dist / 8.0
+                                # Daempfung nah am Ziel (Anti-Pendel)
+                                if dist < 18:
+                                    mx *= dist / 18.0
+                                    my *= dist / 18.0
 
                                 lim = cfg["max_move"]
                                 mx = max(-lim, min(lim, mx))
@@ -881,20 +877,6 @@ def main():
                                     if 0 < abs(ix) < 8: ix = 8 if ix > 0 else -8
                                     if 0 < abs(iy) < 8: iy = 8 if iy > 0 else -8
                                     async_kmbox.move(ix, iy)
-
-                    # INTER-FRAME INTERPOLATION: Zwischen AI-Frames
-                    # nochmal korrigieren mit Kalman-Praediktion
-                    elif active and tracker.locked and tracker.frames > 3:
-                        vx, vy = tracker.get_velocity()
-                        spd = math.sqrt(vx * vx + vy * vy)
-                        if spd > 2.0 and input_mode == "kmbox" and async_kmbox:
-                            # Halber Korrekturschritt basierend auf Velocity
-                            half_mx = int(round(vx * strength * 0.5))
-                            half_my = int(round(vy * strength * 0.5))
-                            if abs(half_mx) >= 8 or abs(half_my) >= 8:
-                                if 0 < abs(half_mx) < 8: half_mx = 8 if half_mx > 0 else -8
-                                if 0 < abs(half_my) < 8: half_my = 8 if half_my > 0 else -8
-                                async_kmbox.move(half_mx, half_my)
             else:
                 tracker.mark_lost()
 
