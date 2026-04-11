@@ -61,6 +61,44 @@ try:
 except Exception:
     KMBOX_AVAILABLE = False
 
+
+# ============================================================
+# ASYNC KMBOX — Non-Blocking UDP Moves (kein Warten!)
+# ============================================================
+class AsyncKMBox:
+    """Sendet KMBox-Befehle in separatem Thread — Hauptloop wird nie blockiert."""
+
+    def __init__(self):
+        self._queue = deque(maxlen=4)  # Max 4 Befehle im Puffer
+        self._lock = threading.Lock()
+        self._event = threading.Event()
+        self._running = True
+        self._thread = threading.Thread(target=self._worker, daemon=True)
+        self._thread.start()
+
+    def move(self, ix, iy):
+        with self._lock:
+            self._queue.append((ix, iy))
+        self._event.set()
+
+    def _worker(self):
+        while self._running:
+            self._event.wait(timeout=0.05)
+            self._event.clear()
+            while True:
+                with self._lock:
+                    if not self._queue:
+                        break
+                    ix, iy = self._queue.popleft()
+                try:
+                    kmbox_net.move(ix, iy)
+                except Exception:
+                    pass
+
+    def stop(self):
+        self._running = False
+        self._event.set()
+
 try:
     from titan_two import TitanTwo, pixels_to_stick, RECOIL_PROFILES, get_recoil_profile
     from titan_two import MACRO_NONE, MACRO_DROPSHOT, MACRO_SNAKING, MACRO_SLIDE_CANCEL
@@ -83,11 +121,11 @@ DEFAULT_CONFIG = {
     "kmbox_uuid": "C14AE466",
     "capture_device": 0,
     "model_mode": "fps",
-    "confidence": 0.36,
-    "fov_radius": 210,
-    "strength": 3.2,
-    "deadzone": 2,
-    "max_move": 70,
+    "confidence": 0.35,
+    "fov_radius": 220,
+    "strength": 3.5,
+    "deadzone": 1,
+    "max_move": 80,
     "cooldown_frames": 0,
     "use_roi_crop": True,
     "roi_size": 640,
@@ -424,21 +462,19 @@ class KalmanTracker:
         return (self.state[2], self.state[3])
 
     def check_oscillation(self, dx, dy):
-        """Erkennt Pendeln — schnell erkennen, hart bremsen."""
+        """Erkennt Pendeln — BEAST MODE: Sehr tolerant."""
         if (dx * self.prev_dx < 0) or (dy * self.prev_dy < 0):
-            self.osc_count = min(self.osc_count + 2, 10)
+            self.osc_count = min(self.osc_count + 1, 10)
         else:
-            self.osc_count = max(self.osc_count - 1, 0)
+            self.osc_count = max(self.osc_count - 2, 0)
 
         self.prev_dx = dx
         self.prev_dy = dy
 
-        if self.osc_count >= 6:
-            return 0.08  # Fast Null — Pendeln sofort stoppen
-        elif self.osc_count >= 4:
-            return 0.25
-        elif self.osc_count >= 2:
-            return 0.55
+        if self.osc_count >= 8:
+            return 0.2
+        elif self.osc_count >= 5:
+            return 0.5
         return 1.0
 
     def mark_lost(self):
@@ -520,7 +556,7 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
         if cls in IGNORE_CLASSES:
             continue
 
-        # Zielpunkt: Mitte der Box (50%) — stabilster Punkt, weniger Jitter
+        # Zielpunkt: Mitte der Box (50%) — stabilster Punkt, kein Jitter
         tx = (x1 + x2) / 2.0
         ty = (y1 + y2) / 2.0
 
@@ -699,6 +735,8 @@ def main():
     all_dets = []
     inf_ms = 0.0
     show_minimap_debug = False
+    async_kmbox = AsyncKMBox() if KMBOX_AVAILABLE else None
+    last_conf = 0.0  # Confidence des aktuellen Ziels
 
     frame_times = deque(maxlen=60)
 
@@ -758,12 +796,24 @@ def main():
             aim_pos = None
 
             if tx is not None:
-                # Bbox-Hoehe des gewaehlten Ziels an Tracker weitergeben
+                # Bbox-Hoehe + Confidence des gewaehlten Ziels
                 det_h = tdet["bbox"][3] - tdet["bbox"][1] if tdet else 0
+                last_conf = tdet.get("confidence", 0.5) if tdet else 0.5
                 tracker.update(tx, ty, bbox_h=det_h)
 
-                # Kalman Prediction — moderates Lead
-                pos = tracker.get_predicted_position(lead_frames=1.5)
+                # ADAPTIVE LEAD: Schnellere Ziele = mehr Voraussage
+                vx, vy = tracker.get_velocity()
+                speed = math.sqrt(vx * vx + vy * vy)
+                if speed > 8.0:
+                    lead = 3.5    # Sprint/Slide: Weit voraus zielen
+                elif speed > 4.0:
+                    lead = 2.5    # Laufen: Moderat voraus
+                elif speed > 1.5:
+                    lead = 1.5    # Langsam: Leicht voraus
+                else:
+                    lead = 0.0    # Stehend: Direkt drauf
+
+                pos = tracker.get_predicted_position(lead_frames=lead)
 
                 if pos:
                     aim_pos = pos
@@ -773,7 +823,12 @@ def main():
                         dy = pos[1] - scr_cy
                         dist = math.sqrt(dx * dx + dy * dy)
 
-                        if dist > cfg["deadzone"] and cooldown <= 0:
+                        # DYNAMIC FOV: Wenn gelockt → enger fokussieren
+                        effective_fov = cfg["fov_radius"]
+                        if tracker.frames > 5:
+                            effective_fov = cfg["fov_radius"] * 0.7
+
+                        if dist > cfg["deadzone"] and dist < effective_fov:
                             if input_mode == "titan" and titan:
                                 sx, sy = pixels_to_stick(
                                     dx, dy, fw, fh,
@@ -786,28 +841,34 @@ def main():
                                 if cfg["anti_recoil_enabled"] and titan.is_firing():
                                     recoil_y = get_recoil_profile(cfg["recoil_profile"])
                                     titan.set_anti_recoil(recoil_y)
-                                cooldown = cfg["cooldown_frames"]
 
-                            elif input_mode == "kmbox" and KMBOX_AVAILABLE:
-                                # ═══ MAX TRACKING (Center Mass — Stabil) ═══
+                            elif input_mode == "kmbox" and async_kmbox:
+                                # ═══ MAXIMUM OVERDRIVE TRACKING ═══
                                 dyn_str = strength
-                                if det_h > 120:
-                                    dyn_str = strength * 1.8   # Nahkampf: Stark
-                                elif det_h > 80:
-                                    dyn_str = strength * 1.4   # Mittel: Gut
-                                # Fern: Basis-Strength reicht (Kalman predicted)
 
-                                # Anti-Oszillation (reagiert schnell)
+                                # Distance-based boost
+                                if det_h > 120:
+                                    dyn_str = strength * 2.5
+                                elif det_h > 80:
+                                    dyn_str = strength * 2.0
+                                elif det_h > 50:
+                                    dyn_str = strength * 1.5
+
+                                # CONFIDENCE BOOST: Sichere Detection = volle Power
+                                if last_conf > 0.65:
+                                    dyn_str *= 1.3
+                                elif last_conf > 0.50:
+                                    dyn_str *= 1.1
+
                                 osc_damp = tracker.check_oscillation(dx, dy)
 
                                 mx = dx * dyn_str * osc_damp
                                 my = dy * dyn_str * osc_damp
 
-                                # Glatte Bremszone — verhindert Ueberschiessen
-                                if dist < 20:
-                                    damp = dist / 20.0
-                                    mx *= damp
-                                    my *= damp
+                                # Minimal-Daempfung nur direkt am Ziel
+                                if dist < 8:
+                                    mx *= dist / 8.0
+                                    my *= dist / 8.0
 
                                 lim = cfg["max_move"]
                                 mx = max(-lim, min(lim, mx))
@@ -815,22 +876,27 @@ def main():
                                 ix = int(round(mx))
                                 iy = int(round(my))
 
-                                # XIM Deadzone Bypass: Mindestens 6px
+                                # XIM Deadzone Bypass
                                 if ix != 0 or iy != 0:
-                                    if 0 < abs(ix) < 6:
-                                        ix = 6 if ix > 0 else -6
-                                    if 0 < abs(iy) < 6:
-                                        iy = 6 if iy > 0 else -6
-                                    try:
-                                        kmbox_net.move(ix, iy)
-                                        cooldown = cfg["cooldown_frames"]
-                                    except Exception:
-                                        pass
+                                    if 0 < abs(ix) < 8: ix = 8 if ix > 0 else -8
+                                    if 0 < abs(iy) < 8: iy = 8 if iy > 0 else -8
+                                    async_kmbox.move(ix, iy)
+
+                    # INTER-FRAME INTERPOLATION: Zwischen AI-Frames
+                    # nochmal korrigieren mit Kalman-Praediktion
+                    elif active and tracker.locked and tracker.frames > 3:
+                        vx, vy = tracker.get_velocity()
+                        spd = math.sqrt(vx * vx + vy * vy)
+                        if spd > 2.0 and input_mode == "kmbox" and async_kmbox:
+                            # Halber Korrekturschritt basierend auf Velocity
+                            half_mx = int(round(vx * strength * 0.5))
+                            half_my = int(round(vy * strength * 0.5))
+                            if abs(half_mx) >= 8 or abs(half_my) >= 8:
+                                if 0 < abs(half_mx) < 8: half_mx = 8 if half_mx > 0 else -8
+                                if 0 < abs(half_my) < 8: half_my = 8 if half_my > 0 else -8
+                                async_kmbox.move(half_mx, half_my)
             else:
                 tracker.mark_lost()
-
-            if cooldown > 0:
-                cooldown -= 1
 
             # FPS berechnen
             now = time.monotonic()
