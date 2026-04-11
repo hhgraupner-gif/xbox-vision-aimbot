@@ -83,11 +83,11 @@ DEFAULT_CONFIG = {
     "kmbox_uuid": "C14AE466",
     "capture_device": 0,
     "model_mode": "fps",
-    "confidence": 0.35,
-    "fov_radius": 220,
-    "strength": 3.5,
-    "deadzone": 1,
-    "max_move": 80,
+    "confidence": 0.36,
+    "fov_radius": 210,
+    "strength": 2.8,
+    "deadzone": 2,
+    "max_move": 65,
     "cooldown_frames": 0,
     "use_roi_crop": True,
     "roi_size": 640,
@@ -424,19 +424,21 @@ class KalmanTracker:
         return (self.state[2], self.state[3])
 
     def check_oscillation(self, dx, dy):
-        """Erkennt Pendeln — BEAST MODE: Sehr tolerant."""
+        """Erkennt Pendeln — schnell erkennen, hart bremsen."""
         if (dx * self.prev_dx < 0) or (dy * self.prev_dy < 0):
-            self.osc_count = min(self.osc_count + 1, 10)
+            self.osc_count = min(self.osc_count + 2, 10)
         else:
-            self.osc_count = max(self.osc_count - 2, 0)
+            self.osc_count = max(self.osc_count - 1, 0)
 
         self.prev_dx = dx
         self.prev_dy = dy
 
-        if self.osc_count >= 8:
-            return 0.2
-        elif self.osc_count >= 5:
-            return 0.5
+        if self.osc_count >= 6:
+            return 0.08  # Fast Null — Pendeln sofort stoppen
+        elif self.osc_count >= 4:
+            return 0.25
+        elif self.osc_count >= 2:
+            return 0.55
         return 1.0
 
     def mark_lost(self):
@@ -760,8 +762,8 @@ def main():
                 det_h = tdet["bbox"][3] - tdet["bbox"][1] if tdet else 0
                 tracker.update(tx, ty, bbox_h=det_h)
 
-                # BEAST MODE: Velocity Prediction AN — zielt VORAUS
-                pos = tracker.get_predicted_position(lead_frames=2.0)
+                # Kalman Prediction — moderates Lead
+                pos = tracker.get_predicted_position(lead_frames=1.5)
 
                 if pos:
                     aim_pos = pos
@@ -787,24 +789,23 @@ def main():
                                 cooldown = cfg["cooldown_frames"]
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
-                                # ═══ BEAST MODE TRACKING ═══
+                                # ═══ MAX TRACKING (Anti-Pendel Safe) ═══
                                 dyn_str = strength
                                 if det_h > 120:
-                                    dyn_str = strength * 2.5   # Nahkampf: BRUTAL
+                                    dyn_str = strength * 1.6   # Nahkampf: Stark aber safe
                                 elif det_h > 80:
-                                    dyn_str = strength * 2.0   # Mittel: Sehr stark
-                                elif det_h > 50:
-                                    dyn_str = strength * 1.5   # Weiter: Stark
+                                    dyn_str = strength * 1.3   # Mittel: Moderat
+                                # Fern: Basis-Strength reicht (Kalman predicted)
 
-                                # Anti-Oszillation (tolerant im Beast Mode)
+                                # Anti-Oszillation (reagiert schnell)
                                 osc_damp = tracker.check_oscillation(dx, dy)
 
                                 mx = dx * dyn_str * osc_damp
                                 my = dy * dyn_str * osc_damp
 
-                                # Minimal-Daempfung nur direkt am Ziel
-                                if dist < 8:
-                                    damp = dist / 8.0
+                                # Glatte Bremszone — verhindert Ueberschiessen
+                                if dist < 20:
+                                    damp = dist / 20.0
                                     mx *= damp
                                     my *= damp
 
@@ -814,12 +815,12 @@ def main():
                                 ix = int(round(mx))
                                 iy = int(round(my))
 
-                                # XIM Deadzone Bypass: Mindestens 8px
+                                # XIM Deadzone Bypass: Mindestens 6px
                                 if ix != 0 or iy != 0:
-                                    if 0 < abs(ix) < 8:
-                                        ix = 8 if ix > 0 else -8
-                                    if 0 < abs(iy) < 8:
-                                        iy = 8 if iy > 0 else -8
+                                    if 0 < abs(ix) < 6:
+                                        ix = 6 if ix > 0 else -6
+                                    if 0 < abs(iy) < 6:
+                                        iy = 6 if iy > 0 else -6
                                     try:
                                         kmbox_net.move(ix, iy)
                                         cooldown = cfg["cooldown_frames"]
