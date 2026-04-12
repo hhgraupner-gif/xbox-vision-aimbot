@@ -85,9 +85,9 @@ DEFAULT_CONFIG = {
     "model_mode": "fps",
     "confidence": 0.40,
     "fov_radius": 180,
-    "strength": 2.0,
+    "strength": 2.5,
     "deadzone": 2,
-    "max_move": 55,
+    "max_move": 60,
     "cooldown_frames": 1,
     "use_roi_crop": True,
     "roi_size": 640,
@@ -731,11 +731,11 @@ def main():
                                 # PER-FRAME TRACKING mit move() — STRONG LOCK-ON
                                 dyn_str = strength
                                 if det_h > 120:
-                                    dyn_str = strength * 2.0   # Nahkampf: Volle Power
+                                    dyn_str = strength * 2.2   # Nahkampf: Staerker
                                 elif det_h > 80:
-                                    dyn_str = strength * 1.5   # Mittel-Distanz: Stark
+                                    dyn_str = strength * 1.6   # Mittel: Gut
                                 elif det_h > 50:
-                                    dyn_str = strength * 1.2   # Weiter weg: Leicht staerker
+                                    dyn_str = strength * 1.3   # Weiter: Leicht
 
                                 # Anti-Oszillation: Wenn Pendeln erkannt → bremsen
                                 osc_damp = tracker.check_oscillation(dx, dy)
@@ -757,10 +757,10 @@ def main():
 
                                 # XIM Deadzone Bypass: Mindestens 5px senden
                                 if ix != 0 or iy != 0:
-                                    if 0 < abs(ix) < 5:
-                                        ix = 5 if ix > 0 else -5
-                                    if 0 < abs(iy) < 5:
-                                        iy = 5 if iy > 0 else -5
+                                    if 0 < abs(ix) < 6:
+                                        ix = 6 if ix > 0 else -6
+                                    if 0 < abs(iy) < 6:
+                                        iy = 6 if iy > 0 else -6
                                     try:
                                         kmbox_net.move(ix, iy)
                                         cooldown = cfg["cooldown_frames"]
