@@ -85,9 +85,9 @@ DEFAULT_CONFIG = {
     "model_mode": "fps",
     "confidence": 0.32,
     "fov_radius": 280,
-    "strength": 2.5,
+    "strength": 3.2,
     "deadzone": 3,
-    "max_move": 90,
+    "max_move": 95,
     "cooldown_frames": 0,
     "use_roi_crop": True,
     "roi_size": 640,
@@ -730,11 +730,11 @@ def main():
                                 # AGGRESSIVE TRACKING mit move_auto
                                 dyn_str = strength
                                 if det_h > 120:
-                                    dyn_str = min(strength * 2.2, 6.0)  # Close: stark
+                                    dyn_str = min(strength * 2.5, 8.0)
                                 elif det_h > 80:
-                                    dyn_str = min(strength * 1.8, 5.0)  # Mid: gut
+                                    dyn_str = min(strength * 2.0, 6.5)
                                 elif det_h > 50:
-                                    dyn_str = min(strength * 1.4, 4.0)  # Range: moderat
+                                    dyn_str = min(strength * 1.6, 5.0)
 
                                 mx = dx * dyn_str
                                 my = dy * dyn_str
