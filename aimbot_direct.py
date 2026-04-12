@@ -85,7 +85,7 @@ DEFAULT_CONFIG = {
     "model_mode": "fps",
     "confidence": 0.32,
     "fov_radius": 280,
-    "strength": 3.6,
+    "strength": 4.2,
     "deadzone": 3,
     "max_move": 100,
     "cooldown_frames": 0,
@@ -757,7 +757,7 @@ def main():
                                     if 0 < abs(iy) < 6:
                                         iy = 6 if iy > 0 else -6
                                     try:
-                                        kmbox_net.move_auto(ix, iy, 30)
+                                        kmbox_net.move_auto(ix, iy, 22)
                                         cooldown = cfg["cooldown_frames"]
                                     except Exception:
                                         try:
