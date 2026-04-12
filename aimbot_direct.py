@@ -85,7 +85,7 @@ DEFAULT_CONFIG = {
     "model_mode": "fps",
     "confidence": 0.32,
     "fov_radius": 280,
-    "strength": 1.8,
+    "strength": 2.5,
     "deadzone": 3,
     "max_move": 90,
     "cooldown_frames": 0,
@@ -730,22 +730,34 @@ def main():
                                 # AGGRESSIVE TRACKING mit move_auto
                                 dyn_str = strength
                                 if det_h > 120:
-                                    dyn_str = min(strength * 2.5, 5.0)  # Close: alles
+                                    dyn_str = min(strength * 2.2, 6.0)  # Close: stark
                                 elif det_h > 80:
-                                    dyn_str = min(strength * 2.0, 4.0)  # Mid: brutal
+                                    dyn_str = min(strength * 1.8, 5.0)  # Mid: gut
                                 elif det_h > 50:
-                                    dyn_str = min(strength * 1.5, 3.0)  # Range: stark
+                                    dyn_str = min(strength * 1.4, 4.0)  # Range: moderat
 
                                 mx = dx * dyn_str
                                 my = dy * dyn_str
+
+                                # Anti-Pendel: Daempfung nah am Ziel
+                                if dist < 18:
+                                    mx *= dist / 18.0
+                                    my *= dist / 18.0
+
                                 lim = cfg["max_move"]
                                 mx = max(-lim, min(lim, mx))
                                 my = max(-lim, min(lim, my))
                                 ix = int(round(mx))
                                 iy = int(round(my))
+
+                                # XIM Bypass: min 6px
                                 if ix != 0 or iy != 0:
+                                    if 0 < abs(ix) < 6:
+                                        ix = 6 if ix > 0 else -6
+                                    if 0 < abs(iy) < 6:
+                                        iy = 6 if iy > 0 else -6
                                     try:
-                                        kmbox_net.move_auto(ix, iy, 80)
+                                        kmbox_net.move_auto(ix, iy, 45)
                                         cooldown = cfg["cooldown_frames"]
                                     except Exception:
                                         try:
