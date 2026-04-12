@@ -83,8 +83,8 @@ DEFAULT_CONFIG = {
     "kmbox_uuid": "C14AE466",
     "capture_device": 0,
     "model_mode": "fps",
-    "confidence": 0.40,
-    "fov_radius": 180,
+    "confidence": 0.32,
+    "fov_radius": 280,
     "strength": 1.8,
     "deadzone": 3,
     "max_move": 90,
@@ -97,13 +97,13 @@ DEFAULT_CONFIG = {
     "dead_body_ratio": 1.0,
     "sky_filter_ratio": 0.10,
     "ground_filter_ratio": 0.88,
-    "min_box_height": 45,
+    "min_box_height": 30,
     "minimap_enabled": True,
     "minimap_x": 40,
     "minimap_y": 140,
     "minimap_size": 200,
     "teammate_protection": True,
-    "teammate_tolerance": 45,
+    "teammate_tolerance": 35,
     "game_fov": 100,
     "input_mode": "auto",
     "titan_speed_x": 55.0,
@@ -421,25 +421,23 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
     ground = cfg["ground_filter_ratio"]
     tm_protect = cfg["teammate_protection"] and frame is not None
 
-    # CLOSE-FIGHT STICKY: Abgestuft nach Ziel-Groesse
-    # Grosse Box = naher Gegner = EXTREMER Kleber
-    # Radius MUSS gross genug sein um Slide/Jump/Strafe abzufangen!
+    # CLOSE-FIGHT STICKY: Weniger Kleber = schnellerer Zielwechsel
     if sticky_h > 120:
-        sticky_radius = 450      # Halber Bildschirm — NICHTS entkommt
-        sticky_bonus = 0.02      # Quasi unmoeglicher Zielwechsel
-        min_lock = 25            # ~420ms bei 60FPS
-    elif sticky_h > 80:
         sticky_radius = 300
-        sticky_bonus = 0.06
-        min_lock = 16            # ~267ms
-    elif sticky_h > 50:
-        sticky_radius = 180
+        sticky_bonus = 0.10
+        min_lock = 12
+    elif sticky_h > 80:
+        sticky_radius = 200
         sticky_bonus = 0.15
-        min_lock = 10            # ~167ms
+        min_lock = 8
+    elif sticky_h > 50:
+        sticky_radius = 120
+        sticky_bonus = 0.25
+        min_lock = 5
     else:
-        sticky_radius = 100      # Auch auf Range deutlich stickier
-        sticky_bonus = 0.30
-        min_lock = 5             # ~83ms
+        sticky_radius = 70
+        sticky_bonus = 0.40
+        min_lock = 3
 
     best = None
     best_score = float('inf')
