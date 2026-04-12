@@ -85,10 +85,10 @@ DEFAULT_CONFIG = {
     "model_mode": "fps",
     "confidence": 0.40,
     "fov_radius": 180,
-    "strength": 2.9,
-    "deadzone": 2,
-    "max_move": 65,
-    "cooldown_frames": 1,
+    "strength": 1.8,
+    "deadzone": 3,
+    "max_move": 90,
+    "cooldown_frames": 0,
     "use_roi_crop": True,
     "roi_size": 640,
     "target_fps": 60,
@@ -367,21 +367,21 @@ class SmoothTracker:
 
     def check_oscillation(self, dx, dy):
         """Erkennt ob Aim hin-und-her pendelt. Returns damping factor 0.0-1.0."""
+        # Richtungswechsel erkennen (Vorzeichen aendert sich)
         if (dx * self.prev_dx < 0) or (dy * self.prev_dy < 0):
-            self.osc_count = min(self.osc_count + 1, 8)
+            self.osc_count = min(self.osc_count + 1, 6)
         else:
             self.osc_count = max(self.osc_count - 1, 0)
 
         self.prev_dx = dx
         self.prev_dy = dy
 
-        if self.osc_count >= 6:
-            return 0.1   # Fast stoppen bei starkem Pendeln
-        elif self.osc_count >= 4:
-            return 0.3
+        # Je mehr Oszillation, desto staerker daempfen
+        if self.osc_count >= 4:
+            return 0.2   # Starkes Daempfen
         elif self.osc_count >= 2:
-            return 0.6
-        return 1.0
+            return 0.5   # Mittleres Daempfen
+        return 1.0       # Kein Daempfen
 
     def mark_lost(self):
         self.lost += 1
@@ -461,7 +461,7 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
         if cls in IGNORE_CLASSES:
             continue
 
-        # Zielpunkt: Mitte X, OBERKOERPER Y (35% von oben)
+        # Zielpunkt: Mitte X, OBERKOERPER Y (35% von oben — stabiler als Box-Mitte)
         tx = (x1 + x2) / 2.0
         ty = y1 + (y2 - y1) * 0.35
 
@@ -701,8 +701,9 @@ def main():
                 det_h = tdet["bbox"][3] - tdet["bbox"][1] if tdet else 0
                 tracker.update(tx, ty, bbox_h=det_h)
 
-                # Kein Velocity Prediction — direkt auf aktuelle Position
-                pos = tracker.get_position()
+                # Velocity Prediction: Ziele voraus wo der Gegner HINLAEUFT
+                pred = tracker.get_predicted_position(lead_frames=2.5)
+                pos = pred if pred else tracker.get_position()
 
                 if pos:
                     aim_pos = pos
@@ -728,44 +729,32 @@ def main():
                                 cooldown = cfg["cooldown_frames"]
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
-                                # PER-FRAME TRACKING mit move() — STRONG LOCK-ON
+                                # AGGRESSIVE TRACKING mit move_auto
                                 dyn_str = strength
                                 if det_h > 120:
-                                    dyn_str = strength * 2.2   # Nahkampf: Staerker
+                                    dyn_str = min(strength * 2.5, 5.0)  # Close: alles
                                 elif det_h > 80:
-                                    dyn_str = strength * 1.6   # Mittel: Gut
+                                    dyn_str = min(strength * 2.0, 4.0)  # Mid: brutal
                                 elif det_h > 50:
-                                    dyn_str = strength * 1.3   # Weiter: Leicht
+                                    dyn_str = min(strength * 1.5, 3.0)  # Range: stark
 
-                                # Anti-Oszillation: Wenn Pendeln erkannt → bremsen
-                                osc_damp = tracker.check_oscillation(dx, dy)
-
-                                mx = dx * dyn_str * osc_damp
-                                my = dy * dyn_str * osc_damp
-
-                                # Sanfte Daempfung NUR ganz nah am Ziel (Anti-Pendel)
-                                if dist < 15:
-                                    damp = dist / 15.0  # Linear — nicht zu aggressiv
-                                    mx *= damp
-                                    my *= damp
-
+                                mx = dx * dyn_str
+                                my = dy * dyn_str
                                 lim = cfg["max_move"]
                                 mx = max(-lim, min(lim, mx))
                                 my = max(-lim, min(lim, my))
                                 ix = int(round(mx))
                                 iy = int(round(my))
-
-                                # XIM Deadzone Bypass: Mindestens 5px senden
                                 if ix != 0 or iy != 0:
-                                    if 0 < abs(ix) < 6:
-                                        ix = 6 if ix > 0 else -6
-                                    if 0 < abs(iy) < 6:
-                                        iy = 6 if iy > 0 else -6
                                     try:
-                                        kmbox_net.move(ix, iy)
+                                        kmbox_net.move_auto(ix, iy, 80)
                                         cooldown = cfg["cooldown_frames"]
                                     except Exception:
-                                        pass
+                                        try:
+                                            kmbox_net.move(ix, iy)
+                                            cooldown = cfg["cooldown_frames"]
+                                        except Exception:
+                                            pass
             else:
                 tracker.mark_lost()
 
