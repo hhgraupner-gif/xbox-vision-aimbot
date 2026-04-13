@@ -1,7 +1,0 @@
-// AIMBOT GPC v2 — Maus zu Stick DIREKT
-// KMBox → Titan Two → Xbox
-
-main {
-    set_val(STICK_2_X, get_val(MOUSE_X));
-    set_val(STICK_2_Y, get_val(MOUSE_Y));
-}
