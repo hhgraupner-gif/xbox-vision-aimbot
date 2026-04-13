@@ -1215,6 +1215,7 @@ async def download_file(filename: str):
         "AUDIO_SETUP.md": Path("/app/AUDIO_SETUP.md"),
         "warzone_audio_setup.bat": Path("/app/warzone_audio_setup.bat"),
         "warzone_audio_start.bat": Path("/app/warzone_audio_start.bat"),
+        "titan_bridge.py": Path("/app/titan_bridge.py"),
     }
     if filename not in allowed:
         raise HTTPException(status_code=404, detail="Datei nicht gefunden")

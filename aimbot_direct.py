@@ -62,14 +62,49 @@ except Exception:
     KMBOX_AVAILABLE = False
 
 try:
-    from titan_two import TitanTwo, pixels_to_stick, RECOIL_PROFILES, get_recoil_profile
+    from titan_two import pixels_to_stick, RECOIL_PROFILES, get_recoil_profile
     from titan_two import MACRO_NONE, MACRO_DROPSHOT, MACRO_SNAKING, MACRO_SLIDE_CANCEL
     from titan_two import MACRO_BUNNY_HOP, MACRO_AUTO_FIRE, MACRO_YY_SWAP
     TITAN_MODULE_AVAILABLE = True
 except Exception:
     TITAN_MODULE_AVAILABLE = False
 
-# Titan Two wird in main() initialisiert (braucht gtuner Modul)
+# ============================================================
+# TITAN TWO UDP SENDER
+# ============================================================
+import socket as _sock
+import struct as _struct
+
+class TitanUDP:
+    """Sendet Stick-Werte per UDP an die Titan Bridge in Gtuner IV."""
+
+    def __init__(self, port=5555):
+        self._sock = _sock.socket(_sock.AF_INET, _sock.SOCK_DGRAM)
+        self._addr = ("127.0.0.1", port)
+        self._connected = True
+        print(f"  Titan UDP: Sende an localhost:{port}")
+
+    @property
+    def connected(self):
+        return self._connected
+
+    def set_aim(self, stick_rx, stick_ry):
+        """Sendet Stick-Werte (-100 bis +100) an die Bridge."""
+        data = _struct.pack("<ffI", float(stick_rx), float(stick_ry), 0)
+        try:
+            self._sock.sendto(data, self._addr)
+        except Exception:
+            pass
+
+    def set_macro(self, macro_cmd):
+        data = _struct.pack("<ffI", 0.0, 0.0, int(macro_cmd))
+        try:
+            self._sock.sendto(data, self._addr)
+        except Exception:
+            pass
+
+    def reset(self):
+        self.set_aim(0.0, 0.0)
 
 
 # ============================================================
@@ -566,12 +601,22 @@ def main():
         except Exception as e:
             print(f"  KMBox: {e}")
 
-    # Titan Two
+    # Titan Two (UDP Bridge)
     titan = None
     if TITAN_MODULE_AVAILABLE:
-        titan = TitanTwo()
-        if not titan.connected:
-            titan = None
+        if "--input" in sys.argv and "titan" in sys.argv:
+            titan = TitanUDP(port=5555)
+        else:
+            # Versuche alte gtuner-Methode
+            try:
+                from titan_two import TitanTwo
+                titan = TitanTwo()
+                if not titan.connected:
+                    titan = None
+            except Exception:
+                pass
+    if titan is None and ("--input" in sys.argv and "titan" in sys.argv):
+        titan = TitanUDP(port=5555)
 
     # Input Modus bestimmen
     input_mode = cfg["input_mode"]
@@ -713,18 +758,34 @@ def main():
 
                         if dist > cfg["deadzone"] and cooldown <= 0:
                             if input_mode == "titan" and titan:
+                                # ═══ TITAN TWO — DIREKTE STICK-KONTROLLE ═══
+                                # Keine Deadzones, keine XIM-Filterung, 1:1 Analog!
                                 sx, sy = pixels_to_stick(
                                     dx, dy, fw, fh,
                                     sensitivity=cfg["titan_sensitivity"],
                                     speed_x=cfg["titan_speed_x"],
                                     speed_y=cfg["titan_speed_y"],
                                 )
+
+                                # Distance-based boost
+                                if det_h > 120:
+                                    sx *= 1.8
+                                    sy *= 1.8
+                                elif det_h > 80:
+                                    sx *= 1.4
+                                    sy *= 1.4
+
+                                # Anti-Pendel
                                 osc_damp = tracker.check_oscillation(dx, dy)
-                                titan.set_aim(sx * osc_damp, sy * osc_damp)
-                                if cfg["anti_recoil_enabled"] and titan.is_firing():
-                                    recoil_y = get_recoil_profile(cfg["recoil_profile"])
-                                    titan.set_anti_recoil(recoil_y)
-                                cooldown = cfg["cooldown_frames"]
+                                sx *= osc_damp
+                                sy *= osc_damp
+
+                                # Daempfung nah am Ziel
+                                if dist < 12:
+                                    sx *= dist / 12.0
+                                    sy *= dist / 12.0
+
+                                titan.set_aim(sx, sy)
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
                                 # AGGRESSIVE TRACKING mit move_auto
