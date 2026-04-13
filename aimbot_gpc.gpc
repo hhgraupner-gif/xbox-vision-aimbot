@@ -1,29 +1,7 @@
-// ================================================================
-// AIMBOT GPC v2 — Maus→Stick OHNE Deadzones
-// ================================================================
-// KMBox sendet Maus-Pixel → Titan Two liest MOUSE_X/Y
-// → stickize() wandelt in Analog-Stick (-100 bis +100)
-// → KEINE Deadzones, KEINE XIM-Filterung, volle Kontrolle!
-//
-// SETUP:
-// 1. KMBox USB-Ausgang → Titan Two USB-A Port (Maus-Eingang)
-// 2. Xbox Controller → Titan Two A1 Port (Auth)
-// 3. Titan Two CONSOLE → Xbox
-// 4. Dieses Script auf Slot 1 laden (F7 → F5)
-// ================================================================
-
-define SENSITIVITY = 100;  // 1-200 (100 = normal, 200 = doppelt so schnell)
-define DEADZONE_OFF = 0;   // 0 = KEINE Deadzone (das ist der Vorteil!)
+// AIMBOT GPC v2 — Maus zu Stick OHNE Deadzones
+// KMBox → Titan Two → Xbox
+// KEINE XIM Filterung, volle Kontrolle
 
 main {
-    // ========================================
-    // MAUS → RECHTER STICK (Aim)
-    // ========================================
-    
-    // stickize wandelt MOUSE_X/Y direkt in Stick-Werte
-    // radius=100 = voller Stick-Ausschlag bei maximaler Mausbewegung
-    stickize(STICK_2_X, STICK_2_Y, SENSITIVITY);
-    
-    // KEINE Deadzone — jede noch so kleine Bewegung kommt durch!
-    // (Das war das Hauptproblem mit dem XIM)
+    stickize(STICK_2_X, STICK_2_Y, 100);
 }
