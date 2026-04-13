@@ -79,7 +79,7 @@ DEFAULT_CFG = {
     "step_texture_hz": 2000, "step_texture_db": 6.0, "step_texture_q": 1.5,
     #
     # Band 3: Step Direction (3170Hz) — Richtungs-Cues (HRTF)
-    "step_direction_hz": 3170, "step_direction_db": 6.0, "step_direction_q": 3.5,
+    "step_direction_hz": 3170, "step_direction_db": 8.0, "step_direction_q": 5.0,
     #
     # Band 4: Step Clarity (4500Hz) — Schritt-Details
     "step_clarity_hz": 4500, "step_clarity_db": 5.0, "step_clarity_q": 1.8,
@@ -102,7 +102,7 @@ DEFAULT_CFG = {
     "gate_db": -55.0,
     #
     # === STEP 5: Spatial & Output ===
-    "spatial_width": 1.5,
+    "spatial_width": 2.0,
     "output_gain_db": 3.0,
     "show_radar": True,
 }
