@@ -85,7 +85,7 @@ DEFAULT_CONFIG = {
     "model_mode": "fps",
     "confidence": 0.32,
     "fov_radius": 280,
-    "strength": 4.2,
+    "strength": 4.8,
     "deadzone": 3,
     "max_move": 100,
     "cooldown_frames": 0,
@@ -421,23 +421,23 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
     ground = cfg["ground_filter_ratio"]
     tm_protect = cfg["teammate_protection"] and frame is not None
 
-    # CLOSE-FIGHT STICKY: Weniger Kleber = schnellerer Zielwechsel
+    # CLOSE-FIGHT STICKY: Maximaler Kleber
     if sticky_h > 120:
-        sticky_radius = 300
-        sticky_bonus = 0.10
-        min_lock = 12
+        sticky_radius = 500
+        sticky_bonus = 0.02
+        min_lock = 30
     elif sticky_h > 80:
-        sticky_radius = 200
-        sticky_bonus = 0.15
-        min_lock = 8
+        sticky_radius = 350
+        sticky_bonus = 0.05
+        min_lock = 18
     elif sticky_h > 50:
-        sticky_radius = 120
-        sticky_bonus = 0.25
-        min_lock = 5
+        sticky_radius = 200
+        sticky_bonus = 0.10
+        min_lock = 10
     else:
-        sticky_radius = 70
-        sticky_bonus = 0.40
-        min_lock = 3
+        sticky_radius = 120
+        sticky_bonus = 0.20
+        min_lock = 5
 
     best = None
     best_score = float('inf')
