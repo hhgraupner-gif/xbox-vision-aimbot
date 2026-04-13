@@ -73,16 +73,16 @@ DEFAULT_CFG = {
     # Chirurgische Boosts an bewiesenen Step-Frequenzen
     #
     # Band 1: Step Body (250Hz) — Gewicht/Aufprall auf Boden
-    "step_body_hz": 250, "step_body_db": 5.0, "step_body_q": 2.2,
+    "step_body_hz": 250, "step_body_db": 7.0, "step_body_q": 2.0,
     #
     # Band 2: Step Texture (2000Hz) — Material-Sound, Reload
-    "step_texture_hz": 2000, "step_texture_db": 4.0, "step_texture_q": 1.5,
+    "step_texture_hz": 2000, "step_texture_db": 6.0, "step_texture_q": 1.5,
     #
     # Band 3: Step Direction (3170Hz) — Richtungs-Cues (HRTF)
-    "step_direction_hz": 3170, "step_direction_db": 4.0, "step_direction_q": 4.0,
+    "step_direction_hz": 3170, "step_direction_db": 6.0, "step_direction_q": 3.5,
     #
     # Band 4: Step Clarity (4500Hz) — Schritt-Details
-    "step_clarity_hz": 4500, "step_clarity_db": 3.0, "step_clarity_q": 2.0,
+    "step_clarity_hz": 4500, "step_clarity_db": 5.0, "step_clarity_q": 1.8,
     #
     # === STEP 3: Unerwuenschtes entfernen ===
     # Highpass: Sub-Bass weg (maskiert Steps)
@@ -90,14 +90,14 @@ DEFAULT_CFG = {
     # Lowpass: Nur das was noetig ist
     "lowpass_hz": 10000,
     # Mud Cut: Ambient raus
-    "mud_hz": 500, "mud_db": -3.0, "mud_q": 1.0,
+    "mud_hz": 500, "mud_db": -5.0, "mud_q": 1.0,
     # Gunfire Reduction
-    "gunfire_hz": 5500, "gunfire_db": -5.0, "gunfire_q": 2.0,
+    "gunfire_hz": 5500, "gunfire_db": -7.0, "gunfire_q": 2.0,
     #
     # === STEP 4: Dynamics ===
     # Moderate Compression — leise Steps hoeher, laute Steps nicht unangenehm
-    "comp_ratio": 3.5, "comp_thresh_db": -22.0,
-    "comp_attack": 0.003, "comp_release": 0.05,
+    "comp_ratio": 5.0, "comp_thresh_db": -28.0,
+    "comp_attack": 0.002, "comp_release": 0.04,
     # Noise Gate
     "gate_db": -55.0,
     #
