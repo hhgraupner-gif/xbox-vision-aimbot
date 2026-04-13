@@ -1,7 +1,7 @@
-// AIMBOT GPC v2 — Maus zu Stick OHNE Deadzones
+// AIMBOT GPC v2 — Maus zu Stick DIREKT
 // KMBox → Titan Two → Xbox
-// KEINE XIM Filterung, volle Kontrolle
 
 main {
-    stickize(STICK_2_X, STICK_2_Y, 100);
+    set_val(STICK_2_X, get_val(MOUSE_X));
+    set_val(STICK_2_Y, get_val(MOUSE_Y));
 }
