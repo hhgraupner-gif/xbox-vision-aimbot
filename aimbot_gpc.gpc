@@ -1,187 +1,29 @@
-// ============================================================
-// AIMBOT GPC SCRIPT — Titan Two
-// ============================================================
-// Empfaengt Aim-Daten von Python (via GCV) und fuehrt Macros aus.
+// ================================================================
+// AIMBOT GPC v2 — Maus→Stick OHNE Deadzones
+// ================================================================
+// KMBox sendet Maus-Pixel → Titan Two liest MOUSE_X/Y
+// → stickize() wandelt in Analog-Stick (-100 bis +100)
+// → KEINE Deadzones, KEINE XIM-Filterung, volle Kontrolle!
 //
-// GCV Data Format (von Python):
-//   Bytes 0-3:   Right Stick X (fix32, -100 bis +100)
-//   Bytes 4-7:   Right Stick Y (fix32, -100 bis +100, inkl. Anti-Recoil)
-//   Bytes 8-11:  Macro Command (int32)
-//   Bytes 12-15: Reserved
-//
-// Macro Commands:
-//   0 = Keine
-//   1 = Dropshot
-//   2 = Snaking
-//   3 = Slide-Cancel
-//   4 = Bunny Hop
-//   5 = Auto-Fire (Pistole Dauerfeuer)
-//   6 = YY Swap
-// ============================================================
+// SETUP:
+// 1. KMBox USB-Ausgang → Titan Two USB-A Port (Maus-Eingang)
+// 2. Xbox Controller → Titan Two A1 Port (Auth)
+// 3. Titan Two CONSOLE → Xbox
+// 4. Dieses Script auf Slot 1 laden (F7 → F5)
+// ================================================================
 
-#pragma METAINFO("Aimbot CV", 1, 0, "AimbotVision")
+define SENSITIVITY = 100;  // 1-200 (100 = normal, 200 = doppelt so schnell)
+define DEADZONE_OFF = 0;   // 0 = KEINE Deadzone (das ist der Vorteil!)
 
-// GCV Daten
-fix32 aimStickX;
-fix32 aimStickY;
-int32 macroCmd;
-
-// Einstellungen
-fix32 playerLimiterX = 0.65;   // Reduziert Spieler-Input wenn AI aktiv
-fix32 playerLimiterY = 0.55;
-fix32 antiRecoilBase = 0.0;    // Basis Anti-Recoil (wird von Python ueberschrieben)
-bool  aimActive = TRUE;
-
-// Macro States
-bool snakingActive = FALSE;
-bool autoFireActive = FALSE;
-
-// ============================================================
-// HAUPTSCHLEIFE
-// ============================================================
 main {
-    // GCV Daten von Python lesen
-    if (gcv_ready()) {
-        gcv_read(0, &aimStickX);
-        gcv_read(4, &aimStickY);
-        gcv_read(8, &macroCmd);
-    }
-
-    // --- AIM ASSIST (nur bei ADS / LT) ---
-    if (get_val(BUTTON_8) && aimActive) {
-        fix32 tempX = (fix32)get_actual(STICK_1_X);
-        fix32 tempY = (fix32)get_actual(STICK_1_Y);
-
-        // Spieler-Input reduzieren wenn AI aktiv
-        if (aimStickX != 0.0 || aimStickY != 0.0) {
-            tempX = tempX * playerLimiterX;
-            tempY = tempY * playerLimiterY;
-        }
-
-        // AI Aim-Werte addieren
-        tempX += aimStickX;
-        tempY += aimStickY;
-
-        // Clampen
-        if (tempX < -100.00) tempX = -100.00;
-        if (tempX >  100.00) tempX =  100.00;
-        if (tempY < -100.00) tempY = -100.00;
-        if (tempY >  100.00) tempY =  100.00;
-
-        set_val(STICK_1_X, tempX);
-        set_val(STICK_1_Y, tempY);
-    }
-
-    // --- MACRO AUSFUEHRUNG ---
-    if (macroCmd == 1) {
-        combo_run(Dropshot);
-    }
-    if (macroCmd == 2) {
-        if (!snakingActive) {
-            snakingActive = TRUE;
-            combo_run(Snaking);
-        }
-    } else {
-        snakingActive = FALSE;
-    }
-    if (macroCmd == 3) {
-        combo_run(SlideCancel);
-    }
-    if (macroCmd == 4) {
-        combo_run(BunnyHop);
-    }
-    if (macroCmd == 5) {
-        combo_run(AutoFire);
-    }
-    if (macroCmd == 6) {
-        combo_run(YYSwap);
-    }
-}
-
-
-// ============================================================
-// MACROS
-// ============================================================
-
-// DROPSHOT: Feuern + Hinlegen gleichzeitig
-combo Dropshot {
-    set_val(BUTTON_5, 100);   // RT = Feuern
-    set_val(BUTTON_15, 100);  // B  = Hinlegen
-    wait(80);
-    set_val(BUTTON_15, 0);
-    wait(400);
-    // Wieder aufstehen
-    set_val(BUTTON_15, 100);
-    wait(80);
-    set_val(BUTTON_15, 0);
-}
-
-// SNAKING: Schnell hinlegen/aufstehen im Loop
-combo Snaking {
-    set_val(BUTTON_15, 100);  // B = Hinlegen (Prone)
-    wait(120);
-    set_val(BUTTON_15, 0);
-    wait(100);
-    set_val(BUTTON_15, 100);  // B = Aufstehen (Crouch)
-    wait(80);
-    set_val(BUTTON_15, 0);
-    wait(80);
-    set_val(BUTTON_15, 100);  // B = Aufstehen (Stand)
-    wait(80);
-    set_val(BUTTON_15, 0);
-    wait(150);
-}
-
-// SLIDE-CANCEL: Sprint → Slide → Jump → Sprint
-combo SlideCancel {
-    // Tactical Sprint (LS doppelklick)
-    set_val(BUTTON_9, 100);   // LS = Sprint
-    wait(40);
-    set_val(BUTTON_9, 0);
-    wait(40);
-    set_val(BUTTON_9, 100);
-    wait(40);
-    set_val(BUTTON_9, 0);
-    wait(200);
-    // Slide (B druecken waehrend Sprint)
-    set_val(BUTTON_15, 100);  // B = Slide
-    wait(80);
-    set_val(BUTTON_15, 0);
-    wait(150);
-    // Jump zum Cancel
-    set_val(BUTTON_16, 100);  // A = Jump
-    wait(60);
-    set_val(BUTTON_16, 0);
-    wait(100);
-}
-
-// BUNNY HOP: Auto-Jump nach Slide
-combo BunnyHop {
-    set_val(BUTTON_16, 100);  // A = Jump
-    wait(50);
-    set_val(BUTTON_16, 0);
-    wait(100);
-    set_val(BUTTON_16, 100);
-    wait(50);
-    set_val(BUTTON_16, 0);
-    wait(120);
-}
-
-// AUTO-FIRE: Dauerfeuer fuer Pistolen/Semi-Auto
-combo AutoFire {
-    set_val(BUTTON_5, 100);   // RT = Feuern
-    wait(40);
-    set_val(BUTTON_5, 0);
-    wait(30);
-}
-
-// YY SWAP: Schneller Waffenwechsel (Animation Cancel)
-combo YYSwap {
-    set_val(BUTTON_14, 100);  // Y = Waffe wechseln
-    wait(40);
-    set_val(BUTTON_14, 0);
-    wait(60);
-    set_val(BUTTON_14, 100);  // Y = Zurueck wechseln
-    wait(40);
-    set_val(BUTTON_14, 0);
+    // ========================================
+    // MAUS → RECHTER STICK (Aim)
+    // ========================================
+    
+    // stickize wandelt MOUSE_X/Y direkt in Stick-Werte
+    // radius=100 = voller Stick-Ausschlag bei maximaler Mausbewegung
+    stickize(STICK_2_X, STICK_2_Y, SENSITIVITY);
+    
+    // KEINE Deadzone — jede noch so kleine Bewegung kommt durch!
+    // (Das war das Hauptproblem mit dem XIM)
 }
