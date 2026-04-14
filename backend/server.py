@@ -1202,8 +1202,9 @@ async def download_file(filename: str):
         "aimbot_direct.py": Path("/app/aimbot_direct.py"),
         "minimap_reader.py": Path("/app/minimap_reader.py"),
         "titan_two.py": Path("/app/titan_two.py"),
-        "aimbot_gpc.gpc": Path("/app/aimbot_gpc.gpc"),
+        "titan_antirecoil.gpc": Path("/app/titan_antirecoil.gpc"),
         "TITAN_TWO_SETUP.md": Path("/app/TITAN_TWO_SETUP.md"),
+        "SCHLACHTPLAN.txt": Path("/app/SCHLACHTPLAN.txt"),
         "kmbox_net.py": Path("/app/backend/kmbox_net.py"),
         "yolo_onnx.py": Path("/app/backend/yolo_onnx.py"),
         "bo7_v5_640.onnx": Path("/app/backend/bo7_v5_640.onnx"),
@@ -1215,7 +1216,6 @@ async def download_file(filename: str):
         "AUDIO_SETUP.md": Path("/app/AUDIO_SETUP.md"),
         "warzone_audio_setup.bat": Path("/app/warzone_audio_setup.bat"),
         "warzone_audio_start.bat": Path("/app/warzone_audio_start.bat"),
-        "titan_bridge.py": Path("/app/titan_bridge.py"),
     }
     if filename not in allowed:
         raise HTTPException(status_code=404, detail="Datei nicht gefunden")

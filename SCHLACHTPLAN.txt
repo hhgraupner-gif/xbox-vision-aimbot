@@ -1,0 +1,245 @@
+# ENDGUELTIGER SCHLACHTPLAN — Setup von A bis Z
+# ================================================
+# Stand: April 2026
+# Hardware: PC, Xbox, Xbox Controller, KMBox Net, Titan Two, AVerMedia GC571
+# XIM Matrix: WIRD NICHT MEHR BENOETIGT (Titan Two ersetzt ihn komplett)
+
+# ============================================================
+# TEIL 1: HARDWARE-VERKABELUNG
+# ============================================================
+#
+# Du hast 3 separate Ketten die zusammenarbeiten:
+#
+#   KETTE 1: VIDEO (Xbox Bild zum PC fuer CV Aimbot)
+#   KETTE 2: CONTROLLER (Xbox Controller + Aimbot-Input zur Xbox)
+#   KETTE 3: NETZWERK (PC Aimbot steuert KMBox)
+#
+#
+# ===== KETTE 1: VIDEO =====
+#
+#   Xbox HDMI Out
+#       |
+#       | HDMI-Kabel
+#       v
+#   AVerMedia GC571 — HDMI IN  (PCIe Karte im PC)
+#       |
+#       | HDMI-Kabel (Passthrough)
+#       v
+#   GC571 — HDMI OUT --> Monitor/TV (zum Spielen, lag-frei)
+#
+#   Der PC bekommt das Bild ueber die Capture Card.
+#   Der Aimbot liest es mit cv2.VideoCapture().
+#   Du spielst auf dem Monitor der am HDMI OUT haengt.
+#
+#
+# ===== KETTE 2: CONTROLLER + AIMBOT INPUT =====
+#
+#   Das ist die wichtigste Kette. Hier kommt alles zusammen:
+#
+#               +---------------------------+
+#               |       TITAN TWO           |
+#               |                           |
+#   KMBox USB --+--> INPUT-A (vorne links)  |
+#     (Maus)    |    = Maus-Input vom       |
+#               |      Aimbot               |
+#               |                           |
+#   Xbox Ctrl --+--> INPUT-B (vorne rechts) |
+#     (USB)     |    = Controller fuer      |
+#               |      Authentication +     |
+#               |      normales Spielen     |
+#               |                           |
+#               |    OUTPUT (hinten) -------+--> Xbox USB
+#               |    = Emuliert Xbox Ctrl   |
+#               |                           |
+#               |    PROG (hinten) ---------+--> PC USB
+#               |    = Nur fuer Gtuner IV   |
+#               |      Programmierung       |
+#               +---------------------------+
+#
+#   WICHTIG:
+#   - INPUT-A = hoechste Prioritaet = hier kommt der KMBox rein
+#   - INPUT-B = Authentication = hier kommt der echte Xbox Controller rein
+#   - OUTPUT = geht zur Xbox (Micro-USB Kabel)
+#   - PROG = geht zum PC (Micro-USB, nur fuer Setup, kann danach ab)
+#
+#
+# ===== KETTE 3: NETZWERK (PC <-> KMBox) =====
+#
+#   PC (Ethernet Port)
+#       |
+#       | Ethernet-Kabel (direkt oder ueber Switch/Router)
+#       v
+#   KMBox Net (empfaengt UDP-Befehle vom Aimbot)
+#       |
+#       | USB-Kabel (KMBox USB-Ausgang)
+#       v
+#   Titan Two INPUT-A (sieht den KMBox als USB-Maus)
+#
+#
+# ===== KOMPLETTES DIAGRAMM =====
+#
+#   +--------+   HDMI    +--------+   HDMI    +---------+
+#   |  Xbox  | --------> | GC571  | --------> | Monitor |
+#   |        |           | (PCIe) |           | (Spielen)|
+#   +---+----+           +--------+           +---------+
+#       |                     |
+#       | USB                 | cv2.VideoCapture (intern)
+#       v                     v
+#   +---+----+           +--------+
+#   | Titan  |           |   PC   |
+#   | Two    |           | Aimbot |
+#   | OUTPUT |           +---+----+
+#   +--------+               |
+#       ^  ^                  | UDP (Ethernet)
+#       |  |                  v
+#       |  |            +---------+
+#       |  |            | KMBox   |
+#       |  |            | Net     |
+#       |  |            +----+----+
+#       |  |                 |
+#       |  +-INPUT-B----+    | USB
+#       |               |    |
+#       +-INPUT-A-------+----+
+#       |               |
+#   Xbox Controller  KMBox USB Out
+#
+#
+# ============================================================
+# TEIL 2: TITAN TWO SOFTWARE-SETUP (Gtuner IV)
+# ============================================================
+#
+# SCHRITT 1: Titan Two mit PC verbinden
+#   - PROG Port (hinten) per Micro-USB an den PC
+#   - Gtuner IV oeffnen
+#   - Titan Two sollte rechts oben erkannt werden
+#
+# SCHRITT 2: Output Protocol setzen
+#   - Rechtes Panel -> "Device Configuration" Tab (unten)
+#   - Output Protocol: "Xbox One" oder "Xbox Series" (je nach Konsole)
+#
+# SCHRITT 3: Input Translator erstellen
+#   - File -> New -> Input Translator
+#   - Name: "kmbox_mouse"
+#   - Create
+#
+# SCHRITT 4: Mouse Mapping konfigurieren
+#   - Im Input Translator Editor:
+#   - Klicke gruenes + bei "Mouse Mapping"
+#   - Mapping 1: "X Movement" -> STICK_1_X (Inverted: NEIN)
+#   - Klicke nochmal gruenes +
+#   - Mapping 2: "Y Movement" -> STICK_1_Y (Inverted: NEIN)
+#     ACHTUNG: NICHT "X Movement" fuer beide! Zweites MUSS "Y Movement" sein!
+#
+# SCHRITT 5: Mouse XY Converter einstellen
+#   - Sensitivity: 5.00 (spaeter anpassen)
+#   - Y/X Ratio: 1.00
+#   - DD Factor: 0.00
+#   - Deadzone Horizontal: 0.00
+#   - Deadzone Vertical: 0.00
+#   - Deadzone Diagonal: 0.00
+#   - Conversion Curve: Linear (Standard)
+#
+# SCHRITT 6: Speichern
+#   - Ctrl+S
+#
+# SCHRITT 7: Auf Memory Slot laden (3 WEGE)
+#
+#   WEG A — Drag & Drop aus File Explorer:
+#     1. Im linken "File Explorer" Panel, navigiere zum Ordner wo du gespeichert hast
+#     2. Finde die "kmbox_mouse.git" Datei
+#     3. Drag & Drop auf Memory Slot 1 im rechten Panel
+#
+#   WEG B — Rechtsklick Memory Slot:
+#     1. Rechtsklick auf Memory Slot 1
+#     2. "Load Memory Slot" waehlen
+#     3. Im Datei-Dialog die "kmbox_mouse.git" Datei auswaehlen
+#     4. Oeffnen
+#
+#   WEG C — Tastenkuerzel:
+#     1. Stelle sicher die .git Datei ist im Editor offen
+#     2. Druecke Ctrl+1 (laedt auf Slot 1)
+#
+#   FALLS KEINER DER WEGE FUNKTIONIERT:
+#   - Pruefe ob der Titan Two VERBUNDEN ist (gruene LED, nicht rot)
+#   - Pruefe ob der PROG Port verbunden ist (nicht OUTPUT!)
+#   - Versuche: Titan Two ab- und wieder anstecken
+#   - Versuche: Gtuner IV neustarten
+#
+# SCHRITT 8: Testen
+#   - Schliesse alles an wie in Kette 2 beschrieben
+#   - Starte Xbox, starte ein Spiel
+#   - Am Titan Two: Druecke den rechten Knopf bis "1" angezeigt wird
+#     (= Memory Slot 1 aktiv)
+#   - Bewege die Maus am PC (ueber den Aimbot oder physisch)
+#   - Der rechte Stick auf der Xbox sollte sich bewegen
+#
+#
+# ============================================================
+# TEIL 3: XBOX IN-GAME SETTINGS
+# ============================================================
+#
+# Fuer maximale Wirkung des Aimbots:
+#
+#   - Controller Sensitivity: MAXIMUM (20/20 oder hoechste Stufe)
+#   - ADS Sensitivity: HOCH (aber nicht unbedingt max)
+#   - Deadzone (im Spiel): 0 oder so niedrig wie moeglich
+#   - Response Curve: Linear oder Standard
+#   - Aim Assist: AN (das Spiel-eigene Aim Assist hilft zusaetzlich!)
+#
+#
+# ============================================================
+# TEIL 4: AIMBOT SOFTWARE (PC)
+# ============================================================
+#
+# Der Aimbot (aimbot_direct.py) bleibt wie er ist!
+# Er sendet Mausbewegungen per UDP an den KMBox Net.
+# Der KMBox gibt diese als USB-Maus an den Titan Two weiter.
+# Der Titan Two Input Translator wandelt Maus -> Right Stick.
+#
+# Ablauf:
+#   1. Capture Card liefert Xbox-Bild an PC
+#   2. YOLO erkennt Gegner
+#   3. Aimbot berechnet dx/dy (Pixel zum Ziel)
+#   4. kmbox_net.move(dx * strength, dy * strength)
+#   5. KMBox bewegt physisch die Maus
+#   6. Titan Two erkennt Mausbewegung
+#   7. Input Translator: Mouse -> STICK_1_X/Y
+#   8. Xbox bekommt "Controller bewegt rechten Stick"
+#   9. Aim bewegt sich zum Ziel
+#
+#
+# ============================================================
+# TEIL 5: WAS DU NICHT BRAUCHST
+# ============================================================
+#
+# - XIM Matrix: NICHT MEHR NOETIG. Der Titan Two Input Translator
+#   macht das gleiche, aber BESSER (konfigurierbare Deadzone = 0)
+#
+# - GPC Script: NICHT NOETIG fuer den PC-Aimbot. Der Input Translator
+#   uebernimmt alles. GPC Scripts sind nur fuer standalone Funktionen
+#   wie Anti-Recoil (siehe Plan B unten)
+#
+# - titan_bridge.py: GELOESCHT. War ein Python-Script fuer Gtuner IV
+#   das nicht funktioniert hat.
+#
+# - Remote Play: NICHT NOETIG. Du spielst direkt auf dem Monitor
+#   via HDMI Passthrough. Kein Input-Lag, kein Streaming.
+#
+#
+# ============================================================
+# TEIL 6: PLAN B — STANDALONE TITAN TWO SCRIPT (ohne PC Aimbot)
+# ============================================================
+#
+# Falls der PC-Aimbot gerade nicht laeuft oder du schnell was
+# haben willst: Ein einfaches GPC Anti-Recoil Script das direkt
+# auf dem Titan Two laeuft. Braucht keinen PC, keinen KMBox.
+#
+# -> Siehe Datei: titan_antirecoil.gpc
+#
+# Dieses Script:
+#   - Anti-Recoil wenn RT (Fire) gedrueckt
+#   - Aim-Slowdown wenn LT (ADS) gedrueckt
+#   - Funktioniert standalone auf dem Titan Two
+#   - Kann GLEICHZEITIG mit dem Input Translator laufen!
+#     (Lade beides in den gleichen Memory Slot)
+#

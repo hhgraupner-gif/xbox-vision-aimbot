@@ -1,0 +1,85 @@
+// ============================================================
+// eRayz Anti-Recoil + Aim Assist — Titan Two GPC2
+// ============================================================
+// Standalone Script — braucht KEINEN PC, KEINEN KMBox!
+// Laeuft direkt auf dem Titan Two.
+//
+// Features:
+//   - Anti-Recoil (nur beim Schiessen)
+//   - Aim-Slowdown beim ADS (praeziseres Zielen)
+//   - Rapid Fire (optional, Standard: AUS)
+//
+// Installation:
+//   1. Gtuner IV oeffnen
+//   2. File -> New -> GPC Script
+//   3. Diesen Code reinkopieren
+//   4. Compiler -> Compile (oder F5)
+//   5. Wenn "Compile OK" -> Rechtsklick Memory Slot -> Load
+//      ODER: Drag & Drop auf Memory Slot
+//
+// Anpassung:
+//   - anti_recoil_y: Hoeher = mehr Recoil-Kompensation (20-30 fuer ARs)
+//   - anti_recoil_x: Horizontal-Drift korrigieren (meistens 0)
+//   - ads_slowdown: Kleiner = langsamer beim ADS (50 = halbe Speed)
+//   - rapid_fire: TRUE = automatisches Feuern bei RT halten
+// ============================================================
+
+#pragma METAINFO("eRayz Anti-Recoil", 1, 0, "eRayz")
+
+// === EINSTELLUNGEN ===
+
+// Anti-Recoil Werte (anpassen pro Waffe!)
+// AR/LMG: 20-28 | SMG: 12-18 | Sniper: 0
+int anti_recoil_y = 22;
+int anti_recoil_x = 0;
+
+// ADS Aim-Slowdown (100 = normal, 50 = halb so schnell)
+int ads_slowdown = 60;
+
+// Rapid Fire (TRUE = an, FALSE = aus)
+bool rapid_fire = FALSE;
+int rapid_fire_rate = 40; // ms zwischen Schuessen
+
+// === INTERNE VARIABLEN ===
+int rf_timer = 0;
+
+main {
+    // -------------------------------------------
+    // ANTI-RECOIL: Nur aktiv wenn RT gedrueckt
+    // -------------------------------------------
+    if (get_val(BUTTON_5) > 50) {
+        // Vertikale Recoil-Kompensation
+        if (anti_recoil_y != 0) {
+            set_val(STICK_1_Y, get_val(STICK_1_Y) + anti_recoil_y);
+        }
+
+        // Horizontale Recoil-Kompensation (falls noetig)
+        if (anti_recoil_x != 0) {
+            set_val(STICK_1_X, get_val(STICK_1_X) + anti_recoil_x);
+        }
+    }
+
+    // -------------------------------------------
+    // ADS SLOWDOWN: Langsamer zielen beim ADS
+    // -------------------------------------------
+    if (get_val(BUTTON_8) > 50) {
+        // Rechten Stick verlangsamen
+        set_val(STICK_1_X, get_val(STICK_1_X) * ads_slowdown / 100);
+        set_val(STICK_1_Y, get_val(STICK_1_Y) * ads_slowdown / 100);
+    }
+
+    // -------------------------------------------
+    // RAPID FIRE (optional)
+    // -------------------------------------------
+    if (rapid_fire) {
+        if (get_val(BUTTON_5) > 50) {
+            rf_timer = rf_timer + get_rtime();
+            if (rf_timer >= rapid_fire_rate) {
+                rf_timer = 0;
+                set_val(BUTTON_5, 0);
+            }
+        } else {
+            rf_timer = 0;
+        }
+    }
+}

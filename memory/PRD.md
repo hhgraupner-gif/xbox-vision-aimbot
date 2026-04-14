@@ -4,11 +4,17 @@
 1. **Aimbot**: Computer Vision AI fuer RemotePlay Xbox (BO7/Warzone). Erkennt Gegner via YOLO, gibt sanfte Aim-Hilfe, laeuft lokal auf Windows PC mit Capture Card.
 2. **eRayz Audio**: Competitive Audio Tool fuer Warzone/BO7. Real-time DSP mit Footstep Enhancement, Gunfire Suppression, Dynamic Compression. Kommerzielles Produkt.
 
-## Hardware-Kette (AKTUELL)
+## Hardware-Kette (ENDGUELTIG)
 ```
-AVerMedia GC571 -> OpenCV Capture -> YOLO ONNX (DirectML) -> KMBox Net -> Titan Two (Input Translator) -> Xbox
+Xbox HDMI → GC571 HDMI In → GC571 HDMI Out → Monitor
+Xbox USB  ← Titan Two OUTPUT
+             Titan Two INPUT-A ← KMBox Net USB (Maus vom Aimbot)
+             Titan Two INPUT-B ← Xbox Controller (Auth + Gameplay)
+             Titan Two PROG   → PC USB (Gtuner IV Setup)
+PC Ethernet → KMBox Net (UDP Aimbot-Befehle)
 ```
-XIM Matrix wurde entfernt. Titan Two ersetzt die Mouse-to-Stick Translation mit 0-Deadzone.
+
+## XIM Matrix: ENTFERNT (Titan Two Input Translator ersetzt ihn)
 
 ## Erledigte Features — Aimbot
 - [x] Threaded Capture + Inference (70-90 FPS)
@@ -24,56 +30,53 @@ XIM Matrix wurde entfernt. Titan Two ersetzt die Mouse-to-Stick Translation mit 
 - [x] EMA Tracker v14 (Velocity Prediction, Dynamic Strength)
 
 ## Erledigte Features — eRayz Audio
-- [x] SURGICAL PRO v6 — 9-Band Parametric EQ (aktiv seit Apr 2026)
-  - 3x DT 990 Pro Harman-Korrektur (Mid Fill 1.2kHz, Spike 8.2kHz, Sibilance 6kHz)
-  - 4x Chirurgische Step-Boosts (Body 250Hz, Texture 2kHz, Direction 3.17kHz, Clarity 4.5kHz)
-  - 2x Cuts (Mud 500Hz, Gunfire 5.5kHz)
-  - HP 80Hz + LP 10kHz
+- [x] SURGICAL PRO v6 — 9-Band Parametric EQ
 - [x] Dynamic Compression (5.0:1 @ -28dB) + Noise Gate
 - [x] Spatial Audio Widening (2.0x)
 - [x] Live Step-Radar (OpenCV)
 - [x] Duplex WASAPI + Ring-Buffer Fallback
-- [x] Hotkeys fuer alle Parameter
-- [x] Geraete-Config wird gespeichert (JSON)
-- [x] Professionelle Distribution Scripts v6 (warzone_audio_setup.bat, warzone_audio_start.bat)
-- [x] TinyURL-Maskierung fuer kommerzielle Verteilung
+- [x] Professionelle Distribution Scripts v6
+
+## Erledigte Features — Titan Two
+- [x] SCHLACHTPLAN.txt (komplettes Hardware-Setup A bis Z)
+- [x] titan_antirecoil.gpc (Standalone Anti-Recoil + ADS Slowdown)
+- [x] TITAN_TWO_SETUP.md (Input Translator Anleitung)
+- [x] Deprecated Dateien geloescht (aimbot_gpc.gpc, titan_bridge.py)
+- [x] Download-API aktualisiert fuer neue Dateien
 
 ## Offene Issues
-- [ ] Titan Two Input Translator konfigurieren (P0 — IN PROGRESS)
+- [ ] Titan Two Input Translator auf Memory Slot laden (P0 — User muss testen)
 - [ ] Aimbot Feintuning fuer Titan Two (P1 — wartet auf Input Translator)
-- [ ] Audio Stuttering im Warzone Main Menu (P2 — wartet auf Sound Blaster Z / ASIO)
+- [ ] Audio Stuttering im Warzone Main Menu (P2 — wartet auf Sound Blaster Z)
 
 ## Naechste Schritte
-1. **Titan Two Input Translator** — Mouse X/Y -> STICK_1_X/Y, Deadzone=0, Memory Slot laden
-2. **Aimbot Retuning** — Strength, Smoothing, Deadzone anpassen fuer 0-Deadzone Hardware
-3. **Sound Blaster Z ASIO** — ASIO Backend (wartet auf Hardware)
+1. User laed Input Translator auf Memory Slot (Drag&Drop oder Ctrl+1)
+2. ODER: User laed titan_antirecoil.gpc als Plan B (standalone)
+3. Aimbot Retuning fuer 0-Deadzone Hardware
+4. Sound Blaster Z ASIO Backend
 
 ## Backlog (P2)
 - [ ] Besseres YOLO-Modell (mAP50 > 0.65)
-- [ ] Triggerbot (erst bei 100% Teammate-Schutz)
 - [ ] Aim-Humanisierung (Bezier-Kurven)
-- [ ] Kill-Feed Reader
 
 ## Architektur
 ```
 /app/
   aimbot_direct.py           # Core aimbot v14 (EMA Tracker, KMBox)
-  competitive_audio.py       # eRayz Audio (SURGICAL PRO v6, 9-Band EQ, 48kHz/256)
+  competitive_audio.py       # eRayz Audio (SURGICAL PRO v6)
+  titan_two.py               # Titan Two Utilities (pixels_to_stick, Macros)
+  titan_antirecoil.gpc       # Standalone Anti-Recoil GPC Script (Plan B)
+  SCHLACHTPLAN.txt            # Komplettes Hardware-Setup A bis Z
+  TITAN_TWO_SETUP.md          # Input Translator Anleitung
   warzone_audio_setup.bat    # Installer v6
   warzone_audio_start.bat    # Launcher v6
-  titan_two.py               # Titan Two Utilities (pixels_to_stick, Macros, Recoil)
-  TITAN_TWO_SETUP.md         # Schritt-fuer-Schritt Anleitung Input Translator
   backend/
-    server.py                # FastAPI (Download-API)
+    server.py                # FastAPI (Download-API + Detection)
     yolo_onnx.py             # ONNX Runtime Inference
     kmbox_net.py             # KMBox Net UDP Client
 ```
 
-## Deprecated (geloescht Apr 2026)
-- aimbot_gpc.gpc (GPC Script funktionierte nicht, Input Translator ersetzt es)
-- titan_bridge.py (Gtuner Python Bridge, nicht noetig mit Input Translator)
-
 ## Stand: Apr 2026
-- Audio: SURGICAL PRO v6 aktiv (User-Wahl)
-- Aimbot: Stabil v14, wartet auf Titan Two Input Translator Konfiguration
-- Hardware: Titan Two angeschlossen, Firmware aktuell, Input Translator wird konfiguriert
+- Audio: SURGICAL PRO v6 aktiv
+- Aimbot: Stabil v14, wartet auf Titan Two Konfiguration
+- Titan Two: Hardware da, Input Translator muss auf Slot geladen werden
