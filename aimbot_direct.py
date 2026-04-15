@@ -788,7 +788,7 @@ def main():
                                 titan.set_aim(sx, sy)
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
-                                # AGGRESSIVE TRACKING mit move_auto
+                                # AGGRESSIVE TRACKING
                                 dyn_str = strength
                                 if det_h > 120:
                                     dyn_str = min(strength * 2.5, 8.0)
@@ -811,13 +811,16 @@ def main():
                                 ix = int(round(mx))
                                 iy = int(round(my))
 
-                                # XIM Bypass: min 6px
+                                # DEBUG: Zeige was passiert
+                                if fc % 30 == 0:
+                                    print(f"  AIM: dx={dx:.0f} dy={dy:.0f} dist={dist:.0f} str={dyn_str:.1f} move=({ix},{iy}) dz={cfg['deadzone']}")
+
                                 if ix != 0 or iy != 0:
                                     try:
                                         kmbox_net.move(ix, iy)
                                         cooldown = cfg["cooldown_frames"]
-                                    except Exception:
-                                        pass
+                                    except Exception as e:
+                                        print(f"  KMBOX FEHLER: {e}")
             else:
                 tracker.mark_lost()
 
