@@ -813,19 +813,11 @@ def main():
 
                                 # XIM Bypass: min 6px
                                 if ix != 0 or iy != 0:
-                                    if 0 < abs(ix) < 6:
-                                        ix = 6 if ix > 0 else -6
-                                    if 0 < abs(iy) < 6:
-                                        iy = 6 if iy > 0 else -6
                                     try:
-                                        kmbox_net.move_auto(ix, iy, 22)
+                                        kmbox_net.move(ix, iy)
                                         cooldown = cfg["cooldown_frames"]
                                     except Exception:
-                                        try:
-                                            kmbox_net.move(ix, iy)
-                                            cooldown = cfg["cooldown_frames"]
-                                        except Exception:
-                                            pass
+                                        pass
             else:
                 tracker.mark_lost()
 
