@@ -1,0 +1,112 @@
+# FEINTUNING GUIDE — Aimbot + Gtuner IV
+# ========================================
+# Fuer wenn du ohne Credits selbst tunen willst!
+
+# ============================================================
+# GTUNER IV — Input Translator Einstellungen
+# ============================================================
+#
+# SENSITIVITY (aktuell 5.0):
+#   - Hoeher (6-8) = Aim bewegt sich SCHNELLER
+#   - Niedriger (3-4) = Aim bewegt sich LANGSAMER, praeziser
+#   - Start: 5.0, dann je nach Gefuehl anpassen
+#
+# Y/X RATIO (aktuell 1.0):
+#   - Hoeher (1.2-1.5) = Vertikale Bewegung schneller
+#   - Niedriger (0.7-0.9) = Vertikale Bewegung langsamer
+#   - CoD hat oft unterschiedliche H/V Sensitivity
+#
+# DEADZONE (aktuell 0.00):
+#   - LASS AUF 0.00! Das ist der ganze Vorteil vom Titan Two
+#
+# CONVERSION CURVE:
+#   - Linear = am besten fuer Aimbot (Standard)
+#   - Exponential = natuerlicher fuer manuelles Spielen
+#
+# DD FACTOR (aktuell 0.00):
+#   - Lass auf 0.00
+
+# ============================================================
+# AIMBOT — Was du im Code aendern kannst
+# ============================================================
+#
+# Datei: aimbot_direct.py
+# Suche nach "TITAN TWO AIMBOT" im Code
+#
+# GESCHWINDIGKEIT (Speed-Werte):
+#   Aktuell:
+#     dist > 200: speed = 22
+#     dist > 100: speed = 16
+#     dist > 50:  speed = 10
+#     dist > 20:  speed = 5
+#     sonst:      speed = 2
+#
+#   Fuer LANGSAMEREN, natuerlicheren Aim:
+#     dist > 200: speed = 15
+#     dist > 100: speed = 10
+#     dist > 50:  speed = 6
+#     dist > 20:  speed = 3
+#     sonst:      speed = 1
+#
+#   Fuer SCHNELLEREN Aim:
+#     dist > 200: speed = 30
+#     dist > 100: speed = 22
+#     dist > 50:  speed = 14
+#     dist > 20:  speed = 7
+#     sonst:      speed = 3
+#
+# RATE LIMITER (aktuell 18ms):
+#   Suche: tracker.can_move(18)
+#   - 18ms = ~55 moves/sek (Standard)
+#   - 25ms = ~40 moves/sek (natuerlicher, weniger robot-haft)
+#   - 12ms = ~83 moves/sek (aggressiver, schneller)
+#
+# FOV (aktuell 250):
+#   Taste 3/4 im Overlay oder in config.json
+#   - 150 = nur Gegner direkt vor dir (weniger false targets)
+#   - 250 = Standard
+#   - 350 = grosser Bereich (mehr targets aber mehr Fehler)
+#
+# CONFIDENCE (aktuell 0.32):
+#   Taste 7/8 im Overlay oder in config.json
+#   - 0.25 = mehr Erkennungen, aber auch mehr false positives
+#   - 0.32 = Standard
+#   - 0.45 = weniger Erkennungen, aber praeziser
+
+# ============================================================
+# KILLCAM TIPPS — Natuerlicher aussehen
+# ============================================================
+#
+# 1. Speed-Werte RUNTER (siehe oben) — langsamer = natuerlicher
+# 2. Rate Limiter HOCH (25ms statt 18ms) — weniger roboterhaft
+# 3. Gtuner Sensitivity auf 4.0 statt 5.0 — langsamere Reaktion
+# 4. FOV auf 150-180 — nur nahe Gegner, kein wildes Snapping
+#
+# ANTI-KILLCAM COMBO (empfohlen):
+#   - Gtuner Sensitivity: 4.0
+#   - Speed-Werte im Code: 15/10/6/3/1
+#   - Rate Limiter: 22ms
+#   - FOV: 180
+
+# ============================================================
+# HARDWARE-SETUP ERINNERUNG
+# ============================================================
+#
+# KMBox Net:
+#   Links Unten (Port 1) → Titan Two INPUT-A
+#   Links Oben (Port 2)  → PC USB
+#
+# Titan Two:
+#   INPUT-A (vorne links)  → KMBox
+#   INPUT-B (vorne rechts) → Xbox Controller
+#   OUTPUT (hinten)        → Xbox
+#   PROG (hinten)          → PC (Gtuner IV MUSS offen bleiben!)
+#
+# Gtuner IV:
+#   Input Translator im "Test and Debug" Modus (zu gross fuer Memory Slot)
+#   MUSS immer offen bleiben waehrend du spielst!
+#
+# Xbox In-Game:
+#   Sensitivity: MAXIMUM
+#   Deadzone: 0
+#   Aim Assist: AN

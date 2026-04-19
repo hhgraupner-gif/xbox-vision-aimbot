@@ -1205,6 +1205,7 @@ async def download_file(filename: str):
         "titan_antirecoil.gpc": Path("/app/titan_antirecoil.gpc"),
         "TITAN_TWO_SETUP.md": Path("/app/TITAN_TWO_SETUP.md"),
         "SCHLACHTPLAN.txt": Path("/app/SCHLACHTPLAN.txt"),
+        "FEINTUNING_GUIDE.txt": Path("/app/FEINTUNING_GUIDE.txt"),
         "kmbox_net.py": Path("/app/backend/kmbox_net.py"),
         "yolo_onnx.py": Path("/app/backend/yolo_onnx.py"),
         "bo7_v5_640.onnx": Path("/app/backend/bo7_v5_640.onnx"),
