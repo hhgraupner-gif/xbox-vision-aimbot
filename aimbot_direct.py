@@ -119,10 +119,10 @@ DEFAULT_CONFIG = {
     "capture_device": 0,
     "model_mode": "fps",
     "confidence": 0.32,
-    "fov_radius": 280,
-    "strength": 4.8,
-    "deadzone": 3,
-    "max_move": 100,
+    "fov_radius": 250,
+    "strength": 1.0,
+    "deadzone": 5,
+    "max_move": 25,
     "cooldown_frames": 0,
     "use_roi_crop": True,
     "roi_size": 640,
@@ -335,7 +335,12 @@ class FastInference:
 # TRACKER MIT VELOCITY PREDICTION
 # ============================================================
 class SmoothTracker:
-    """Verfolgt ein Ziel mit EMA-Glaettung + Velocity Prediction + Oszillations-Erkennung."""
+    """Titan Two Tracker — Optimiert fuer KMBox → Titan Two Input Translator.
+    
+    Prinzip: Viele kleine Schritte statt wenige grosse.
+    Der Titan Two Input Translator wandelt Mausbewegung in Stick-Werte.
+    Kleine, konstante Moves = sanfte Stick-Bewegung = kein Pendeln.
+    """
 
     def __init__(self):
         self.reset()
@@ -345,9 +350,8 @@ class SmoothTracker:
         self.y = None
         self.prev_x = None
         self.prev_y = None
-        self.vx = 0.0           # Geschwindigkeit X (px/frame)
-        self.vy = 0.0           # Geschwindigkeit Y (px/frame)
-        self.alpha = 0.5
+        self.vx = 0.0
+        self.vy = 0.0
         self.frames = 0
         self.lost = 0
         self.target_id = None
@@ -355,17 +359,15 @@ class SmoothTracker:
         self.prev_dx = 0.0
         self.prev_dy = 0.0
         self.osc_count = 0
+        self.last_move_time = 0.0
 
     def update(self, mx, my, bbox_h=0):
-        # Dynamischer Alpha: Close = instant, Range = schnell
-        if bbox_h > 120:
-            alpha = 0.95  # Close: sofort
-        elif bbox_h > 80:
-            alpha = 0.85
-        elif bbox_h > 50:
-            alpha = 0.75
-        else:
-            alpha = 0.65
+        # Sanfter Alpha — nicht zu aggressiv
+        alpha = 0.45
+        if bbox_h > 100:
+            alpha = 0.6
+        elif bbox_h > 60:
+            alpha = 0.5
 
         if self.x is None:
             self.x, self.y = mx, my
@@ -375,56 +377,60 @@ class SmoothTracker:
             self.x += alpha * (mx - self.x)
             self.y += alpha * (my - self.y)
 
-            # Velocity berechnen (EMA-geglaettet)
             raw_vx = self.x - self.prev_x
             raw_vy = self.y - self.prev_y
-            self.vx = 0.5 * self.vx + 0.5 * raw_vx
-            self.vy = 0.5 * self.vy + 0.5 * raw_vy
+            self.vx = 0.6 * self.vx + 0.4 * raw_vx
+            self.vy = 0.6 * self.vy + 0.4 * raw_vy
 
         self.target_h = bbox_h
         self.frames += 1
         self.lost = 0
 
-    def get_predicted_position(self, lead_frames=2.5):
-        """Position + Velocity Prediction (zielt VORAUS).
-        Nur bei echtem Movement — ignoriert Box-Jitter."""
+    def get_predicted_position(self, lead_frames=1.5):
+        """Sanfte Prediction — nur bei echtem Movement."""
         if self.x is None:
             return None
-        if self.frames < 3:
+        if self.frames < 4:
             return (self.x, self.y)
-        # Nur vorhersagen wenn Geschwindigkeit > Jitter-Schwelle (2px/frame)
         speed = math.sqrt(self.vx * self.vx + self.vy * self.vy)
-        if speed < 2.0:
+        if speed < 3.0:
             return (self.x, self.y)
         px = self.x + self.vx * lead_frames
         py = self.y + self.vy * lead_frames
         return (px, py)
 
     def check_oscillation(self, dx, dy):
-        """Erkennt ob Aim hin-und-her pendelt. Returns damping factor 0.0-1.0."""
-        # Richtungswechsel erkennen (Vorzeichen aendert sich)
+        """Erkennt Pendeln. Returns 0.0-1.0 (0=stop, 1=full speed)."""
         if (dx * self.prev_dx < 0) or (dy * self.prev_dy < 0):
-            self.osc_count = min(self.osc_count + 1, 6)
+            self.osc_count = min(self.osc_count + 2, 8)
         else:
             self.osc_count = max(self.osc_count - 1, 0)
 
         self.prev_dx = dx
         self.prev_dy = dy
 
-        # Je mehr Oszillation, desto staerker daempfen
-        if self.osc_count >= 4:
-            return 0.2   # Starkes Daempfen
+        if self.osc_count >= 6:
+            return 0.0    # STOP — pendelt stark
+        elif self.osc_count >= 4:
+            return 0.15
         elif self.osc_count >= 2:
-            return 0.5   # Mittleres Daempfen
-        return 1.0       # Kein Daempfen
+            return 0.4
+        return 1.0
+
+    def can_move(self, interval_ms=18):
+        """Rate-Limiter: Nur alle X ms ein Move senden."""
+        now = time.monotonic()
+        if (now - self.last_move_time) * 1000 >= interval_ms:
+            self.last_move_time = now
+            return True
+        return False
 
     def mark_lost(self):
         self.lost += 1
-        if self.lost > 4:
+        if self.lost > 5:
             self.reset()
 
     def get_position(self):
-        """Gibt geglättete Position zurueck."""
         if self.x is None:
             return None
         return (self.x, self.y)
@@ -436,7 +442,7 @@ class SmoothTracker:
 
     @property
     def locked(self):
-        return self.frames >= 1 and self.lost == 0
+        return self.frames >= 2 and self.lost == 0
 
 
 # ============================================================
@@ -744,8 +750,8 @@ def main():
                 det_h = tdet["bbox"][3] - tdet["bbox"][1] if tdet else 0
                 tracker.update(tx, ty, bbox_h=det_h)
 
-                # Velocity Prediction: Ziele voraus wo der Gegner HINLAEUFT
-                pred = tracker.get_predicted_position(lead_frames=2.5)
+                # Velocity Prediction: Nur sanft vorauszielen
+                pred = tracker.get_predicted_position(lead_frames=1.0)
                 pos = pred if pred else tracker.get_position()
 
                 if pos:
@@ -788,43 +794,65 @@ def main():
                                 titan.set_aim(sx, sy)
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
-                                # SANFTES TRACKING fuer Titan Two
-                                # Keine aggressive Multiplikation — lineare Bewegung
-                                
-                                # Bewegung proportional zur Distanz, sanft
-                                mx = dx * 0.15
-                                my = dy * 0.15
-                                
-                                # Naeher dran = weniger bewegen (Anti-Overshoot)
-                                if dist < 40:
-                                    mx *= 0.4
-                                    my *= 0.4
-                                elif dist < 80:
-                                    mx *= 0.7
-                                    my *= 0.7
-                                
-                                # Oszillations-Daempfung
-                                osc_damp = tracker.check_oscillation(dx, dy)
-                                mx *= osc_damp
-                                my *= osc_damp
+                                # ═══════════════════════════════════════════
+                                # TITAN TWO AIMBOT — KMBox → Input Translator
+                                # ═══════════════════════════════════════════
+                                # Die KMBox sendet relative Mausbewegungen.
+                                # Der Titan Two Input Translator wandelt sie
+                                # in Right-Stick Werte um (Sensitivity 5.0).
+                                #
+                                # PRINZIP: Kleine konstante Nudges, nicht
+                                # ein grosser Move. Das verhindert Pendeln.
+                                # ═══════════════════════════════════════════
 
-                                lim = 30  # Max 30px pro Move
-                                mx = max(-lim, min(lim, mx))
-                                my = max(-lim, min(lim, my))
-                                ix = int(round(mx))
-                                iy = int(round(my))
+                                # Rate-Limiter: Max ~55 Moves/Sek (18ms Abstand)
+                                if not tracker.can_move(18):
+                                    pass  # Warte bis naechster Move erlaubt
+                                else:
+                                    # --- STEP 1: Richtung normalisieren ---
+                                    # dx/dy = Pixel-Abstand Fadenkreuz → Ziel
+                                    # Wir wollen eine KONSTANTE Geschwindigkeit
+                                    # in Richtung des Ziels, nicht proportional
 
-                                # DEBUG
-                                if fc % 30 == 0:
-                                    print(f"  AIM: dx={dx:.0f} dy={dy:.0f} dist={dist:.0f} move=({ix},{iy}) osc={osc_damp:.1f}")
+                                    if dist > 0:
+                                        # Einheitsvektor (Richtung)
+                                        dir_x = dx / dist
+                                        dir_y = dy / dist
 
-                                if ix != 0 or iy != 0:
-                                    try:
-                                        kmbox_net.move(ix, iy)
-                                        time.sleep(0.02)
-                                        cooldown = 2
-                                    except Exception as e:
-                                        print(f"  KMBOX FEHLER: {e}")
+                                        # --- STEP 2: Geschwindigkeit nach Distanz ---
+                                        # Weit weg = schneller, nah = langsamer
+                                        if dist > 200:
+                                            speed = 22.0
+                                        elif dist > 100:
+                                            speed = 16.0
+                                        elif dist > 50:
+                                            speed = 10.0
+                                        elif dist > 20:
+                                            speed = 5.0
+                                        else:
+                                            speed = 2.0  # Feintuning nah am Ziel
+
+                                        mx = dir_x * speed
+                                        my = dir_y * speed
+
+                                        # --- STEP 3: Oszillations-Check ---
+                                        osc = tracker.check_oscillation(dx, dy)
+                                        mx *= osc
+                                        my *= osc
+
+                                        # --- STEP 4: Runden + Senden ---
+                                        ix = int(round(mx))
+                                        iy = int(round(my))
+
+                                        if fc % 60 == 0:
+                                            print(f"  AIM: dist={dist:.0f} spd={speed:.0f} move=({ix},{iy}) osc={osc:.1f} h={det_h}")
+
+                                        if (ix != 0 or iy != 0) and osc > 0.05:
+                                            try:
+                                                kmbox_net.move(ix, iy)
+                                            except Exception as e:
+                                                if fc % 120 == 0:
+                                                    print(f"  ERR: {e}")
             else:
                 tracker.mark_lost()
 
