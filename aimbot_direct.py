@@ -818,6 +818,7 @@ def main():
                                 if ix != 0 or iy != 0:
                                     try:
                                         kmbox_net.move(ix, iy)
+                                        time.sleep(0.015)
                                         cooldown = cfg["cooldown_frames"]
                                     except Exception as e:
                                         print(f"  KMBOX FEHLER: {e}")
