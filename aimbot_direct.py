@@ -788,38 +788,41 @@ def main():
                                 titan.set_aim(sx, sy)
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
-                                # AGGRESSIVE TRACKING
-                                dyn_str = strength
-                                if det_h > 120:
-                                    dyn_str = min(strength * 2.5, 8.0)
-                                elif det_h > 80:
-                                    dyn_str = min(strength * 2.0, 6.5)
-                                elif det_h > 50:
-                                    dyn_str = min(strength * 1.6, 5.0)
+                                # SANFTES TRACKING fuer Titan Two
+                                # Keine aggressive Multiplikation — lineare Bewegung
+                                
+                                # Bewegung proportional zur Distanz, sanft
+                                mx = dx * 0.15
+                                my = dy * 0.15
+                                
+                                # Naeher dran = weniger bewegen (Anti-Overshoot)
+                                if dist < 40:
+                                    mx *= 0.4
+                                    my *= 0.4
+                                elif dist < 80:
+                                    mx *= 0.7
+                                    my *= 0.7
+                                
+                                # Oszillations-Daempfung
+                                osc_damp = tracker.check_oscillation(dx, dy)
+                                mx *= osc_damp
+                                my *= osc_damp
 
-                                mx = dx * dyn_str
-                                my = dy * dyn_str
-
-                                # Anti-Pendel: Daempfung nah am Ziel
-                                if dist < 18:
-                                    mx *= dist / 18.0
-                                    my *= dist / 18.0
-
-                                lim = cfg["max_move"]
+                                lim = 30  # Max 30px pro Move
                                 mx = max(-lim, min(lim, mx))
                                 my = max(-lim, min(lim, my))
                                 ix = int(round(mx))
                                 iy = int(round(my))
 
-                                # DEBUG: Zeige was passiert
+                                # DEBUG
                                 if fc % 30 == 0:
-                                    print(f"  AIM: dx={dx:.0f} dy={dy:.0f} dist={dist:.0f} str={dyn_str:.1f} move=({ix},{iy}) dz={cfg['deadzone']}")
+                                    print(f"  AIM: dx={dx:.0f} dy={dy:.0f} dist={dist:.0f} move=({ix},{iy}) osc={osc_damp:.1f}")
 
                                 if ix != 0 or iy != 0:
                                     try:
                                         kmbox_net.move(ix, iy)
-                                        time.sleep(0.015)
-                                        cooldown = cfg["cooldown_frames"]
+                                        time.sleep(0.02)
+                                        cooldown = 2
                                     except Exception as e:
                                         print(f"  KMBOX FEHLER: {e}")
             else:
