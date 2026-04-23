@@ -96,9 +96,9 @@ main {
     // ─────────────────────────────────────────
     // 4. ANTI-RECOIL
     // ─────────────────────────────────────────
-    // Nur beim Feuern — zieht Aim nach unten
-    // Wird NACH dem Aim Assist angewendet
-    if(get_val(BUTTON_5)) {
+    // NUR wenn ADS (LT) + Feuern (RT) gleichzeitig!
+    // Hipfire = KEIN Anti-Recoil
+    if(get_val(BUTTON_5) && get_val(BUTTON_8)) {
         set_val(STICK_1_Y, clamp(get_val(STICK_1_Y) + RECOIL_V, -100.0, 100.0));
         if(RECOIL_H != 0.0) {
             set_val(STICK_1_X, clamp(get_val(STICK_1_X) + RECOIL_H, -100.0, 100.0));
