@@ -16,15 +16,12 @@
 #pragma METAINFO("eRayz_v3", 3, 0, "eRayz")
 
 // === ANTI-RECOIL ===
-// Startet niedrig, wird staerker je laenger du feuerst
-#define RECOIL_V_START  6.0    // Anfangs-Recoil (erste Kugeln)
-#define RECOIL_V_MAX   18.0    // Max-Recoil (nach ~1 Sek feuern)
-#define RECOIL_V_RAMP   0.3    // Wie schnell es ansteigt
-#define RECOIL_H        0.0    // Horizontal (meistens 0)
+#define RECOIL_V       12.0    // Vertikal (konstant)
+#define RECOIL_H        0.0    // Horizontal
 
 // === STICKY AIM ASSIST (Polar Circle) ===
-#define AA_STRENGTH     2.8    // Radius (kleiner = unsichtbarer)
-#define AA_SPEED       10      // Circle-Speed (niedriger = schneller)
+#define AA_STRENGTH     3.5    // Radius
+#define AA_SPEED       10      // Circle-Speed
 
 // === ROTATIONAL AIM ASSIST ===
 #define RAA_FORCE       7.0    // Strafe-Kraft
@@ -35,9 +32,7 @@
 
 // === VARIABLEN ===
 fix32 aa_angle;
-fix32 recoil_current;
 int raa_timer;
-int fire_frames;
 
 main {
     // ─────────────────────────────────────────
@@ -86,23 +81,12 @@ main {
     }
 
     // ─────────────────────────────────────────
-    // 5. DYNAMIC ANTI-RECOIL
+    // 5. ANTI-RECOIL (konstant, nur ADS+Fire)
     // ─────────────────────────────────────────
-    // Nur ADS + Fire! Wird staerker je laenger du feuerst.
-    // Erste Kugeln = wenig Recoil, Dauerfeuer = voll
     if(get_val(BUTTON_5) && get_val(BUTTON_8)) {
-        // Recoil hochrampen
-        fire_frames = fire_frames + 1;
-        recoil_current = recoil_current + RECOIL_V_RAMP;
-        if(recoil_current > RECOIL_V_MAX) recoil_current = RECOIL_V_MAX;
-
-        set_val(STICK_1_Y, clamp(get_val(STICK_1_Y) + recoil_current, -100.0, 100.0));
+        set_val(STICK_1_Y, clamp(get_val(STICK_1_Y) + RECOIL_V, -100.0, 100.0));
         if(RECOIL_H != 0.0) {
             set_val(STICK_1_X, clamp(get_val(STICK_1_X) + RECOIL_H, -100.0, 100.0));
         }
-    } else {
-        // Nicht am feuern — Recoil zuruecksetzen
-        recoil_current = RECOIL_V_START;
-        fire_frames = 0;
     }
 }
