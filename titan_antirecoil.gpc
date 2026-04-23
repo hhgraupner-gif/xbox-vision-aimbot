@@ -1,43 +1,114 @@
 // ============================================================
-// eRayz Anti-Recoil + Aim Slowdown — Titan Two GPC2
+// eRayz TITAN TWO — Aimbot-Optimiert + Max Aim Assist + Anti-Recoil
 // ============================================================
-// Standalone Script — braucht KEINEN PC, KEINEN KMBox!
+// Abgestimmt auf: KMBox Net (INPUT-A) + Xbox Controller (INPUT-B)
+// Input Translator laeuft separat in Gtuner IV (Test and Debug)
 //
-// Features:
-//   - Anti-Recoil (nur beim Schiessen)
-//   - Aim-Slowdown beim ADS (praeziseres Zielen)
+// FEATURES:
+//   1. Sticky Aim Assist (Polar Circle — triggert In-Game AA)
+//   2. Rotational Aim Assist (Linker Stick Strafe-Trick)
+//   3. Anti-Recoil (nur beim Feuern)
+//   4. Hair Trigger (instant 100% auf RT/LT)
+//   5. Aimbot-Kompatibel: Greift NICHT in KMBox-Input ein
+//
+// WICHTIG: Der KMBox sendet Mausbewegungen an INPUT-A.
+// Der Input Translator wandelt sie in STICK_1_X/Y.
+// Dieses Script ADDIERT Aim Assist + Anti-Recoil OBEN DRAUF.
+// Es ueberschreibt den KMBox-Input NICHT.
 //
 // Installation:
-//   1. Gtuner IV -> File -> Open -> diese Datei
-//   2. F5 (oder Compiler -> Compile)
-//   3. Wenn "Compile OK" -> Drag & Drop auf Memory Slot
+//   1. Gtuner IV -> File -> New -> GPC Script
+//   2. Code reinkopieren
+//   3. F5 (Compile)
+//   4. KANN NICHT auf Memory Slot (zu gross) -> "Test and Debug"
+//      ODER: Lade es zusammen mit dem Input Translator
 //
-// Anpassung:
-//   - RECOIL_V: Hoeher = mehr Kompensation (15-45)
-//   - ADS_SLOW: Kleiner = langsamer beim ADS (0.5 = halb)
+// Anpassung: Alle #define Werte unten aendern, F5, fertig.
 // ============================================================
 
-#pragma METAINFO("eRayz Anti-Recoil", 1, 0, "eRayz")
+#pragma METAINFO("eRayz_Aimbot_Pro", 2, 1, "eRayz")
 
-// === EINSTELLUNGEN (anpassen pro Waffe!) ===
-// AR/LMG: 25-35 | SMG: 15-22 | Sniper: 0
-#define RECOIL_V  25.0
-#define RECOIL_H   0.0
-#define ADS_SLOW   0.60
+// === ANTI-RECOIL ===
+// Anpassen pro Waffe! AR: 12-18 | SMG: 8-12 | LMG: 18-25
+#define RECOIL_V      12.0    // Vertikal (hoeher = mehr Kompensation)
+#define RECOIL_H       0.0    // Horizontal (meistens 0)
+
+// === STICKY AIM ASSIST (Polar Circle) ===
+// Erzeugt mikro-Kreisbewegungen auf dem rechten Stick
+// Das triggert den In-Game Aim Assist staerker
+#define AA_STRENGTH    3.5    // Radius der Kreisbewegung (2-6)
+#define AA_SPEED      12      // Geschwindigkeit (8-20, niedriger = schneller)
+
+// === ROTATIONAL AIM ASSIST ===
+// Simuliert minimale Strafe-Bewegung auf dem linken Stick
+// Das aktiviert "Rotational Aim Assist" im Spiel
+#define RAA_FORCE      8.0    // Staerke des Strafe-Inputs (5-15)
+
+// === HAIR TRIGGER ===
+// Threshold ab dem der Trigger als "voll gedrueckt" gilt
+#define HAIR_THRESH    1.0    // 1.0 = ultra-schnell
+
+// === VARIABLEN ===
+fix32 aa_angle;
 
 main {
-    // Anti-Recoil: Nur wenn RT (Fire) gedrueckt
-    if (get_val(BUTTON_5) > 0.0) {
-        set_val(STICK_1_Y, get_val(STICK_1_Y) + RECOIL_V);
+    // ─────────────────────────────────────────
+    // 1. INPUT LESEN
+    // ─────────────────────────────────────────
+    // STICK_1 = Rechter Stick (Aim) — kommt vom KMBox + manuell
+    // STICK_2 = Linker Stick (Movement) — kommt vom Controller
+    fix32 rx = get_val(STICK_1_X);
+    fix32 ry = get_val(STICK_1_Y);
+    fix32 lx = get_val(STICK_2_X);
 
-        if (RECOIL_H != 0.0) {
-            set_val(STICK_1_X, get_val(STICK_1_X) + RECOIL_H);
+    // ─────────────────────────────────────────
+    // 2. STICKY AIM ASSIST (Rechter Stick)
+    // ─────────────────────────────────────────
+    // Nur aktiv wenn ADS (LT) ODER Feuern (RT)
+    // Erzeugt eine schnelle Kreisbewegung die den
+    // In-Game Aim Assist permanent re-triggert.
+    // Der Aimbot-Input vom KMBox bleibt erhalten —
+    // wir ADDIEREN nur den Circle oben drauf.
+    if(get_val(BUTTON_8) || get_val(BUTTON_5)) {
+        aa_angle += (fix32)AA_SPEED;
+        if(aa_angle >= 360.0) aa_angle = 0.0;
+
+        set_val(STICK_1_X, clamp(rx + cos(aa_angle) * AA_STRENGTH, -100.0, 100.0));
+        set_val(STICK_1_Y, clamp(ry + sin(aa_angle) * AA_STRENGTH, -100.0, 100.0));
+    }
+
+    // ─────────────────────────────────────────
+    // 3. ROTATIONAL AIM ASSIST (Linker Stick)
+    // ─────────────────────────────────────────
+    // Nur wenn ADS aktiv UND linker Stick fast neutral
+    // Simuliert mini-Strafe links/rechts um Rotational AA auszuloesen
+    if(get_val(BUTTON_8)) {
+        if(abs(lx) < 10.0) {
+            // Beim Feuern: Richtung wechseln fuer max Sticky
+            if(get_val(BUTTON_5)) {
+                set_val(STICK_2_X, clamp(lx - RAA_FORCE, -100.0, 100.0));
+            } else {
+                set_val(STICK_2_X, clamp(lx + RAA_FORCE, -100.0, 100.0));
+            }
         }
     }
 
-    // ADS Slowdown: Langsamer zielen wenn LT gedrueckt
-    if (get_val(BUTTON_8) > 0.0) {
-        set_val(STICK_1_X, get_val(STICK_1_X) * ADS_SLOW);
-        set_val(STICK_1_Y, get_val(STICK_1_Y) * ADS_SLOW);
+    // ─────────────────────────────────────────
+    // 4. ANTI-RECOIL
+    // ─────────────────────────────────────────
+    // Nur beim Feuern — zieht Aim nach unten
+    // Wird NACH dem Aim Assist angewendet
+    if(get_val(BUTTON_5)) {
+        set_val(STICK_1_Y, clamp(get_val(STICK_1_Y) + RECOIL_V, -100.0, 100.0));
+        if(RECOIL_H != 0.0) {
+            set_val(STICK_1_X, clamp(get_val(STICK_1_X) + RECOIL_H, -100.0, 100.0));
+        }
     }
+
+    // ─────────────────────────────────────────
+    // 5. HAIR TRIGGER
+    // ─────────────────────────────────────────
+    // Instant 100% wenn Trigger leicht gedrueckt
+    if(get_val(BUTTON_5) > HAIR_THRESH) set_val(BUTTON_5, 100.0);
+    if(get_val(BUTTON_8) > HAIR_THRESH) set_val(BUTTON_8, 100.0);
 }
