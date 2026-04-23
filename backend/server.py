@@ -1206,6 +1206,7 @@ async def download_file(filename: str):
         "TITAN_TWO_SETUP.md": Path("/app/TITAN_TWO_SETUP.md"),
         "SCHLACHTPLAN.txt": Path("/app/SCHLACHTPLAN.txt"),
         "FEINTUNING_GUIDE.txt": Path("/app/FEINTUNING_GUIDE.txt"),
+        "Warzone_Training.ipynb": Path("/app/Warzone_Training.ipynb"),
         "kmbox_net.py": Path("/app/backend/kmbox_net.py"),
         "yolo_onnx.py": Path("/app/backend/yolo_onnx.py"),
         "bo7_v5_640.onnx": Path("/app/backend/bo7_v5_640.onnx"),
