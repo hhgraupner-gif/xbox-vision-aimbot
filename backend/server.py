@@ -1208,6 +1208,7 @@ async def download_file(filename: str):
         "FEINTUNING_GUIDE.txt": Path("/app/FEINTUNING_GUIDE.txt"),
         "Warzone_Training.ipynb": Path("/app/Warzone_Training.ipynb"),
         "erayz_audio_ultimate.py": Path("/app/erayz_audio_ultimate.py"),
+        "erayz_audio_start.bat": Path("/app/erayz_audio_start.bat"),
         "kmbox_net.py": Path("/app/backend/kmbox_net.py"),
         "yolo_onnx.py": Path("/app/backend/yolo_onnx.py"),
         "bo7_v5_640.onnx": Path("/app/backend/bo7_v5_640.onnx"),
