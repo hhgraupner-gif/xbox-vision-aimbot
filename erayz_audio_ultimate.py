@@ -44,48 +44,53 @@ DEFAULT_CFG = {
     "blocksize": 128,
     "channels": 2,
 
-    # DT990 Pro Korrektur (Harman Target)
-    "dt990_mid_fill_hz": 1200, "dt990_mid_fill_db": 3.0, "dt990_mid_fill_q": 0.8,
-    "dt990_spike_hz": 8200, "dt990_spike_db": -7.0, "dt990_spike_q": 3.0,
-    "dt990_sibilance_hz": 6000, "dt990_sibilance_db": -2.0, "dt990_sibilance_q": 2.0,
+    # DT990 Pro Korrektur (Harman Target + Pro Warzone)
+    "dt990_sub_cut_hz": 40, "dt990_sub_cut_db": -10.0, "dt990_sub_cut_q": 0.7,
+    "dt990_boom_hz": 75, "dt990_boom_db": -7.0, "dt990_boom_q": 3.0,
+    "dt990_mid_fill_hz": 1200, "dt990_mid_fill_db": 3.5, "dt990_mid_fill_q": 0.8,
+    "dt990_spike_hz": 8200, "dt990_spike_db": -8.0, "dt990_spike_q": 3.0,
+    "dt990_sibilance_hz": 6000, "dt990_sibilance_db": -2.5, "dt990_sibilance_q": 2.0,
 
-    # Footstep Enhancement (chirurgisch)
-    "step_body_hz": 150, "step_body_db": 9.0, "step_body_q": 1.8,
-    "step_texture_hz": 2000, "step_texture_db": 8.0, "step_texture_q": 1.5,
+    # Footstep Enhancement (Pro-Frequenzen aus Warzone Audio-Analyse)
+    "step_impact_hz": 115, "step_impact_db": 6.0, "step_impact_q": 2.0,
+    "step_body_hz": 250, "step_body_db": 8.0, "step_body_q": 1.5,
+    "step_presence_hz": 770, "step_presence_db": 3.0, "step_presence_q": 1.4,
+    "step_texture_hz": 1500, "step_texture_db": 7.0, "step_texture_q": 2.0,
     "step_direction_hz": 3170, "step_direction_db": 10.0, "step_direction_q": 4.5,
-    "step_clarity_hz": 4500, "step_clarity_db": 7.0, "step_clarity_q": 1.8,
+    "step_clarity_hz": 4500, "step_clarity_db": 6.0, "step_clarity_q": 1.8,
 
-    # Extra Bands
-    "reload_hz": 800, "reload_db": 5.0, "reload_q": 2.0,
-    "parachute_hz": 1400, "parachute_db": 4.0, "parachute_q": 2.5,
+    # Extra Bands (Feind-Aktionen lauter)
+    "reload_hz": 800, "reload_db": 4.0, "reload_q": 2.0,
+    "parachute_hz": 1400, "parachute_db": 3.5, "parachute_q": 2.5,
 
-    # Cuts
-    "highpass_hz": 45,
+    # Cuts (eigene Sounds + Dreck raus)
+    "highpass_hz": 55,
     "lowpass_hz": 10000,
-    "mud_hz": 500, "mud_db": -6.0, "mud_q": 1.2,
-    "gunfire_eq_hz": 5500, "gunfire_eq_db": -8.0, "gunfire_eq_q": 2.0,
+    "mud_hz": 500, "mud_db": -7.0, "mud_q": 1.2,
+    "gunfire_eq_hz": 5500, "gunfire_eq_db": -9.0, "gunfire_eq_q": 2.0,
+    "streak_hz": 200, "streak_db": -4.0, "streak_q": 1.5,
 
-    # Gunfire Ducker (InsuredFrames-Style)
-    # Erkennt laute Transienten (eigene Schuesse) und duckt sie
+    # Gunfire Ducker (InsuredFrames-Style — aggressiver)
     "ducker_enabled": True,
-    "ducker_thresh_db": -18.0,
-    "ducker_ratio": 4.0,
-    "ducker_attack": 0.0005,
-    "ducker_release": 0.08,
+    "ducker_thresh_db": -20.0,
+    "ducker_ratio": 5.0,
+    "ducker_attack": 0.0003,
+    "ducker_release": 0.06,
 
-    # Dynamics
-    "comp_ratio": 5.5, "comp_thresh_db": -28.0,
-    "comp_attack": 0.001, "comp_release": 0.035,
-    "gate_db": -55.0,
+    # Dynamics (Loudness EQ Effekt — leise Steps lauter)
+    "comp_ratio": 6.0, "comp_thresh_db": -32.0,
+    "comp_attack": 0.0008, "comp_release": 0.04,
+    "gate_db": -58.0,
 
-    # HRTF Spatial
-    "spatial_width": 1.8,
+    # HRTF Spatial (staerker)
+    "spatial_width": 2.0,
     "hrtf_enabled": True,
-    "hrtf_delay_ms": 0.3,
-    "hrtf_high_shelf_db": -2.0,
+    "hrtf_delay_ms": 0.4,
+    "hrtf_high_shelf_db": -3.0,
+    "hrtf_crossfeed": 0.20,
 
-    # Output
-    "output_gain_db": 3.5,
+    # Output (Preamp runter wegen mehr Boost)
+    "output_gain_db": 2.0,
 }
 
 
@@ -150,13 +155,17 @@ class UltimateProcessor:
         self.sos_hp = sig.butter(4, hp / ny, "highpass", output="sos")
         self.sos_lp = sig.butter(2, lp / ny, "lowpass", output="sos")
 
-        # EQ Chain: DT990 + Steps + Extra + Cuts
+        # EQ Chain: DT990 Korrektur + Steps + Extra + Cuts
         self.eqs = []
         params = [
+            ("dt990_sub_cut_hz", "dt990_sub_cut_db", "dt990_sub_cut_q"),
+            ("dt990_boom_hz", "dt990_boom_db", "dt990_boom_q"),
             ("dt990_mid_fill_hz", "dt990_mid_fill_db", "dt990_mid_fill_q"),
             ("dt990_spike_hz", "dt990_spike_db", "dt990_spike_q"),
             ("dt990_sibilance_hz", "dt990_sibilance_db", "dt990_sibilance_q"),
+            ("step_impact_hz", "step_impact_db", "step_impact_q"),
             ("step_body_hz", "step_body_db", "step_body_q"),
+            ("step_presence_hz", "step_presence_db", "step_presence_q"),
             ("step_texture_hz", "step_texture_db", "step_texture_q"),
             ("step_direction_hz", "step_direction_db", "step_direction_q"),
             ("step_clarity_hz", "step_clarity_db", "step_clarity_q"),
@@ -164,6 +173,7 @@ class UltimateProcessor:
             ("parachute_hz", "parachute_db", "parachute_q"),
             ("mud_hz", "mud_db", "mud_q"),
             ("gunfire_eq_hz", "gunfire_eq_db", "gunfire_eq_q"),
+            ("streak_hz", "streak_db", "streak_q"),
         ]
         for fk, dk, qk in params:
             r = make_peak(c[fk], c[dk], c[qk], self.sr)
@@ -312,9 +322,10 @@ class UltimateProcessor:
             self.hrtf_buf_L = L[-self.hrtf_delay:]
             self.hrtf_buf_R = R[-self.hrtf_delay:]
 
-            # Cross-feed mit Daempfung
-            L_cross, self.zi_hrtf[0] = sig.lfilter(b, a, R_delayed * 0.15, zi=self.zi_hrtf[0])
-            R_cross, self.zi_hrtf[1] = sig.lfilter(b, a, L_delayed * 0.15, zi=self.zi_hrtf[1])
+            # Cross-feed mit Daempfung (staerker = bessere Richtung)
+            xfeed = c.get("hrtf_crossfeed", 0.20)
+            L_cross, self.zi_hrtf[0] = sig.lfilter(b, a, R_delayed * xfeed, zi=self.zi_hrtf[0])
+            R_cross, self.zi_hrtf[1] = sig.lfilter(b, a, L_delayed * xfeed, zi=self.zi_hrtf[1])
             L = L + L_cross
             R = R + R_cross
 
@@ -361,14 +372,16 @@ if TK_OK:
     CYAN = "#00d4ff"
 
     BANDS_LEFT = [
-        ("step_body_db", "Body", "150 Hz", 0, 14, ACC),
-        ("step_texture_db", "Texture", "2 kHz", 0, 14, ACC),
+        ("step_impact_db", "Impact", "115 Hz", 0, 12, ACC),
+        ("step_body_db", "Body", "250 Hz", 0, 14, ACC),
+        ("step_presence_db", "Presence", "770 Hz", 0, 8, ACC),
+        ("step_texture_db", "Texture", "1.5 kHz", 0, 14, CYAN),
         ("step_direction_db", "Direction", "3.2 kHz", 0, 14, CYAN),
         ("step_clarity_db", "Clarity", "4.5 kHz", 0, 14, CYAN),
         ("reload_db", "Reload", "800 Hz", 0, 12, GOLD),
-        ("parachute_db", "Parachute", "1.4 kHz", 0, 12, GOLD),
         ("mud_db", "Mud Cut", "500 Hz", -12, 0, RED),
         ("gunfire_eq_db", "Gunfire EQ", "5.5 kHz", -12, 0, RED),
+        ("streak_db", "Streaks", "200 Hz", -8, 0, RED),
     ]
 
     BANDS_RIGHT = [
