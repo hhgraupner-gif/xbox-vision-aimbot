@@ -157,7 +157,7 @@ class YOLODetector:
             self.is_fps_model = True
             self.names = FPS_NAMES
             self.num_classes = 10
-        elif "bo7" in fname or "custom" in fname:
+        elif "bo7" in fname or "custom" in fname or "warzone" in fname or "ruje" in fname:
             self.is_fps_model = True
             self.names = {0: "player", 1: "head"}
             self.num_classes = 2
@@ -177,10 +177,15 @@ class YOLODetector:
             self.is_fps_model = True
             self.names = FPS_NAMES
             print(f"  Modell: FPS (SunOner) | {self.input_size}x{self.input_size} | 10 Klassen")
-        elif num_cls <= 2:
+        elif num_cls <= 5:
             self.is_fps_model = True
-            self.names = {0: "player", 1: "head"} if num_cls == 2 else {0: "person"}
-            print(f"  Modell: Custom | {self.input_size}x{self.input_size} | {num_cls} Klasse(n)")
+            names_map = {0: "player"}
+            if num_cls >= 2: names_map[1] = "head"
+            if num_cls >= 3: names_map[2] = "bot"
+            if num_cls >= 4: names_map[3] = "dead_body"
+            if num_cls >= 5: names_map[4] = "weapon"
+            self.names = names_map
+            print(f"  Modell: Custom FPS | {self.input_size}x{self.input_size} | {num_cls} Klasse(n)")
         else:
             self.is_coco_model = True
             self.names = {i: COCO_NAMES[i] if i < len(COCO_NAMES) else f"cls_{i}" for i in range(num_cls)}
