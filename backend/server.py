@@ -1211,6 +1211,7 @@ async def download_file(filename: str):
         "erayz_audio_start.bat": Path("/app/erayz_audio_start.bat"),
         "erayz_setup.bat": Path("/app/erayz_setup.bat"),
         "erayz_uninstall.bat": Path("/app/erayz_uninstall.bat"),
+        "build_aimbot_exe.bat": Path("/app/build_aimbot_exe.bat"),
         "kmbox_net.py": Path("/app/backend/kmbox_net.py"),
         "yolo_onnx.py": Path("/app/backend/yolo_onnx.py"),
         "bo7_v5_640.onnx": Path("/app/backend/bo7_v5_640.onnx"),
