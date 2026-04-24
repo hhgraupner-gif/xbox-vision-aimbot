@@ -187,6 +187,7 @@ def get_model_path(mode, nano=False):
     else:
         priority_map = {
             "fps":  ['sunxds_0.5.6.onnx', 'sunxds_640.onnx', 'bo7_v5_640.onnx', 'yolo11s.onnx'],
+            "warzone": ['warzone_v1.onnx', 'Warzone [V3] by Ruje.onnx', 'sunxds_0.5.6.onnx'],
             "coco": ['yolo11s.onnx', 'sunxds_0.5.6.onnx'],
             "nano": ['sunxds_nano_320.onnx', 'sunxds_0.5.6.onnx'],
         }
@@ -1005,7 +1006,7 @@ def main():
                 cfg["cooldown_frames"] = min(10, cfg["cooldown_frames"] + 1)
                 print(f"Cooldown: {cfg['cooldown_frames']}")
             elif key == ord('m'):
-                modes = ["fps", "coco"]
+                modes = ["fps", "warzone", "coco"]
                 idx = modes.index(cfg["model_mode"]) if cfg["model_mode"] in modes else 0
                 cfg["model_mode"] = modes[(idx + 1) % len(modes)]
                 np2 = get_model_path(cfg["model_mode"], cfg["use_nano"])
