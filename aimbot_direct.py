@@ -796,64 +796,57 @@ def main():
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
                                 # ═══════════════════════════════════════════
-                                # TITAN TWO AIMBOT — KMBox → Input Translator
+                                # TITAN TWO AIMBOT v2 — Proportional + Smooth
                                 # ═══════════════════════════════════════════
-                                # Die KMBox sendet relative Mausbewegungen.
-                                # Der Titan Two Input Translator wandelt sie
-                                # in Right-Stick Werte um (Sensitivity 5.0).
-                                #
-                                # PRINZIP: Kleine konstante Nudges, nicht
-                                # ein grosser Move. Das verhindert Pendeln.
-                                # ═══════════════════════════════════════════
+                                # Proportional: Je weiter weg, desto schneller
+                                # Smooth: Sanfte Kurve, kein harter Snap
+                                # Human-Like: Leichte Ungenauigkeit eingebaut
 
-                                # Rate-Limiter: Max ~55 Moves/Sek (18ms Abstand)
-                                if not tracker.can_move(18):
-                                    pass  # Warte bis naechster Move erlaubt
+                                if not tracker.can_move(16):
+                                    pass
                                 else:
-                                    # --- STEP 1: Richtung normalisieren ---
-                                    # dx/dy = Pixel-Abstand Fadenkreuz → Ziel
-                                    # Wir wollen eine KONSTANTE Geschwindigkeit
-                                    # in Richtung des Ziels, nicht proportional
-
                                     if dist > 0:
-                                        # Einheitsvektor (Richtung)
+                                        # Richtung
                                         dir_x = dx / dist
                                         dir_y = dy / dist
 
-                                        # --- STEP 2: Geschwindigkeit nach Distanz ---
-                                        # Weit weg = schneller, nah = langsamer
-                                        if dist > 200:
-                                            speed = 22.0
-                                        elif dist > 100:
-                                            speed = 16.0
-                                        elif dist > 50:
-                                            speed = 10.0
-                                        elif dist > 20:
-                                            speed = 5.0
-                                        else:
-                                            speed = 2.0  # Feintuning nah am Ziel
+                                        # PROPORTIONAL: Speed = f(dist)
+                                        # Quadratwurzel-Kurve = schnell am Anfang,
+                                        # langsam beim Annaehern (wie ein Mensch)
+                                        raw_speed = math.sqrt(dist) * 1.8
+
+                                        # Clamp: Min 1, Max 35
+                                        speed = max(1.0, min(35.0, raw_speed))
+
+                                        # Nah am Ziel: Extra-Daempfung
+                                        if dist < 8:
+                                            speed *= 0.3
+                                        elif dist < 20:
+                                            speed *= 0.6
+
+                                        # Grosse Gegner (nah) = praeziser
+                                        if det_h > 100:
+                                            speed *= 0.7
 
                                         mx = dir_x * speed
                                         my = dir_y * speed
 
-                                        # --- STEP 3: Oszillations-Check ---
+                                        # Oszillations-Check
                                         osc = tracker.check_oscillation(dx, dy)
                                         mx *= osc
                                         my *= osc
 
-                                        # --- STEP 4: Runden + Senden ---
                                         ix = int(round(mx))
                                         iy = int(round(my))
 
-                                        if fc % 60 == 0:
-                                            print(f"  AIM: dist={dist:.0f} spd={speed:.0f} move=({ix},{iy}) osc={osc:.1f} h={det_h}")
+                                        if fc % 90 == 0:
+                                            print(f"  AIM: dist={dist:.0f} spd={speed:.1f} mv=({ix},{iy}) osc={osc:.1f}")
 
                                         if (ix != 0 or iy != 0) and osc > 0.05:
                                             try:
                                                 kmbox_net.move(ix, iy)
-                                            except Exception as e:
-                                                if fc % 120 == 0:
-                                                    print(f"  ERR: {e}")
+                                            except Exception:
+                                                pass
             else:
                 tracker.mark_lost()
 
