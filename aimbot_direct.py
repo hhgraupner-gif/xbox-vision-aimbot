@@ -809,36 +809,37 @@ def main():
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
                                 # ═══════════════════════════════════════════
-                                # TITAN TWO AIMBOT v2 — Proportional + Smooth
+                                # TITAN TWO AIMBOT v3 — Soft Aim Assist
                                 # ═══════════════════════════════════════════
-                                # Proportional: Je weiter weg, desto schneller
-                                # Smooth: Sanfte Kurve, kein harter Snap
-                                # Human-Like: Leichte Ungenauigkeit eingebaut
+                                # Nicht snappen, nur sanft in Richtung Gegner
+                                # nudgen. Fuehlt sich an wie starkes In-Game
+                                # Aim Assist, nicht wie ein Aimbot.
 
-                                if not tracker.can_move(16):
+                                if not tracker.can_move(20):
                                     pass
                                 else:
                                     if dist > 0:
-                                        # Richtung
                                         dir_x = dx / dist
                                         dir_y = dy / dist
 
-                                        # PROPORTIONAL: Speed = f(dist)
-                                        # Quadratwurzel-Kurve = schnell am Anfang,
-                                        # langsam beim Annaehern (wie ein Mensch)
-                                        raw_speed = math.sqrt(dist) * 1.8
+                                        # SANFT: Weniger Speed, mehr Nudge
+                                        raw_speed = math.sqrt(dist) * 0.9
 
-                                        # Clamp: Min 1, Max 35
-                                        speed = max(1.0, min(35.0, raw_speed))
+                                        # Max 18 statt 35 (kein harter Snap)
+                                        speed = max(0.5, min(18.0, raw_speed))
 
-                                        # Nah am Ziel: Extra-Daempfung
-                                        if dist < 8:
-                                            speed *= 0.3
-                                        elif dist < 20:
-                                            speed *= 0.6
+                                        # Nah am Ziel: Kaum noch bewegen
+                                        if dist < 10:
+                                            speed *= 0.2
+                                        elif dist < 25:
+                                            speed *= 0.4
+                                        elif dist < 50:
+                                            speed *= 0.65
 
-                                        # Grosse Gegner (nah) = praeziser
+                                        # Grosse Gegner = noch sanfter
                                         if det_h > 100:
+                                            speed *= 0.5
+                                        elif det_h > 60:
                                             speed *= 0.7
 
                                         mx = dir_x * speed
