@@ -118,8 +118,8 @@ DEFAULT_CONFIG = {
     "kmbox_uuid": "C14AE466",
     "capture_device": 0,
     "model_mode": "fps",
-    "confidence": 0.32,
-    "fov_radius": 250,
+    "confidence": 0.42,
+    "fov_radius": 200,
     "strength": 1.0,
     "deadzone": 5,
     "max_move": 25,
@@ -129,10 +129,10 @@ DEFAULT_CONFIG = {
     "target_fps": 60,
     "show_overlay": True,
     "use_nano": False,
-    "dead_body_ratio": 1.0,
+    "dead_body_ratio": 0.85,
     "sky_filter_ratio": 0.10,
-    "ground_filter_ratio": 0.88,
-    "min_box_height": 30,
+    "ground_filter_ratio": 0.85,
+    "min_box_height": 35,
     "minimap_enabled": True,
     "minimap_x": 40,
     "minimap_y": 140,
@@ -403,19 +403,21 @@ class SmoothTracker:
     def check_oscillation(self, dx, dy):
         """Erkennt Pendeln. Returns 0.0-1.0 (0=stop, 1=full speed)."""
         if (dx * self.prev_dx < 0) or (dy * self.prev_dy < 0):
-            self.osc_count = min(self.osc_count + 2, 8)
+            self.osc_count = min(self.osc_count + 3, 10)
         else:
             self.osc_count = max(self.osc_count - 1, 0)
 
         self.prev_dx = dx
         self.prev_dy = dy
 
-        if self.osc_count >= 6:
-            return 0.0    # STOP — pendelt stark
+        if self.osc_count >= 8:
+            return 0.0    # STOP
+        elif self.osc_count >= 6:
+            return 0.1
         elif self.osc_count >= 4:
-            return 0.15
+            return 0.25
         elif self.osc_count >= 2:
-            return 0.4
+            return 0.5
         return 1.0
 
     def can_move(self, interval_ms=18):
@@ -489,13 +491,24 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
         bw, bh = x2 - x1, y2 - y1
         cls = det["class_name"]
 
+        # Dead body filter (liegende Koerper = breiter als hoch)
         if bw > bh * dead_ratio:
             continue
+        # Zu klein = Loot, Laternen, Muell
         if bh < min_h:
             continue
+        # Zu quadratisch = Loot-Box, Laterne, Objekt (Spieler sind hochkant)
+        aspect = bh / max(bw, 1)
+        if aspect < 1.2:
+            continue
+        # Zu gross = Bug/Overlay (ganzer Bildschirm)
+        if bh > frame_h * 0.7 or bw > frame_w * 0.5:
+            continue
+        # Sky filter
         mid_y = (y1 + y2) / 2.0
         if mid_y < frame_h * sky:
             continue
+        # Ground filter
         if mid_y > frame_h * ground:
             continue
         if cls in IGNORE_CLASSES:
