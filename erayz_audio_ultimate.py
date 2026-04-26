@@ -138,6 +138,9 @@ class UltimateProcessor:
         self.bypass = False
         self.comp_env = 0.0
         self.duck_env = 0.0
+        self.step_comp_env = 0.0
+        self.step_duck_env = 0.0
+        self.transient_env = [0.0, 0.0]
         self._lock = threading.Lock()
         self.step_L = 0.0
         self.step_R = 0.0
@@ -195,12 +198,29 @@ class UltimateProcessor:
             hs_freq = max(20, min(4000, ny * 0.95))
             r = make_peak(hs_freq, c.get("hrtf_high_shelf_db", -2.0), 0.7, self.sr)
             self.hrtf_filter = r
-            # Delay in Samples
-            self.hrtf_delay = max(1, int(c.get("hrtf_delay_ms", 0.3) * self.sr / 1000))
+            # ITD: Interaural Time Difference (echte Ohr-Physik)
+            # 0.6ms = max ITD beim Menschen (Sound von ganz links/rechts)
+            itd_ms = c.get("hrtf_delay_ms", 0.4)
+            self.hrtf_delay = max(1, int(itd_ms * self.sr / 1000))
             self.hrtf_buf_L = np.zeros(self.hrtf_delay, dtype=np.float32)
             self.hrtf_buf_R = np.zeros(self.hrtf_delay, dtype=np.float32)
+            # ILD: Interaural Level Difference (High-Shelf fuer Kopf-Schatten)
+            ild_freq = max(20, min(2000, ny * 0.95))
+            r2 = make_peak(ild_freq, -4.0, 0.5, self.sr)
+            self.ild_filter = r2
         else:
             self.hrtf_filter = None
+            self.ild_filter = None
+
+        # Step-Band Isolierung: 200Hz - 5kHz (fuer Transient Shaper + Step Compression)
+        lo_step = max(20, min(200, ny * 0.95)) / ny
+        hi_step = max(20, min(5000, ny * 0.95)) / ny
+        self.sos_step_iso = sig.butter(3, [lo_step, hi_step], "bandpass", output="sos")
+
+        # Transient Detection: Schneller Envelope fuer Attack-Erkennung
+        # Sehr schnell (0.1ms attack) um den ANFANG eines Steps zu erkennen
+        self.trans_attack = math.exp(-1.0 / (self.sr * 0.0001))
+        self.trans_release = math.exp(-1.0 / (self.sr * 0.015))
 
         # Gains
         self.g_out = 10 ** (c["output_gain_db"] / 20)
@@ -217,6 +237,7 @@ class UltimateProcessor:
         self.zi_lp = [z(self.sos_lp), z(self.sos_lp)]
         self.zi_duck = [z(self.sos_duck_bp), z(self.sos_duck_bp)]
         self.zi_step = [z(self.sos_step), z(self.sos_step)]
+        self.zi_step_iso = [z(self.sos_step_iso), z(self.sos_step_iso)]
         self.zi_eq = [
             [sig.lfilter_zi(b, a) * 0, sig.lfilter_zi(b, a) * 0]
             for b, a in self.eqs
@@ -224,6 +245,9 @@ class UltimateProcessor:
         if self.hrtf_filter:
             b, a = self.hrtf_filter
             self.zi_hrtf = [sig.lfilter_zi(b, a) * 0, sig.lfilter_zi(b, a) * 0]
+        if self.ild_filter:
+            b, a = self.ild_filter
+            self.zi_ild = [sig.lfilter_zi(b, a) * 0, sig.lfilter_zi(b, a) * 0]
 
     def rebuild(self):
         with self._lock:
@@ -245,14 +269,40 @@ class UltimateProcessor:
                 # Highpass
                 x, self.zi_hp[i] = sig.sosfilt(self.sos_hp, x, zi=self.zi_hp[i])
 
-                # EQ Chain (11 Bands)
+                # EQ Chain (16 Bands)
                 for j, (b, a) in enumerate(self.eqs):
                     x, self.zi_eq[j][i] = sig.lfilter(b, a, x, zi=self.zi_eq[j][i])
 
                 # Lowpass
                 x, self.zi_lp[i] = sig.sosfilt(self.sos_lp, x, zi=self.zi_lp[i])
 
-                # Step Detection (fuer Radar)
+                # ── TRANSIENT SHAPER (Pro-Trick #1) ──
+                # Isoliere Step-Band, boost den Attack-Moment
+                step_band, self.zi_step_iso[i] = sig.sosfilt(
+                    self.sos_step_iso, x, zi=self.zi_step_iso[i])
+                abs_step = np.abs(step_band)
+                env = np.zeros_like(abs_step)
+                e = self.transient_env[i]
+                ta, tr = self.trans_attack, self.trans_release
+                for s in range(len(abs_step)):
+                    if abs_step[s] > e:
+                        e = ta * e + (1 - ta) * abs_step[s]
+                    else:
+                        e = tr * e + (1 - tr) * abs_step[s]
+                    env[s] = e
+                self.transient_env[i] = e
+                transient = np.maximum(abs_step - env, 0)
+                x = x + step_band * transient * 3.0
+
+                # ── STEP-BAND COMPRESSION (Pro-Trick #2) ──
+                step_rms = float(np.sqrt(np.mean(step_band * step_band)))
+                if step_rms > 0.008:
+                    s_odb = 20 * math.log10(step_rms / 0.008)
+                    s_rdb = s_odb * (1 - 1 / 4.0)
+                    s_makeup = 10 ** (s_rdb * 0.6 / 20)
+                    x = x + step_band * (s_makeup - 1.0) * 0.5
+
+                # Step Detection
                 r, self.zi_step[i] = sig.sosfilt(self.sos_step, x, zi=self.zi_step[i])
                 rms = float(np.sqrt(np.mean(r * r)))
                 if i == 0:
@@ -264,16 +314,21 @@ class UltimateProcessor:
 
         L, R = C
 
-        # ── GUNFIRE DUCKER (InsuredFrames-Style) ──
-        # Erkennt laute Transienten im Gunfire-Band und duckt sie
+        # ── STEP-PRIORITY DUCKING (Pro-Trick #3) ──
+        step_total = self.step_L + self.step_R
+        if step_total > 0.01:
+            step_duck = max(0.5, 1.0 - step_total * 3.0)
+            mono = (L + R) * 0.5
+            side = (L - R) * 0.5
+            L = mono * step_duck + side
+            R = mono * step_duck - side
+
+        # ── GUNFIRE DUCKER ──
         if self.cfg.get("ducker_enabled", True):
-            # Mische Mono fuer Detektion
             mono = (L + R) * 0.5
             duck_sig, self.zi_duck[0] = sig.sosfilt(
-                self.sos_duck_bp, mono, zi=self.zi_duck[0]
-            )
+                self.sos_duck_bp, mono, zi=self.zi_duck[0])
             duck_peak = float(np.max(np.abs(duck_sig)))
-
             d_att = self.cfg["ducker_attack"]
             d_rel = self.cfg["ducker_release"]
             if duck_peak > self.duck_env:
@@ -281,14 +336,12 @@ class UltimateProcessor:
             else:
                 self.duck_env += d_rel * (duck_peak - self.duck_env)
             self.duck_env = max(self.duck_env, 1e-10)
-
             if self.duck_env > self.g_duck:
                 d_ratio = self.cfg["ducker_ratio"]
                 d_odb = 20 * math.log10(self.duck_env / self.g_duck)
                 d_rdb = d_odb * (1 - 1 / d_ratio)
-                d_gain = 10 ** (-d_rdb / 20)
-                L *= d_gain
-                R *= d_gain
+                L *= 10 ** (-d_rdb / 20)
+                R *= 10 ** (-d_rdb / 20)
 
         # ── NOISE GATE ──
         level = math.sqrt(float(np.mean(L * L)) + float(np.mean(R * R)))
@@ -296,7 +349,7 @@ class UltimateProcessor:
             L *= 0.02
             R *= 0.02
 
-        # ── COMPRESSION ──
+        # ── MASTER COMPRESSION ──
         rat = self.cfg["comp_ratio"]
         if rat > 1.01:
             pk = max(float(np.max(np.abs(L))), float(np.max(np.abs(R))), 1e-10)
@@ -313,19 +366,23 @@ class UltimateProcessor:
             L *= g
             R *= g
 
-        # ── HRTF SPATIAL ──
+        # ── HRTF v2: ITD + ILD (Pro-Trick #4) ──
         if self.cfg.get("hrtf_enabled", True) and self.hrtf_filter:
             b, a = self.hrtf_filter
-            # Kontralaterale Daempfung + Delay
             L_delayed = np.concatenate([self.hrtf_buf_L, L])[:len(L)]
             R_delayed = np.concatenate([self.hrtf_buf_R, R])[:len(R)]
             self.hrtf_buf_L = L[-self.hrtf_delay:]
             self.hrtf_buf_R = R[-self.hrtf_delay:]
-
-            # Cross-feed mit Daempfung (staerker = bessere Richtung)
-            xfeed = c.get("hrtf_crossfeed", 0.20)
-            L_cross, self.zi_hrtf[0] = sig.lfilter(b, a, R_delayed * xfeed, zi=self.zi_hrtf[0])
-            R_cross, self.zi_hrtf[1] = sig.lfilter(b, a, L_delayed * xfeed, zi=self.zi_hrtf[1])
+            xfeed = self.cfg.get("hrtf_crossfeed", 0.20)
+            if self.ild_filter:
+                bi, ai = self.ild_filter
+                R_shadow, self.zi_ild[0] = sig.lfilter(bi, ai, R_delayed * xfeed, zi=self.zi_ild[0])
+                L_shadow, self.zi_ild[1] = sig.lfilter(bi, ai, L_delayed * xfeed, zi=self.zi_ild[1])
+            else:
+                R_shadow = R_delayed * xfeed
+                L_shadow = L_delayed * xfeed
+            L_cross, self.zi_hrtf[0] = sig.lfilter(b, a, R_shadow, zi=self.zi_hrtf[0])
+            R_cross, self.zi_hrtf[1] = sig.lfilter(b, a, L_shadow, zi=self.zi_hrtf[1])
             L = L + L_cross
             R = R + R_cross
 
@@ -335,9 +392,17 @@ class UltimateProcessor:
             m, s = (L + R) * 0.5, (L - R) * 0.5 * w
             L, R = m + s, m - s
 
-        # ── OUTPUT + LIMITER ──
-        L = np.tanh(L * self.g_out)
-        R = np.tanh(R * self.g_out)
+        # ── LOOK-AHEAD LIMITER (Pro-Trick #5) ──
+        out_g = self.g_out
+        L_out = L * out_g
+        R_out = R * out_g
+        pk_out = max(float(np.max(np.abs(L_out))), float(np.max(np.abs(R_out))), 1e-10)
+        if pk_out > 0.95:
+            limit_g = 0.95 / pk_out
+            L_out *= limit_g
+            R_out *= limit_g
+        L = np.tanh(L_out * 1.05)
+        R = np.tanh(R_out * 1.05)
 
         # Radar Data
         t = self.step_L + self.step_R
