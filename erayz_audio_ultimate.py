@@ -44,55 +44,55 @@ DEFAULT_CFG = {
     "blocksize": 128,
     "channels": 2,
 
-    # DT990 Pro Korrektur (Harman Target + Pro Warzone)
-    "dt990_sub_cut_hz": 40, "dt990_sub_cut_db": -10.0, "dt990_sub_cut_q": 0.7,
-    "dt990_boom_hz": 75, "dt990_boom_db": -7.0, "dt990_boom_q": 3.0,
-    "dt990_mid_fill_hz": 1200, "dt990_mid_fill_db": 3.5, "dt990_mid_fill_q": 0.8,
-    "dt990_spike_hz": 8200, "dt990_spike_db": -8.0, "dt990_spike_q": 3.0,
-    "dt990_sibilance_hz": 6000, "dt990_sibilance_db": -2.5, "dt990_sibilance_q": 2.0,
+    # DT990 Pro Korrektur (Harman Target)
+    "dt990_sub_cut_hz": 40, "dt990_sub_cut_db": -6.0, "dt990_sub_cut_q": 0.7,
+    "dt990_boom_hz": 75, "dt990_boom_db": -4.0, "dt990_boom_q": 3.0,
+    "dt990_mid_fill_hz": 1200, "dt990_mid_fill_db": 3.0, "dt990_mid_fill_q": 0.8,
+    "dt990_spike_hz": 8200, "dt990_spike_db": -7.0, "dt990_spike_q": 3.0,
+    "dt990_sibilance_hz": 6000, "dt990_sibilance_db": -2.0, "dt990_sibilance_q": 2.0,
 
-    # Footstep Enhancement (Pro-Frequenzen aus Warzone Audio-Analyse)
-    "step_impact_hz": 115, "step_impact_db": 6.0, "step_impact_q": 2.0,
-    "step_body_hz": 250, "step_body_db": 8.0, "step_body_q": 1.5,
-    "step_presence_hz": 770, "step_presence_db": 3.0, "step_presence_q": 1.4,
-    "step_texture_hz": 1500, "step_texture_db": 7.0, "step_texture_q": 2.0,
-    "step_direction_hz": 3170, "step_direction_db": 10.0, "step_direction_q": 4.5,
-    "step_clarity_hz": 4500, "step_clarity_db": 6.0, "step_clarity_q": 1.8,
+    # Footstep Enhancement (gezielt, nicht aggressiv)
+    "step_impact_hz": 115, "step_impact_db": 4.0, "step_impact_q": 2.0,
+    "step_body_hz": 250, "step_body_db": 5.0, "step_body_q": 1.5,
+    "step_presence_hz": 770, "step_presence_db": 2.0, "step_presence_q": 1.4,
+    "step_texture_hz": 1500, "step_texture_db": 5.0, "step_texture_q": 2.0,
+    "step_direction_hz": 3170, "step_direction_db": 7.0, "step_direction_q": 4.5,
+    "step_clarity_hz": 4500, "step_clarity_db": 4.0, "step_clarity_q": 1.8,
 
-    # Extra Bands (Feind-Aktionen lauter)
-    "reload_hz": 800, "reload_db": 4.0, "reload_q": 2.0,
-    "parachute_hz": 1400, "parachute_db": 3.5, "parachute_q": 2.5,
+    # Extra
+    "reload_hz": 800, "reload_db": 3.0, "reload_q": 2.0,
+    "parachute_hz": 1400, "parachute_db": 2.0, "parachute_q": 2.5,
 
-    # Cuts (eigene Sounds + Dreck raus)
-    "highpass_hz": 55,
+    # Cuts (gezielt)
+    "highpass_hz": 50,
     "lowpass_hz": 10000,
-    "mud_hz": 500, "mud_db": -8.0, "mud_q": 1.0,
-    "gunfire_eq_hz": 5500, "gunfire_eq_db": -9.0, "gunfire_eq_q": 2.0,
-    "streak_hz": 200, "streak_db": -6.0, "streak_q": 1.0,
-    "ambient_hz": 90, "ambient_db": -8.0, "ambient_q": 0.8,
-    "wind_hz": 350, "wind_db": -5.0, "wind_q": 1.5,
+    "mud_hz": 500, "mud_db": -5.0, "mud_q": 1.2,
+    "gunfire_eq_hz": 5500, "gunfire_eq_db": -6.0, "gunfire_eq_q": 2.0,
+    "streak_hz": 200, "streak_db": -3.0, "streak_q": 1.0,
+    "ambient_hz": 90, "ambient_db": -5.0, "ambient_q": 0.8,
+    "wind_hz": 350, "wind_db": -3.0, "wind_q": 1.5,
 
-    # Gunfire Ducker (InsuredFrames-Style — aggressiver)
+    # Gunfire Ducker
     "ducker_enabled": True,
-    "ducker_thresh_db": -20.0,
-    "ducker_ratio": 5.0,
-    "ducker_attack": 0.0003,
-    "ducker_release": 0.06,
+    "ducker_thresh_db": -18.0,
+    "ducker_ratio": 4.0,
+    "ducker_attack": 0.0005,
+    "ducker_release": 0.08,
 
-    # Dynamics (Loudness EQ Effekt — leise Steps lauter)
-    "comp_ratio": 4.5, "comp_thresh_db": -28.0,
-    "comp_attack": 0.002, "comp_release": 0.05,
-    "gate_db": -58.0,
+    # Compression (sanft — nicht pumpen)
+    "comp_ratio": 3.5, "comp_thresh_db": -26.0,
+    "comp_attack": 0.003, "comp_release": 0.06,
+    "gate_db": -55.0,
 
-    # HRTF Spatial (staerker)
-    "spatial_width": 2.0,
+    # HRTF Spatial
+    "spatial_width": 1.8,
     "hrtf_enabled": True,
     "hrtf_delay_ms": 0.4,
     "hrtf_high_shelf_db": -3.0,
-    "hrtf_crossfeed": 0.20,
+    "hrtf_crossfeed": 0.18,
 
-    # Output (Preamp runter wegen mehr Boost)
-    "output_gain_db": 2.0,
+    # Output
+    "output_gain_db": 3.0,
 }
 
 
@@ -273,40 +273,14 @@ class UltimateProcessor:
                 # Highpass
                 x, self.zi_hp[i] = sig.sosfilt(self.sos_hp, x, zi=self.zi_hp[i])
 
-                # EQ Chain (16 Bands)
+                # EQ Chain
                 for j, (b, a) in enumerate(self.eqs):
                     x, self.zi_eq[j][i] = sig.lfilter(b, a, x, zi=self.zi_eq[j][i])
 
                 # Lowpass
                 x, self.zi_lp[i] = sig.sosfilt(self.sos_lp, x, zi=self.zi_lp[i])
 
-                # ── TRANSIENT SHAPER (sanfter — nur echte Schritt-Attacks) ──
-                step_band, self.zi_step_iso[i] = sig.sosfilt(
-                    self.sos_step_iso, x, zi=self.zi_step_iso[i])
-                abs_step = np.abs(step_band)
-                env = np.zeros_like(abs_step)
-                e = self.transient_env[i]
-                ta, tr = self.trans_attack, self.trans_release
-                for s in range(len(abs_step)):
-                    if abs_step[s] > e:
-                        e = ta * e + (1 - ta) * abs_step[s]
-                    else:
-                        e = tr * e + (1 - tr) * abs_step[s]
-                    env[s] = e
-                self.transient_env[i] = e
-                transient = np.maximum(abs_step - env, 0)
-                # Nur 1.5x boost (statt 3x — weniger Ambient-Verstaerkung)
-                x = x + step_band * transient * 1.5
-
-                # ── STEP-BAND COMPRESSION (sanfter) ──
-                step_rms = float(np.sqrt(np.mean(step_band * step_band)))
-                if step_rms > 0.012:
-                    s_odb = 20 * math.log10(step_rms / 0.012)
-                    s_rdb = s_odb * (1 - 1 / 3.0)
-                    s_makeup = 10 ** (s_rdb * 0.4 / 20)
-                    x = x + step_band * (s_makeup - 1.0) * 0.3
-
-                # Step Detection
+                # Step Detection (fuer Richtung)
                 r, self.zi_step[i] = sig.sosfilt(self.sos_step, x, zi=self.zi_step[i])
                 rms = float(np.sqrt(np.mean(r * r)))
                 if i == 0:
@@ -317,15 +291,6 @@ class UltimateProcessor:
                 C[i] = x
 
         L, R = C
-
-        # ── STEP-PRIORITY DUCKING (sanfter) ──
-        step_total = self.step_L + self.step_R
-        if step_total > 0.02:
-            step_duck = max(0.65, 1.0 - step_total * 2.0)
-            mono = (L + R) * 0.5
-            side = (L - R) * 0.5
-            L = mono * step_duck + side
-            R = mono * step_duck - side
 
         # ── GUNFIRE DUCKER ──
         if self.cfg.get("ducker_enabled", True):
@@ -344,8 +309,9 @@ class UltimateProcessor:
                 d_ratio = self.cfg["ducker_ratio"]
                 d_odb = 20 * math.log10(self.duck_env / self.g_duck)
                 d_rdb = d_odb * (1 - 1 / d_ratio)
-                L *= 10 ** (-d_rdb / 20)
-                R *= 10 ** (-d_rdb / 20)
+                d_gain = 10 ** (-d_rdb / 20)
+                L *= d_gain
+                R *= d_gain
 
         # ── NOISE GATE ──
         level = math.sqrt(float(np.mean(L * L)) + float(np.mean(R * R)))
@@ -353,7 +319,7 @@ class UltimateProcessor:
             L *= 0.02
             R *= 0.02
 
-        # ── MASTER COMPRESSION ──
+        # ── GENTLE COMPRESSION ──
         rat = self.cfg["comp_ratio"]
         if rat > 1.01:
             pk = max(float(np.max(np.abs(L))), float(np.max(np.abs(R))), 1e-10)
@@ -364,13 +330,13 @@ class UltimateProcessor:
             if self.comp_env > self.g_comp:
                 odb = 20 * math.log10(self.comp_env / self.g_comp)
                 rdb = odb * (1 - 1 / rat)
-                g = 10 ** (-rdb / 20) * 10 ** (rdb * 0.4 / 20)
+                g = 10 ** (-rdb / 20) * 10 ** (rdb * 0.35 / 20)
             else:
                 g = 1.0
             L *= g
             R *= g
 
-        # ── HRTF v2: ITD + ILD (Pro-Trick #4) ──
+        # ── HRTF SPATIAL ──
         if self.cfg.get("hrtf_enabled", True) and self.hrtf_filter:
             b, a = self.hrtf_filter
             L_delayed = np.concatenate([self.hrtf_buf_L, L])[:len(L)]
@@ -396,17 +362,9 @@ class UltimateProcessor:
             m, s = (L + R) * 0.5, (L - R) * 0.5 * w
             L, R = m + s, m - s
 
-        # ── LOOK-AHEAD LIMITER (Pro-Trick #5) ──
-        out_g = self.g_out
-        L_out = L * out_g
-        R_out = R * out_g
-        pk_out = max(float(np.max(np.abs(L_out))), float(np.max(np.abs(R_out))), 1e-10)
-        if pk_out > 0.95:
-            limit_g = 0.95 / pk_out
-            L_out *= limit_g
-            R_out *= limit_g
-        L = np.tanh(L_out * 1.05)
-        R = np.tanh(R_out * 1.05)
+        # ── OUTPUT ──
+        L = np.tanh(L * self.g_out)
+        R = np.tanh(R * self.g_out)
 
         # Radar Data
         t = self.step_L + self.step_R
