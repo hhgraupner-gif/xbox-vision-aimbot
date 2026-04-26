@@ -119,7 +119,7 @@ DEFAULT_CONFIG = {
     "capture_device": 0,
     "model_mode": "fps",
     "confidence": 0.42,
-    "fov_radius": 200,
+    "fov_radius": 120,
     "strength": 1.0,
     "deadzone": 5,
     "max_move": 25,
@@ -809,61 +809,56 @@ def main():
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
                                 # ═══════════════════════════════════════════
-                                # TITAN TWO AIMBOT v4 — Soft + Long Range
+                                # TITAN TWO AIMBOT v5 — Close Range Beast
                                 # ═══════════════════════════════════════════
+                                # Nur ~10m Radius, aber STARK
+                                # Grosse Box = nah = aggressiv locken
 
-                                if not tracker.can_move(20):
+                                if not tracker.can_move(14):
                                     pass
                                 else:
                                     if dist > 0:
                                         dir_x = dx / dist
                                         dir_y = dy / dist
 
-                                        # Speed nach Distanz + Box-Groesse
-                                        raw_speed = math.sqrt(dist) * 0.9
+                                        # Nur nahe Gegner (grosse Box = nah)
+                                        # Box > 50px = ~10m oder naeher
+                                        if det_h < 45:
+                                            # Zu weit weg — ignorieren
+                                            pass
+                                        else:
+                                            # STARK: Schneller Speed fuer Close Range
+                                            raw_speed = math.sqrt(dist) * 2.2
 
-                                        # LONG RANGE BOOST: Kleine Gegner (weit weg)
-                                        # brauchen mehr Speed weil sie weniger Pixel haben
-                                        if det_h < 30:
-                                            raw_speed *= 1.8
-                                        elif det_h < 45:
-                                            raw_speed *= 1.4
+                                            speed = max(1.0, min(40.0, raw_speed))
 
-                                        speed = max(0.5, min(25.0, raw_speed))
+                                            # Nah am Ziel: Bremsen
+                                            if dist < 6:
+                                                speed *= 0.15
+                                            elif dist < 15:
+                                                speed *= 0.35
+                                            elif dist < 30:
+                                                speed *= 0.6
 
-                                        # Nah am Ziel: Sanft bremsen
-                                        if dist < 10:
-                                            speed *= 0.2
-                                        elif dist < 25:
-                                            speed *= 0.4
-                                        elif dist < 50:
-                                            speed *= 0.65
+                                            mx = dir_x * speed
+                                            my = dir_y * speed
 
-                                        # Grosse Gegner (nah) = sanfter
-                                        if det_h > 100:
-                                            speed *= 0.5
-                                        elif det_h > 60:
-                                            speed *= 0.7
+                                            osc = tracker.check_oscillation(dx, dy)
+                                            mx *= osc
+                                            my *= osc
 
-                                        mx = dir_x * speed
-                                        my = dir_y * speed
+                                            ix = int(round(mx))
+                                            iy = int(round(my))
 
-                                        # Oszillations-Check
-                                        osc = tracker.check_oscillation(dx, dy)
-                                        mx *= osc
-                                        my *= osc
+                                            if fc % 90 == 0:
+                                                print(f"  AIM: dist={dist:.0f} spd={speed:.1f} mv=({ix},{iy}) h={det_h}")
 
-                                        ix = int(round(mx))
-                                        iy = int(round(my))
+                                            if (ix != 0 or iy != 0) and osc > 0.05:
+                                                try:
+                                                    kmbox_net.move(ix, iy)
+                                                except Exception:
+                                                    pass
 
-                                        if fc % 90 == 0:
-                                            print(f"  AIM: dist={dist:.0f} spd={speed:.1f} mv=({ix},{iy}) osc={osc:.1f}")
-
-                                        if (ix != 0 or iy != 0) and osc > 0.05:
-                                            try:
-                                                kmbox_net.move(ix, iy)
-                                            except Exception:
-                                                pass
             else:
                 tracker.mark_lost()
 
