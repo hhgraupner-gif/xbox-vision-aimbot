@@ -84,12 +84,12 @@ DEFAULT_CFG = {
     "comp_attack": 0.003, "comp_release": 0.06,
     "gate_db": -55.0,
 
-    # HRTF Spatial
-    "spatial_width": 1.8,
+    # HRTF Spatial (staerker fuer bessere Ortung)
+    "spatial_width": 2.2,
     "hrtf_enabled": True,
-    "hrtf_delay_ms": 0.4,
-    "hrtf_high_shelf_db": -3.0,
-    "hrtf_crossfeed": 0.18,
+    "hrtf_delay_ms": 0.6,
+    "hrtf_high_shelf_db": -5.0,
+    "hrtf_crossfeed": 0.12,
 
     # Output
     "output_gain_db": 3.0,
