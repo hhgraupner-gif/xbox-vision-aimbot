@@ -132,7 +132,7 @@ DEFAULT_CONFIG = {
     "dead_body_ratio": 0.85,
     "sky_filter_ratio": 0.10,
     "ground_filter_ratio": 0.85,
-    "min_box_height": 35,
+    "min_box_height": 25,
     "minimap_enabled": True,
     "minimap_x": 40,
     "minimap_y": 140,
@@ -809,11 +809,8 @@ def main():
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
                                 # ═══════════════════════════════════════════
-                                # TITAN TWO AIMBOT v3 — Soft Aim Assist
+                                # TITAN TWO AIMBOT v4 — Soft + Long Range
                                 # ═══════════════════════════════════════════
-                                # Nicht snappen, nur sanft in Richtung Gegner
-                                # nudgen. Fuehlt sich an wie starkes In-Game
-                                # Aim Assist, nicht wie ein Aimbot.
 
                                 if not tracker.can_move(20):
                                     pass
@@ -822,13 +819,19 @@ def main():
                                         dir_x = dx / dist
                                         dir_y = dy / dist
 
-                                        # SANFT: Weniger Speed, mehr Nudge
+                                        # Speed nach Distanz + Box-Groesse
                                         raw_speed = math.sqrt(dist) * 0.9
 
-                                        # Max 18 statt 35 (kein harter Snap)
-                                        speed = max(0.5, min(18.0, raw_speed))
+                                        # LONG RANGE BOOST: Kleine Gegner (weit weg)
+                                        # brauchen mehr Speed weil sie weniger Pixel haben
+                                        if det_h < 30:
+                                            raw_speed *= 1.8
+                                        elif det_h < 45:
+                                            raw_speed *= 1.4
 
-                                        # Nah am Ziel: Kaum noch bewegen
+                                        speed = max(0.5, min(25.0, raw_speed))
+
+                                        # Nah am Ziel: Sanft bremsen
                                         if dist < 10:
                                             speed *= 0.2
                                         elif dist < 25:
@@ -836,7 +839,7 @@ def main():
                                         elif dist < 50:
                                             speed *= 0.65
 
-                                        # Grosse Gegner = noch sanfter
+                                        # Grosse Gegner (nah) = sanfter
                                         if det_h > 100:
                                             speed *= 0.5
                                         elif det_h > 60:
