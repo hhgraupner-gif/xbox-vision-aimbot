@@ -66,9 +66,11 @@ DEFAULT_CFG = {
     # Cuts (eigene Sounds + Dreck raus)
     "highpass_hz": 55,
     "lowpass_hz": 10000,
-    "mud_hz": 500, "mud_db": -7.0, "mud_q": 1.2,
+    "mud_hz": 500, "mud_db": -8.0, "mud_q": 1.0,
     "gunfire_eq_hz": 5500, "gunfire_eq_db": -9.0, "gunfire_eq_q": 2.0,
-    "streak_hz": 200, "streak_db": -4.0, "streak_q": 1.5,
+    "streak_hz": 200, "streak_db": -6.0, "streak_q": 1.0,
+    "ambient_hz": 90, "ambient_db": -8.0, "ambient_q": 0.8,
+    "wind_hz": 350, "wind_db": -5.0, "wind_q": 1.5,
 
     # Gunfire Ducker (InsuredFrames-Style — aggressiver)
     "ducker_enabled": True,
@@ -78,8 +80,8 @@ DEFAULT_CFG = {
     "ducker_release": 0.06,
 
     # Dynamics (Loudness EQ Effekt — leise Steps lauter)
-    "comp_ratio": 6.0, "comp_thresh_db": -32.0,
-    "comp_attack": 0.0008, "comp_release": 0.04,
+    "comp_ratio": 4.5, "comp_thresh_db": -28.0,
+    "comp_attack": 0.002, "comp_release": 0.05,
     "gate_db": -58.0,
 
     # HRTF Spatial (staerker)
@@ -177,6 +179,8 @@ class UltimateProcessor:
             ("mud_hz", "mud_db", "mud_q"),
             ("gunfire_eq_hz", "gunfire_eq_db", "gunfire_eq_q"),
             ("streak_hz", "streak_db", "streak_q"),
+            ("ambient_hz", "ambient_db", "ambient_q"),
+            ("wind_hz", "wind_db", "wind_q"),
         ]
         for fk, dk, qk in params:
             r = make_peak(c[fk], c[dk], c[qk], self.sr)
@@ -276,8 +280,7 @@ class UltimateProcessor:
                 # Lowpass
                 x, self.zi_lp[i] = sig.sosfilt(self.sos_lp, x, zi=self.zi_lp[i])
 
-                # ── TRANSIENT SHAPER (Pro-Trick #1) ──
-                # Isoliere Step-Band, boost den Attack-Moment
+                # ── TRANSIENT SHAPER (sanfter — nur echte Schritt-Attacks) ──
                 step_band, self.zi_step_iso[i] = sig.sosfilt(
                     self.sos_step_iso, x, zi=self.zi_step_iso[i])
                 abs_step = np.abs(step_band)
@@ -292,15 +295,16 @@ class UltimateProcessor:
                     env[s] = e
                 self.transient_env[i] = e
                 transient = np.maximum(abs_step - env, 0)
-                x = x + step_band * transient * 3.0
+                # Nur 1.5x boost (statt 3x — weniger Ambient-Verstaerkung)
+                x = x + step_band * transient * 1.5
 
-                # ── STEP-BAND COMPRESSION (Pro-Trick #2) ──
+                # ── STEP-BAND COMPRESSION (sanfter) ──
                 step_rms = float(np.sqrt(np.mean(step_band * step_band)))
-                if step_rms > 0.008:
-                    s_odb = 20 * math.log10(step_rms / 0.008)
-                    s_rdb = s_odb * (1 - 1 / 4.0)
-                    s_makeup = 10 ** (s_rdb * 0.6 / 20)
-                    x = x + step_band * (s_makeup - 1.0) * 0.5
+                if step_rms > 0.012:
+                    s_odb = 20 * math.log10(step_rms / 0.012)
+                    s_rdb = s_odb * (1 - 1 / 3.0)
+                    s_makeup = 10 ** (s_rdb * 0.4 / 20)
+                    x = x + step_band * (s_makeup - 1.0) * 0.3
 
                 # Step Detection
                 r, self.zi_step[i] = sig.sosfilt(self.sos_step, x, zi=self.zi_step[i])
@@ -314,10 +318,10 @@ class UltimateProcessor:
 
         L, R = C
 
-        # ── STEP-PRIORITY DUCKING (Pro-Trick #3) ──
+        # ── STEP-PRIORITY DUCKING (sanfter) ──
         step_total = self.step_L + self.step_R
-        if step_total > 0.01:
-            step_duck = max(0.5, 1.0 - step_total * 3.0)
+        if step_total > 0.02:
+            step_duck = max(0.65, 1.0 - step_total * 2.0)
             mono = (L + R) * 0.5
             side = (L - R) * 0.5
             L = mono * step_duck + side
