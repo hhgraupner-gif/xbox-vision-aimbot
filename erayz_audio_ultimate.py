@@ -79,8 +79,8 @@ DEFAULT_CFG = {
     "ducker_attack": 0.0005,
     "ducker_release": 0.08,
 
-    # Compression (sanft — nicht pumpen)
-    "comp_ratio": 3.5, "comp_thresh_db": -26.0,
+    # Compression (AUS — Windows Lautstärkeausgleich uebernimmt das!)
+    "comp_ratio": 1.0, "comp_thresh_db": -26.0,
     "comp_attack": 0.003, "comp_release": 0.06,
     "gate_db": -55.0,
 
