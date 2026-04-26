@@ -423,7 +423,7 @@ if TK_OK:
             super().__init__()
             self.title("eRayz Audio ULTIMATE")
             self.configure(bg=BG)
-            self.geometry("900x720")
+            self.geometry("960x720")
             self.resizable(False, False)
             self.cfg = load_config()
             self.proc = None
@@ -565,12 +565,12 @@ if TK_OK:
             row = tk.Frame(parent, bg=BG2)
             row.pack(fill="x", padx=10, pady=4)
 
-            lf = tk.Frame(row, bg=BG2, width=85)
+            lf = tk.Frame(row, bg=BG2, width=100)
             lf.pack(side="left")
             lf.pack_propagate(False)
             tk.Label(lf, text=label, font=("Segoe UI", 9, "bold"),
                      bg=BG2, fg=TXT, anchor="w").pack(fill="x")
-            tk.Label(lf, text=freq, font=("Segoe UI", 7),
+            tk.Label(lf, text=freq, font=("Segoe UI", 8),
                      bg=BG2, fg=MUT, anchor="w").pack(fill="x")
 
             val = self.cfg.get(key, 0)
