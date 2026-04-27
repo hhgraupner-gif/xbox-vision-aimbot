@@ -137,7 +137,7 @@ DEFAULT_CONFIG = {
     "minimap_x": 40,
     "minimap_y": 140,
     "minimap_size": 200,
-    "teammate_protection": True,
+    "teammate_protection": False,
     "teammate_tolerance": 35,
     "game_fov": 100,
     "input_mode": "auto",
