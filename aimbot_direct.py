@@ -838,55 +838,41 @@ def main():
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
                                 # ═══════════════════════════════════════════
-                                # TITAN TWO AIMBOT v5 — Close Range Beast
+                                # TITAN TWO AIMBOT v6 — Close Range Smooth
                                 # ═══════════════════════════════════════════
-                                # Nur ~10m Radius, aber STARK
-                                # Grosse Box = nah = aggressiv locken
 
-                                if not tracker.can_move(14):
+                                if not tracker.can_move(22):
                                     pass
                                 else:
-                                    if dist > 0:
+                                    if dist > 0 and det_h >= 45:
                                         dir_x = dx / dist
                                         dir_y = dy / dist
 
-                                        # Nur nahe Gegner (grosse Box = nah)
-                                        # Box > 50px = ~10m oder naeher
-                                        if det_h < 45:
-                                            # Zu weit weg — ignorieren
-                                            pass
-                                        else:
-                                            # STARK: Schneller Speed fuer Close Range
-                                            raw_speed = math.sqrt(dist) * 2.2
+                                        raw_speed = math.sqrt(dist) * 1.2
+                                        speed = max(0.5, min(20.0, raw_speed))
 
-                                            speed = max(1.0, min(40.0, raw_speed))
+                                        if dist < 5:
+                                            speed *= 0.1
+                                        elif dist < 12:
+                                            speed *= 0.25
+                                        elif dist < 25:
+                                            speed *= 0.5
 
-                                            # Nah am Ziel: Bremsen
-                                            if dist < 6:
-                                                speed *= 0.15
-                                            elif dist < 15:
-                                                speed *= 0.35
-                                            elif dist < 30:
-                                                speed *= 0.6
+                                        mx = dir_x * speed
+                                        my = dir_y * speed
 
-                                            mx = dir_x * speed
-                                            my = dir_y * speed
+                                        osc = tracker.check_oscillation(dx, dy)
+                                        mx *= osc
+                                        my *= osc
 
-                                            osc = tracker.check_oscillation(dx, dy)
-                                            mx *= osc
-                                            my *= osc
+                                        ix = int(round(mx))
+                                        iy = int(round(my))
 
-                                            ix = int(round(mx))
-                                            iy = int(round(my))
-
-                                            if fc % 90 == 0:
-                                                print(f"  AIM: dist={dist:.0f} spd={speed:.1f} mv=({ix},{iy}) h={det_h}")
-
-                                            if (ix != 0 or iy != 0) and osc > 0.05:
-                                                try:
-                                                    kmbox_net.move(ix, iy)
-                                                except Exception:
-                                                    pass
+                                        if (ix != 0 or iy != 0) and osc > 0.05:
+                                            try:
+                                                kmbox_net.move(ix, iy)
+                                            except Exception:
+                                                pass
 
             else:
                 tracker.mark_lost()
