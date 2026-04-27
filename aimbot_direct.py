@@ -838,36 +838,38 @@ def main():
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
                                 # ═══════════════════════════════════════════
-                                # TITAN TWO v9 — Enhanced Aim Assist (sunxds 0.7.8)
+                                # TITAN TWO v10 — VOLLGAS AIMBOT
                                 # ═══════════════════════════════════════════
-                                # Sanfter Nudge Richtung Gegner
-                                # Modell erkennt player+head separat
-                                # Prefer head wenn vorhanden
 
-                                if not tracker.can_move(20):
+                                if not tracker.can_move(12):
                                     pass
                                 else:
                                     if dist > 0 and det_h >= 20:
                                         dir_x = dx / dist
                                         dir_y = dy / dist
 
-                                        # Aim Assist Nudge: sanft + konstant
-                                        speed = min(10.0, dist * 0.15)
+                                        # VOLLGAS
+                                        speed = dist * 0.5
+                                        speed = max(2.0, min(50.0, speed))
 
-                                        # Deadzone
-                                        if dist < 4:
+                                        # Hart bremsen am Ziel
+                                        if dist < 3:
                                             speed = 0
+                                        elif dist < 8:
+                                            speed *= 0.1
+                                        elif dist < 15:
+                                            speed *= 0.25
 
-                                        # Head-Detection = praeziser zielen
+                                        # Head = extra boost
                                         t_cls = tdet.get("class_name", "") if tdet else ""
                                         if t_cls == "head":
-                                            speed *= 1.3
+                                            speed *= 1.5
 
                                         mx = dir_x * speed
                                         my = dir_y * speed
 
                                         osc = tracker.check_oscillation(dx, dy)
-                                        if osc < 0.4:
+                                        if osc < 0.3:
                                             mx = 0
                                             my = 0
                                         else:
