@@ -838,37 +838,46 @@ def main():
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
                                 # ═══════════════════════════════════════════
-                                # TITAN TWO AIMBOT v7 — Sticky Close Range
+                                # TITAN TWO AIMBOT v8 — Vollgas + Anti-Pendel
                                 # ═══════════════════════════════════════════
 
-                                if not tracker.can_move(16):
+                                if not tracker.can_move(12):
                                     pass
                                 else:
                                     if dist > 0 and det_h >= 45:
                                         dir_x = dx / dist
                                         dir_y = dy / dist
 
-                                        raw_speed = math.sqrt(dist) * 1.6
-                                        speed = max(0.5, min(28.0, raw_speed))
+                                        # Vollgas
+                                        raw_speed = dist * 0.4
+                                        speed = max(1.0, min(45.0, raw_speed))
 
-                                        if dist < 5:
-                                            speed *= 0.15
-                                        elif dist < 12:
-                                            speed *= 0.35
-                                        elif dist < 25:
-                                            speed *= 0.6
+                                        # Aber: Hart bremsen nah am Ziel
+                                        if dist < 3:
+                                            speed = 0
+                                        elif dist < 8:
+                                            speed *= 0.08
+                                        elif dist < 15:
+                                            speed *= 0.2
+                                        elif dist < 30:
+                                            speed *= 0.45
 
                                         mx = dir_x * speed
                                         my = dir_y * speed
 
+                                        # Aggressiver Oszillations-Kill
                                         osc = tracker.check_oscillation(dx, dy)
-                                        mx *= osc
-                                        my *= osc
+                                        if osc < 0.3:
+                                            mx = 0
+                                            my = 0
+                                        else:
+                                            mx *= osc
+                                            my *= osc
 
                                         ix = int(round(mx))
                                         iy = int(round(my))
 
-                                        if (ix != 0 or iy != 0) and osc > 0.05:
+                                        if (ix != 0 or iy != 0):
                                             try:
                                                 kmbox_net.move(ix, iy)
                                             except Exception:
