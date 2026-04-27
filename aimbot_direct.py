@@ -838,38 +838,39 @@ def main():
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
                                 # ═══════════════════════════════════════════
-                                # TITAN TWO v10 — VOLLGAS AIMBOT
+                                # TITAN TWO v11 — Aim Assist + Close Boost
                                 # ═══════════════════════════════════════════
 
-                                if not tracker.can_move(12):
+                                if not tracker.can_move(20):
                                     pass
                                 else:
                                     if dist > 0 and det_h >= 20:
                                         dir_x = dx / dist
                                         dir_y = dy / dist
 
-                                        # VOLLGAS
-                                        speed = dist * 0.5
-                                        speed = max(2.0, min(50.0, speed))
+                                        # Normal: Aim Assist
+                                        speed = min(10.0, dist * 0.15)
 
-                                        # Hart bremsen am Ziel
-                                        if dist < 3:
+                                        # CLOSE GUNFIGHT BOOST (Box > 80px = sehr nah)
+                                        if det_h > 80:
+                                            speed = min(18.0, dist * 0.3)
+                                        elif det_h > 55:
+                                            speed = min(14.0, dist * 0.22)
+
+                                        # Deadzone
+                                        if dist < 4:
                                             speed = 0
-                                        elif dist < 8:
-                                            speed *= 0.1
-                                        elif dist < 15:
-                                            speed *= 0.25
 
-                                        # Head = extra boost
+                                        # Head boost
                                         t_cls = tdet.get("class_name", "") if tdet else ""
                                         if t_cls == "head":
-                                            speed *= 1.5
+                                            speed *= 1.3
 
                                         mx = dir_x * speed
                                         my = dir_y * speed
 
                                         osc = tracker.check_oscillation(dx, dy)
-                                        if osc < 0.3:
+                                        if osc < 0.4:
                                             mx = 0
                                             my = 0
                                         else:
