@@ -841,21 +841,21 @@ def main():
                                 # TITAN TWO v11 — Aim Assist + Close Boost
                                 # ═══════════════════════════════════════════
 
-                                if not tracker.can_move(14):
+                                if not tracker.can_move(12):
                                     pass
                                 else:
                                     if dist > 0 and det_h >= 20:
                                         dir_x = dx / dist
                                         dir_y = dy / dist
 
-                                        # Normal: Aim Assist
-                                        speed = min(18.0, dist * 0.3)
+                                        # Normal: Stark
+                                        speed = min(25.0, dist * 0.4)
 
-                                        # CLOSE GUNFIGHT BOOST (Box > 80px = sehr nah)
+                                        # CLOSE GUNFIGHT BOOST
                                         if det_h > 80:
-                                            speed = min(30.0, dist * 0.5)
+                                            speed = min(40.0, dist * 0.65)
                                         elif det_h > 55:
-                                            speed = min(24.0, dist * 0.4)
+                                            speed = min(32.0, dist * 0.5)
 
                                         # Deadzone
                                         if dist < 4:
