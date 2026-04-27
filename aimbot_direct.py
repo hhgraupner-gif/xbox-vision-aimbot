@@ -859,7 +859,8 @@ def main():
                                             speed = 0
 
                                         # Head-Detection = praeziser zielen
-                                        if cls == "head":
+                                        t_cls = tdet.get("class_name", "") if tdet else ""
+                                        if t_cls == "head":
                                             speed *= 1.3
 
                                         mx = dir_x * speed
