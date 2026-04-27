@@ -363,12 +363,12 @@ class SmoothTracker:
         self.last_move_time = 0.0
 
     def update(self, mx, my, bbox_h=0):
-        # Sanfter Alpha — smooth tracking
-        alpha = 0.35
+        # RAW: Fast keine Glaettung — direkte Position
+        alpha = 0.85
         if bbox_h > 100:
-            alpha = 0.5
+            alpha = 0.95
         elif bbox_h > 60:
-            alpha = 0.4
+            alpha = 0.9
 
         if self.x is None:
             self.x, self.y = mx, my
@@ -838,48 +838,39 @@ def main():
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
                                 # ═══════════════════════════════════════════
-                                # TITAN TWO v11 — Aim Assist + Close Boost
+                                # TITAN TWO v12 — RAW DIRECT (kein EMA)
                                 # ═══════════════════════════════════════════
+                                # Direkt auf die rohe Detection, kein Smoothing
+                                # Maximale Reaktion, maximale Stickiness
 
                                 if not tracker.can_move(12):
                                     pass
                                 else:
-                                    if dist > 0 and det_h >= 20:
+                                    # RAW: Direkt dx/dy vom Fadenkreuz zum Ziel
+                                    if dist > 4 and det_h >= 20:
                                         dir_x = dx / dist
                                         dir_y = dy / dist
 
-                                        # Normal: Stark
                                         speed = min(25.0, dist * 0.4)
 
-                                        # CLOSE GUNFIGHT BOOST
                                         if det_h > 80:
                                             speed = min(40.0, dist * 0.65)
                                         elif det_h > 55:
                                             speed = min(32.0, dist * 0.5)
 
-                                        # Deadzone — unter 4px STOP
-                                        if dist < 4:
-                                            speed = 0
-                                        elif dist < 10:
-                                            speed *= 0.12
-                                        elif dist < 20:
-                                            speed *= 0.3
-
                                         # Head boost
                                         t_cls = tdet.get("class_name", "") if tdet else ""
                                         if t_cls == "head":
-                                            speed *= 1.3
+                                            speed *= 1.4
 
                                         mx = dir_x * speed
                                         my = dir_y * speed
 
+                                        # Nur bei echtem Pendeln stoppen
                                         osc = tracker.check_oscillation(dx, dy)
-                                        if osc < 0.4:
+                                        if osc < 0.2:
                                             mx = 0
                                             my = 0
-                                        else:
-                                            mx *= osc
-                                            my *= osc
 
                                         ix = int(round(mx))
                                         iy = int(round(my))
