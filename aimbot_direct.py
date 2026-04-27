@@ -118,8 +118,8 @@ DEFAULT_CONFIG = {
     "kmbox_uuid": "C14AE466",
     "capture_device": 0,
     "model_mode": "fps",
-    "confidence": 0.42,
-    "fov_radius": 120,
+    "confidence": 0.38,
+    "fov_radius": 140,
     "strength": 1.0,
     "deadzone": 5,
     "max_move": 25,
@@ -132,7 +132,7 @@ DEFAULT_CONFIG = {
     "dead_body_ratio": 0.85,
     "sky_filter_ratio": 0.10,
     "ground_filter_ratio": 0.85,
-    "min_box_height": 25,
+    "min_box_height": 20,
     "minimap_enabled": True,
     "minimap_x": 40,
     "minimap_y": 140,
@@ -838,25 +838,29 @@ def main():
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
                                 # ═══════════════════════════════════════════
-                                # TITAN TWO v9 — Enhanced Aim Assist (10m)
+                                # TITAN TWO v9 — Enhanced Aim Assist (sunxds 0.7.8)
                                 # ═══════════════════════════════════════════
-                                # Nicht aimbot. Nur ein starker Nudge
-                                # Richtung Gegner. Du musst selbst zielen,
-                                # der Assist HILFT nur.
+                                # Sanfter Nudge Richtung Gegner
+                                # Modell erkennt player+head separat
+                                # Prefer head wenn vorhanden
 
-                                if not tracker.can_move(25):
+                                if not tracker.can_move(20):
                                     pass
                                 else:
-                                    if dist > 0 and det_h >= 45:
+                                    if dist > 0 and det_h >= 20:
                                         dir_x = dx / dist
                                         dir_y = dy / dist
 
-                                        # Sanfter Nudge — nie mehr als 8px
-                                        speed = min(8.0, dist * 0.12)
+                                        # Aim Assist Nudge: sanft + konstant
+                                        speed = min(10.0, dist * 0.15)
 
-                                        # Deadzone: Unter 5px nichts tun
-                                        if dist < 5:
+                                        # Deadzone
+                                        if dist < 4:
                                             speed = 0
+
+                                        # Head-Detection = praeziser zielen
+                                        if cls == "head":
+                                            speed *= 1.3
 
                                         mx = dir_x * speed
                                         my = dir_y * speed

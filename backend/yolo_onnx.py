@@ -44,9 +44,10 @@ COCO_NAMES = [
 # Ziel-Klassen fuer den Aimbot
 TARGET_CLASSES = {"player", "bot", "head", "person"}
 
-# Ignorierte Klassen
+# Ignorierte Klassen (sunxds_0.7.8 + allgemein)
 IGNORE_CLASSES = {"weapon", "outline", "dead_body", "hideout_target_human",
-                  "hideout_target_balls", "smoke", "fire"}
+                  "hideout_target_balls", "smoke", "fire", "teammate",
+                  "vehicle", "loot", "other"}
 
 
 class YOLODetector:
@@ -188,10 +189,15 @@ class YOLODetector:
             print(f"  Modell: Custom FPS | {self.input_size}x{self.input_size} | {num_cls} Klasse(n)")
         elif num_cls <= 12:
             self.is_fps_model = True
-            names_map = {0: "player", 1: "bot", 2: "head", 3: "dead_body", 4: "weapon",
-                         5: "smoke", 6: "fire", 7: "teammate", 8: "vehicle", 9: "loot", 10: "other"}
+            # sunxds_0.7.8 Klassen (11):
+            # 0=player, 1=bot, 2=head, 3=outline, 4=dead_body
+            # 5=smoke, 6=fire, 7=teammate, 8=vehicle, 9=loot, 10=weapon
+            names_map = {0: "player", 1: "bot", 2: "head", 3: "outline", 4: "dead_body",
+                         5: "smoke", 6: "fire", 7: "teammate", 8: "vehicle", 9: "loot", 10: "weapon"}
             self.names = {i: names_map.get(i, f"cls_{i}") for i in range(num_cls)}
-            print(f"  Modell: FPS Pro | {self.input_size}x{self.input_size} | {num_cls} Klassen")
+            print(f"  Modell: FPS Pro (sunxds) | {self.input_size}x{self.input_size} | {num_cls} Klassen")
+            print(f"  -> Zielt auf: player, bot, head")
+            print(f"  -> Ignoriert: dead_body, smoke, fire, teammate, vehicle, loot, weapon")
         else:
             self.is_coco_model = True
             self.names = {i: COCO_NAMES[i] if i < len(COCO_NAMES) else f"cls_{i}" for i in range(num_cls)}
