@@ -838,25 +838,25 @@ def main():
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
                                 # ═══════════════════════════════════════════
-                                # TITAN TWO AIMBOT v6 — Close Range Smooth
+                                # TITAN TWO AIMBOT v7 — Sticky Close Range
                                 # ═══════════════════════════════════════════
 
-                                if not tracker.can_move(22):
+                                if not tracker.can_move(16):
                                     pass
                                 else:
                                     if dist > 0 and det_h >= 45:
                                         dir_x = dx / dist
                                         dir_y = dy / dist
 
-                                        raw_speed = math.sqrt(dist) * 1.2
-                                        speed = max(0.5, min(20.0, raw_speed))
+                                        raw_speed = math.sqrt(dist) * 1.6
+                                        speed = max(0.5, min(28.0, raw_speed))
 
                                         if dist < 5:
-                                            speed *= 0.1
+                                            speed *= 0.15
                                         elif dist < 12:
-                                            speed *= 0.25
+                                            speed *= 0.35
                                         elif dist < 25:
-                                            speed *= 0.5
+                                            speed *= 0.6
 
                                         mx = dir_x * speed
                                         my = dir_y * speed
