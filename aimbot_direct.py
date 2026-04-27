@@ -841,7 +841,7 @@ def main():
                                 # TITAN TWO v11 — Aim Assist + Close Boost
                                 # ═══════════════════════════════════════════
 
-                                if not tracker.can_move(18):
+                                if not tracker.can_move(14):
                                     pass
                                 else:
                                     if dist > 0 and det_h >= 20:
@@ -849,13 +849,13 @@ def main():
                                         dir_y = dy / dist
 
                                         # Normal: Aim Assist
-                                        speed = min(13.0, dist * 0.2)
+                                        speed = min(18.0, dist * 0.3)
 
                                         # CLOSE GUNFIGHT BOOST (Box > 80px = sehr nah)
                                         if det_h > 80:
-                                            speed = min(22.0, dist * 0.38)
+                                            speed = min(30.0, dist * 0.5)
                                         elif det_h > 55:
-                                            speed = min(17.0, dist * 0.28)
+                                            speed = min(24.0, dist * 0.4)
 
                                         # Deadzone
                                         if dist < 4:
