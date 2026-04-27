@@ -849,13 +849,13 @@ def main():
                                         dir_y = dy / dist
 
                                         # Normal: Aim Assist
-                                        speed = min(10.0, dist * 0.15)
+                                        speed = min(13.0, dist * 0.2)
 
                                         # CLOSE GUNFIGHT BOOST (Box > 80px = sehr nah)
                                         if det_h > 80:
-                                            speed = min(18.0, dist * 0.3)
+                                            speed = min(22.0, dist * 0.38)
                                         elif det_h > 55:
-                                            speed = min(14.0, dist * 0.22)
+                                            speed = min(17.0, dist * 0.28)
 
                                         # Deadzone
                                         if dist < 4:
