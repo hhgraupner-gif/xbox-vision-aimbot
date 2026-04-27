@@ -403,7 +403,7 @@ class SmoothTracker:
     def check_oscillation(self, dx, dy):
         """Erkennt Pendeln. Returns 0.0-1.0 (0=stop, 1=full speed)."""
         if (dx * self.prev_dx < 0) or (dy * self.prev_dy < 0):
-            self.osc_count = min(self.osc_count + 3, 10)
+            self.osc_count = min(self.osc_count + 4, 12)
         else:
             self.osc_count = max(self.osc_count - 1, 0)
 
@@ -411,11 +411,11 @@ class SmoothTracker:
         self.prev_dy = dy
 
         if self.osc_count >= 8:
-            return 0.0    # STOP
+            return 0.0
         elif self.osc_count >= 6:
             return 0.1
         elif self.osc_count >= 4:
-            return 0.25
+            return 0.2
         elif self.osc_count >= 2:
             return 0.5
         return 1.0
@@ -857,9 +857,13 @@ def main():
                                         elif det_h > 55:
                                             speed = min(32.0, dist * 0.5)
 
-                                        # Deadzone
+                                        # Deadzone — unter 4px STOP
                                         if dist < 4:
                                             speed = 0
+                                        elif dist < 10:
+                                            speed *= 0.12
+                                        elif dist < 20:
+                                            speed *= 0.3
 
                                         # Head boost
                                         t_cls = tdet.get("class_name", "") if tdet else ""
