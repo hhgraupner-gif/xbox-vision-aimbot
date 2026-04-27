@@ -137,7 +137,7 @@ DEFAULT_CONFIG = {
     "minimap_x": 40,
     "minimap_y": 140,
     "minimap_size": 200,
-    "teammate_protection": False,
+    "teammate_protection": True,
     "teammate_tolerance": 35,
     "game_fov": 100,
     "input_mode": "auto",
@@ -363,12 +363,12 @@ class SmoothTracker:
         self.last_move_time = 0.0
 
     def update(self, mx, my, bbox_h=0):
-        # Sanfter Alpha — nicht zu aggressiv
-        alpha = 0.45
+        # Sanfter Alpha — smooth tracking
+        alpha = 0.35
         if bbox_h > 100:
-            alpha = 0.6
-        elif bbox_h > 60:
             alpha = 0.5
+        elif bbox_h > 60:
+            alpha = 0.4
 
         if self.x is None:
             self.x, self.y = mx, my
@@ -841,7 +841,7 @@ def main():
                                 # TITAN TWO v11 — Aim Assist + Close Boost
                                 # ═══════════════════════════════════════════
 
-                                if not tracker.can_move(20):
+                                if not tracker.can_move(18):
                                     pass
                                 else:
                                     if dist > 0 and det_h >= 20:
