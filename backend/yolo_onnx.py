@@ -186,6 +186,12 @@ class YOLODetector:
             if num_cls >= 5: names_map[4] = "weapon"
             self.names = names_map
             print(f"  Modell: Custom FPS | {self.input_size}x{self.input_size} | {num_cls} Klasse(n)")
+        elif num_cls <= 12:
+            self.is_fps_model = True
+            names_map = {0: "player", 1: "bot", 2: "head", 3: "dead_body", 4: "weapon",
+                         5: "smoke", 6: "fire", 7: "teammate", 8: "vehicle", 9: "loot", 10: "other"}
+            self.names = {i: names_map.get(i, f"cls_{i}") for i in range(num_cls)}
+            print(f"  Modell: FPS Pro | {self.input_size}x{self.input_size} | {num_cls} Klassen")
         else:
             self.is_coco_model = True
             self.names = {i: COCO_NAMES[i] if i < len(COCO_NAMES) else f"cls_{i}" for i in range(num_cls)}
