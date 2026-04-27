@@ -132,7 +132,7 @@ DEFAULT_CONFIG = {
     "dead_body_ratio": 0.85,
     "sky_filter_ratio": 0.10,
     "ground_filter_ratio": 0.85,
-    "min_box_height": 20,
+    "min_box_height": 30,
     "minimap_enabled": True,
     "minimap_x": 40,
     "minimap_y": 140,
@@ -511,7 +511,7 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
             continue
         # Zu quadratisch = Loot-Box, Laterne, Objekt (Spieler sind hochkant)
         aspect = bh / max(bw, 1)
-        if aspect < 1.2:
+        if aspect < 1.3:
             continue
         # Zu gross = Bug/Overlay (ganzer Bildschirm)
         if bh > frame_h * 0.7 or bw > frame_w * 0.5:
@@ -850,59 +850,53 @@ def main():
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
                                 # ═══════════════════════════════════════════
-                                # TITAN TWO FINAL — Pro Aimbot
+                                # TITAN TWO FINAL v2 — Clean & Strong
                                 # ═══════════════════════════════════════════
-                                # Konzept: PD-Controller (Proportional + Derivative)
-                                # P = Abstand zum Ziel (je weiter, desto schneller)
-                                # D = Geschwindigkeit des Ziels (Prediction)
-                                # Output-Smoothing verhindert Ruckeln
-                                # Osc-Detection verhindert Pendeln
 
-                                if not tracker.can_move(12):
+                                if not tracker.can_move(14):
                                     pass
                                 else:
-                                    if dist > 3 and det_h >= 20:
-                                        # --- P-Anteil: Proportional zur Distanz ---
-                                        # Kurve: Stark am Anfang, flacht ab
-                                        p_speed = math.sqrt(dist) * 2.8
-                                        
-                                        # Distanz-abhängige Limits
-                                        if det_h > 80:      # Close Range
-                                            p_speed = min(38.0, p_speed)
-                                        elif det_h > 50:    # Mid Range
-                                            p_speed = min(28.0, p_speed)
-                                        else:               # Long Range
-                                            p_speed = min(20.0, p_speed)
-
-                                        # --- D-Anteil: Velocity Prediction ---
-                                        # Zielt dorthin wo der Gegner HINLAEUFT
-                                        d_x = tracker.vx * 1.2
-                                        d_y = tracker.vy * 1.2
-
-                                        # --- Zusammenfuehren ---
+                                    if dist > 3 and det_h >= 30:
                                         dir_x = dx / dist
                                         dir_y = dy / dist
-                                        
-                                        mx = dir_x * p_speed + d_x
-                                        my = dir_y * p_speed + d_y
 
-                                        # --- Head Boost ---
+                                        # Simple & effektiv: Linear mit Cap
+                                        speed = dist * 0.35
+                                        
+                                        if det_h > 80:
+                                            speed = dist * 0.55
+                                            speed = min(35.0, speed)
+                                        elif det_h > 50:
+                                            speed = dist * 0.45
+                                            speed = min(28.0, speed)
+                                        else:
+                                            speed = min(20.0, speed)
+
+                                        # Nah am Ziel: Sanft bremsen (nicht stoppen)
+                                        if dist < 8:
+                                            speed *= 0.3
+                                        elif dist < 15:
+                                            speed *= 0.55
+
+                                        # Head boost
                                         t_cls = tdet.get("class_name", "") if tdet else ""
                                         if t_cls == "head":
-                                            mx *= 1.4
-                                            my *= 1.4
+                                            speed *= 1.3
 
-                                        # --- Anti-Pendel (proportional) ---
+                                        mx = dir_x * speed
+                                        my = dir_y * speed
+
+                                        # Anti-Pendel
                                         osc = tracker.check_oscillation(dx, dy)
                                         mx *= osc
                                         my *= osc
 
-                                        # --- Output Smoothing (kein Ruckeln) ---
+                                        # Output smooth
                                         ix = int(round(mx))
                                         iy = int(round(my))
                                         ix, iy = tracker.smooth_output(ix, iy)
 
-                                        if (ix != 0 or iy != 0) and osc > 0.05:
+                                        if (ix != 0 or iy != 0) and osc > 0.1:
                                             try:
                                                 kmbox_net.move(ix, iy)
                                             except Exception:
