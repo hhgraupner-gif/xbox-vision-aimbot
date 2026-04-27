@@ -552,17 +552,26 @@ def pick_best_target(detections, frame_w, frame_h, cfg, minimap=None, sticky_pos
     return best if best else (None, None, None)
 
 
-# Teammate-Farberkennung: ALLE Teammate-Farben (MP + Warzone)
-_BLUE_LOW = np.array([90, 120, 120])
+# Teammate-Farberkennung: ALLE Warzone Teammate-Farben
+# Pink/Magenta (Kokaala420-Style)
+_PINK_LOW = np.array([140, 80, 150])
+_PINK_HIGH = np.array([175, 255, 255])
+# Blau
+_BLUE_LOW = np.array([90, 80, 120])
 _BLUE_HIGH = np.array([130, 255, 255])
-_GREEN_LOW = np.array([35, 120, 120])
+# Gruen (Teammate-Punkt + Name)
+_GREEN_LOW = np.array([35, 80, 120])
 _GREEN_HIGH = np.array([85, 255, 255])
-_YELLOW_LOW = np.array([18, 120, 120])
-_YELLOW_HIGH = np.array([34, 255, 255])
-_ORANGE_LOW = np.array([8, 120, 120])
+# Gelb
+_YELLOW_LOW = np.array([18, 80, 150])
+_YELLOW_HIGH = np.array([38, 255, 255])
+# Orange
+_ORANGE_LOW = np.array([8, 80, 150])
 _ORANGE_HIGH = np.array([18, 255, 255])
-_CYAN_LOW = np.array([80, 100, 150])
-_CYAN_HIGH = np.array([100, 255, 255])
+# Cyan (eRayz-Style)
+_CYAN_LOW = np.array([80, 80, 150])
+_CYAN_HIGH = np.array([105, 255, 255])
+# Weiss (manche Modes)
 _WHITE_LOW = np.array([0, 0, 200])
 _WHITE_HIGH = np.array([180, 40, 255])
 
@@ -600,6 +609,7 @@ def _has_teammate_nameplate(frame, x1, y1, x2, bw, fw, fh):
             + cv2.countNonZero(cv2.inRange(hsv, _ORANGE_LOW, _ORANGE_HIGH))
             + cv2.countNonZero(cv2.inRange(hsv, _CYAN_LOW, _CYAN_HIGH))
             + cv2.countNonZero(cv2.inRange(hsv, _WHITE_LOW, _WHITE_HIGH))
+            + cv2.countNonZero(cv2.inRange(hsv, _PINK_LOW, _PINK_HIGH))
         )
         total_pixels = region.shape[0] * region.shape[1]
 
