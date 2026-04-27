@@ -838,36 +838,31 @@ def main():
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
                                 # ═══════════════════════════════════════════
-                                # TITAN TWO AIMBOT v8 — Vollgas + Anti-Pendel
+                                # TITAN TWO v9 — Enhanced Aim Assist (10m)
                                 # ═══════════════════════════════════════════
+                                # Nicht aimbot. Nur ein starker Nudge
+                                # Richtung Gegner. Du musst selbst zielen,
+                                # der Assist HILFT nur.
 
-                                if not tracker.can_move(12):
+                                if not tracker.can_move(25):
                                     pass
                                 else:
                                     if dist > 0 and det_h >= 45:
                                         dir_x = dx / dist
                                         dir_y = dy / dist
 
-                                        # Vollgas
-                                        raw_speed = dist * 0.4
-                                        speed = max(1.0, min(45.0, raw_speed))
+                                        # Sanfter Nudge — nie mehr als 8px
+                                        speed = min(8.0, dist * 0.12)
 
-                                        # Aber: Hart bremsen nah am Ziel
-                                        if dist < 3:
+                                        # Deadzone: Unter 5px nichts tun
+                                        if dist < 5:
                                             speed = 0
-                                        elif dist < 8:
-                                            speed *= 0.08
-                                        elif dist < 15:
-                                            speed *= 0.2
-                                        elif dist < 30:
-                                            speed *= 0.45
 
                                         mx = dir_x * speed
                                         my = dir_y * speed
 
-                                        # Aggressiver Oszillations-Kill
                                         osc = tracker.check_oscillation(dx, dy)
-                                        if osc < 0.3:
+                                        if osc < 0.4:
                                             mx = 0
                                             my = 0
                                         else:
