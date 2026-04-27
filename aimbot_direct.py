@@ -561,33 +561,52 @@ _YELLOW_LOW = np.array([18, 120, 120])
 _YELLOW_HIGH = np.array([34, 255, 255])
 _ORANGE_LOW = np.array([8, 120, 120])
 _ORANGE_HIGH = np.array([18, 255, 255])
+_CYAN_LOW = np.array([80, 100, 150])
+_CYAN_HIGH = np.array([100, 255, 255])
+_WHITE_LOW = np.array([0, 0, 200])
+_WHITE_HIGH = np.array([180, 40, 255])
 
 def _has_teammate_nameplate(frame, x1, y1, x2, bw, fw, fh):
-    """Prueft ob OBERHALB einer Detection ein Teammate-Namensschild ist.
-    Erkennt: Blau, Gruen, Gelb, Orange (MP + Warzone)."""
-    pad = int(bw * 0.2)
+    """Prueft ob ein Teammate-Namensschild sichtbar ist.
+    Sucht OBERHALB + IM OBEREN TEIL der Detection.
+    Erkennt: Blau, Gruen, Gelb, Orange, Cyan, Weiss (MP + Warzone)."""
+    pad = int(bw * 0.3)
     nx1 = max(0, int(x1) - pad)
     nx2 = min(fw, int(x2) + pad)
-    ny1 = max(0, int(y1) - 35)
-    ny2 = max(0, int(y1) - 2)
+    
+    # Region 1: OBERHALB der Box (Namensschild)
+    ny1_above = max(0, int(y1) - 55)
+    ny2_above = max(0, int(y1) + 5)
+    
+    # Region 2: OBERER TEIL der Box (Close Range — Schild ueberlappt)
+    ny1_inside = max(0, int(y1))
+    ny2_inside = max(0, int(y1) + int((y1 + bw) * 0.15) + 10)
+    
+    for ny1, ny2 in [(ny1_above, ny2_above), (ny1_inside, ny2_inside)]:
+        if ny2 <= ny1 or nx2 <= nx1:
+            continue
+        if ny2 > fh or nx2 > fw:
+            continue
+            
+        region = frame[ny1:ny2, nx1:nx2]
+        if region.size == 0:
+            continue
 
-    if ny2 <= ny1 or nx2 <= nx1:
-        return False
+        hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
+        tm_pixels = (
+            cv2.countNonZero(cv2.inRange(hsv, _BLUE_LOW, _BLUE_HIGH))
+            + cv2.countNonZero(cv2.inRange(hsv, _GREEN_LOW, _GREEN_HIGH))
+            + cv2.countNonZero(cv2.inRange(hsv, _YELLOW_LOW, _YELLOW_HIGH))
+            + cv2.countNonZero(cv2.inRange(hsv, _ORANGE_LOW, _ORANGE_HIGH))
+            + cv2.countNonZero(cv2.inRange(hsv, _CYAN_LOW, _CYAN_HIGH))
+            + cv2.countNonZero(cv2.inRange(hsv, _WHITE_LOW, _WHITE_HIGH))
+        )
+        total_pixels = region.shape[0] * region.shape[1]
 
-    region = frame[ny1:ny2, nx1:nx2]
-    if region.size == 0:
-        return False
-
-    hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
-    tm_pixels = (
-        cv2.countNonZero(cv2.inRange(hsv, _BLUE_LOW, _BLUE_HIGH))
-        + cv2.countNonZero(cv2.inRange(hsv, _GREEN_LOW, _GREEN_HIGH))
-        + cv2.countNonZero(cv2.inRange(hsv, _YELLOW_LOW, _YELLOW_HIGH))
-        + cv2.countNonZero(cv2.inRange(hsv, _ORANGE_LOW, _ORANGE_HIGH))
-    )
-    total_pixels = region.shape[0] * region.shape[1]
-
-    return (tm_pixels / total_pixels) > 0.05 if total_pixels > 0 else False
+        if total_pixels > 0 and (tm_pixels / total_pixels) > 0.03:
+            return True
+    
+    return False
 
 
 # ============================================================
