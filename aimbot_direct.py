@@ -336,11 +336,13 @@ class FastInference:
 # TRACKER MIT VELOCITY PREDICTION
 # ============================================================
 class SmoothTracker:
-    """Titan Two Tracker — Optimiert fuer KMBox → Titan Two Input Translator.
+    """FINAL Tracker fuer KMBox + Titan Two + sunxds_0.7.8
     
-    Prinzip: Viele kleine Schritte statt wenige grosse.
-    Der Titan Two Input Translator wandelt Mausbewegung in Stick-Werte.
-    Kleine, konstante Moves = sanfte Stick-Bewegung = kein Pendeln.
+    Konzept:
+    - Dual-Mode: Schnelle Reaktion (Alpha 0.8) + Velocity Prediction
+    - Intelligentes Anti-Pendel: Erkennt Richtungswechsel, bremst proportional
+    - Kein hartes Stop/Go — fliessende Uebergaenge
+    - Sticky Target: Bleibt auf dem Ziel auch bei kurzen Aussetzer
     """
 
     def __init__(self):
@@ -361,14 +363,12 @@ class SmoothTracker:
         self.prev_dy = 0.0
         self.osc_count = 0
         self.last_move_time = 0.0
+        self.last_ix = 0
+        self.last_iy = 0
 
     def update(self, mx, my, bbox_h=0):
-        # RAW: Fast keine Glaettung — direkte Position
-        alpha = 0.85
-        if bbox_h > 100:
-            alpha = 0.95
-        elif bbox_h > 60:
-            alpha = 0.9
+        # Schnelle Reaktion: Alpha 0.8 (nah an raw, aber glaettet YOLO-Jitter)
+        alpha = 0.8
 
         if self.x is None:
             self.x, self.y = mx, my
@@ -380,57 +380,69 @@ class SmoothTracker:
 
             raw_vx = self.x - self.prev_x
             raw_vy = self.y - self.prev_y
-            self.vx = 0.6 * self.vx + 0.4 * raw_vx
-            self.vy = 0.6 * self.vy + 0.4 * raw_vy
+            self.vx = 0.7 * self.vx + 0.3 * raw_vx
+            self.vy = 0.7 * self.vy + 0.3 * raw_vy
 
         self.target_h = bbox_h
         self.frames += 1
         self.lost = 0
 
-    def get_predicted_position(self, lead_frames=1.5):
-        """Sanfte Prediction — nur bei echtem Movement."""
+    def get_predicted_position(self, lead_frames=1.0):
         if self.x is None:
             return None
-        if self.frames < 4:
+        if self.frames < 5:
             return (self.x, self.y)
         speed = math.sqrt(self.vx * self.vx + self.vy * self.vy)
-        if speed < 3.0:
+        if speed < 2.5:
             return (self.x, self.y)
         px = self.x + self.vx * lead_frames
         py = self.y + self.vy * lead_frames
         return (px, py)
 
     def check_oscillation(self, dx, dy):
-        """Erkennt Pendeln. Returns 0.0-1.0 (0=stop, 1=full speed)."""
-        if (dx * self.prev_dx < 0) or (dy * self.prev_dy < 0):
-            self.osc_count = min(self.osc_count + 4, 12)
+        """Intelligentes Anti-Pendel: Proportional statt binäer."""
+        # Richtungswechsel?
+        x_flip = (dx * self.prev_dx < 0) and abs(dx) > 2
+        y_flip = (dy * self.prev_dy < 0) and abs(dy) > 2
+        
+        if x_flip or y_flip:
+            self.osc_count = min(self.osc_count + 3, 10)
         else:
-            self.osc_count = max(self.osc_count - 1, 0)
+            self.osc_count = max(self.osc_count - 2, 0)
 
         self.prev_dx = dx
         self.prev_dy = dy
 
+        # Proportionale Daempfung (nicht hart stop)
         if self.osc_count >= 8:
-            return 0.0
+            return 0.05
         elif self.osc_count >= 6:
-            return 0.1
+            return 0.15
         elif self.osc_count >= 4:
-            return 0.2
+            return 0.35
         elif self.osc_count >= 2:
-            return 0.5
+            return 0.7
         return 1.0
 
-    def can_move(self, interval_ms=18):
-        """Rate-Limiter: Nur alle X ms ein Move senden."""
+    def can_move(self, interval_ms=12):
         now = time.monotonic()
         if (now - self.last_move_time) * 1000 >= interval_ms:
             self.last_move_time = now
             return True
         return False
 
+    def smooth_output(self, ix, iy):
+        """Glaettet den OUTPUT (nicht die Position) — verhindert Ruckeln."""
+        # 60% neuer Wert + 40% alter Wert
+        sx = int(round(ix * 0.6 + self.last_ix * 0.4))
+        sy = int(round(iy * 0.6 + self.last_iy * 0.4))
+        self.last_ix = sx
+        self.last_iy = sy
+        return sx, sy
+
     def mark_lost(self):
         self.lost += 1
-        if self.lost > 5:
+        if self.lost > 8:
             self.reset()
 
     def get_position(self):
@@ -838,44 +850,59 @@ def main():
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
                                 # ═══════════════════════════════════════════
-                                # TITAN TWO v12 — RAW DIRECT (kein EMA)
+                                # TITAN TWO FINAL — Pro Aimbot
                                 # ═══════════════════════════════════════════
-                                # Direkt auf die rohe Detection, kein Smoothing
-                                # Maximale Reaktion, maximale Stickiness
+                                # Konzept: PD-Controller (Proportional + Derivative)
+                                # P = Abstand zum Ziel (je weiter, desto schneller)
+                                # D = Geschwindigkeit des Ziels (Prediction)
+                                # Output-Smoothing verhindert Ruckeln
+                                # Osc-Detection verhindert Pendeln
 
                                 if not tracker.can_move(12):
                                     pass
                                 else:
-                                    # RAW: Direkt dx/dy vom Fadenkreuz zum Ziel
-                                    if dist > 4 and det_h >= 20:
+                                    if dist > 3 and det_h >= 20:
+                                        # --- P-Anteil: Proportional zur Distanz ---
+                                        # Kurve: Stark am Anfang, flacht ab
+                                        p_speed = math.sqrt(dist) * 2.8
+                                        
+                                        # Distanz-abhängige Limits
+                                        if det_h > 80:      # Close Range
+                                            p_speed = min(38.0, p_speed)
+                                        elif det_h > 50:    # Mid Range
+                                            p_speed = min(28.0, p_speed)
+                                        else:               # Long Range
+                                            p_speed = min(20.0, p_speed)
+
+                                        # --- D-Anteil: Velocity Prediction ---
+                                        # Zielt dorthin wo der Gegner HINLAEUFT
+                                        d_x = tracker.vx * 1.2
+                                        d_y = tracker.vy * 1.2
+
+                                        # --- Zusammenfuehren ---
                                         dir_x = dx / dist
                                         dir_y = dy / dist
+                                        
+                                        mx = dir_x * p_speed + d_x
+                                        my = dir_y * p_speed + d_y
 
-                                        speed = min(25.0, dist * 0.4)
-
-                                        if det_h > 80:
-                                            speed = min(40.0, dist * 0.65)
-                                        elif det_h > 55:
-                                            speed = min(32.0, dist * 0.5)
-
-                                        # Head boost
+                                        # --- Head Boost ---
                                         t_cls = tdet.get("class_name", "") if tdet else ""
                                         if t_cls == "head":
-                                            speed *= 1.4
+                                            mx *= 1.4
+                                            my *= 1.4
 
-                                        mx = dir_x * speed
-                                        my = dir_y * speed
-
-                                        # Nur bei echtem Pendeln stoppen
+                                        # --- Anti-Pendel (proportional) ---
                                         osc = tracker.check_oscillation(dx, dy)
-                                        if osc < 0.2:
-                                            mx = 0
-                                            my = 0
+                                        mx *= osc
+                                        my *= osc
 
+                                        # --- Output Smoothing (kein Ruckeln) ---
                                         ix = int(round(mx))
                                         iy = int(round(my))
+                                        ix, iy = tracker.smooth_output(ix, iy)
 
-                                        if (ix != 0 or iy != 0):
+                                        if (ix != 0 or iy != 0) and osc > 0.05:
                                             try:
                                                 kmbox_net.move(ix, iy)
                                             except Exception:
