@@ -1209,6 +1209,7 @@ async def download_file(filename: str):
         "Warzone_Training.ipynb": Path("/app/Warzone_Training.ipynb"),
         "BO7_FineTuning.ipynb": Path("/app/BO7_FineTuning.ipynb"),
         "COD_FineTuning.ipynb": Path("/app/COD_FineTuning.ipynb"),
+        "COD_MEGA_Training.ipynb": Path("/app/COD_MEGA_Training.ipynb"),
         "erayz_audio_ultimate.py": Path("/app/erayz_audio_ultimate.py"),
         "erayz_audio_start.bat": Path("/app/erayz_audio_start.bat"),
         "erayz_setup.bat": Path("/app/erayz_setup.bat"),
