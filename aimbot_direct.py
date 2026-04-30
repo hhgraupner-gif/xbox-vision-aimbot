@@ -899,8 +899,10 @@ def main():
                                         if (ix != 0 or iy != 0) and osc > 0.1:
                                             try:
                                                 kmbox_net.move(ix, iy)
-                                            except Exception:
-                                                pass
+                                                if fc % 30 == 0:
+                                                    print(f"  MOVE: ({ix},{iy}) dist={dist:.0f} spd={speed:.1f} h={det_h}")
+                                            except Exception as e:
+                                                print(f"  ERR: {e}")
 
             else:
                 tracker.mark_lost()
