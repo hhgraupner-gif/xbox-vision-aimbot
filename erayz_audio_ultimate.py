@@ -82,7 +82,7 @@ DEFAULT_CFG = {
     # Compression (AUS — Windows Lautstärkeausgleich uebernimmt das!)
     "comp_ratio": 1.0, "comp_thresh_db": -26.0,
     "comp_attack": 0.003, "comp_release": 0.06,
-    "gate_db": -55.0,
+    "gate_db": -45.0,
 
     # HRTF Spatial (staerker fuer bessere Ortung)
     "spatial_width": 2.2,
@@ -92,7 +92,7 @@ DEFAULT_CFG = {
     "hrtf_crossfeed": 0.12,
 
     # Output
-    "output_gain_db": 3.0,
+    "output_gain_db": 1.5,
 }
 
 
@@ -313,11 +313,13 @@ class UltimateProcessor:
                 L *= d_gain
                 R *= d_gain
 
-        # ── NOISE GATE ──
+        # ── NOISE GATE (sanftes Fade statt hartem Cut) ──
         level = math.sqrt(float(np.mean(L * L)) + float(np.mean(R * R)))
         if level < self.g_gate:
-            L *= 0.02
-            R *= 0.02
+            # Sanft ausfaden statt hart muten
+            gate_ratio = level / max(self.g_gate, 1e-10)
+            L *= gate_ratio
+            R *= gate_ratio
 
         # ── GENTLE COMPRESSION ──
         rat = self.cfg["comp_ratio"]
