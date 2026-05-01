@@ -882,6 +882,10 @@ def main():
                                             kmbox_net.move(ix, iy)
                                         except Exception:
                                             pass
+                                else:
+                                    # DEBUG: Warum kein Move?
+                                    if fc % 60 == 0 and tracker.locked:
+                                        print(f"  SKIP: dist={dist:.1f} det_h={det_h} (min=30)")
 
             else:
                 tracker.mark_lost()
