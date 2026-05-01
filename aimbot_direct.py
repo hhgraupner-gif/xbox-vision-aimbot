@@ -850,59 +850,38 @@ def main():
 
                             elif input_mode == "kmbox" and KMBOX_AVAILABLE:
                                 # ═══════════════════════════════════════════
-                                # TITAN TWO FINAL v2 — Clean & Strong
+                                # TITAN TWO DIRECT — Kein Smoothing
                                 # ═══════════════════════════════════════════
 
-                                if not tracker.can_move(14):
-                                    pass
-                                else:
-                                    if dist > 3 and det_h >= 30:
-                                        dir_x = dx / dist
-                                        dir_y = dy / dist
+                                if dist > 3 and det_h >= 30:
+                                    dir_x = dx / dist
+                                    dir_y = dy / dist
 
-                                        # Simple & effektiv: Linear mit Cap
-                                        speed = dist * 0.35
-                                        
-                                        if det_h > 80:
-                                            speed = dist * 0.55
-                                            speed = min(35.0, speed)
-                                        elif det_h > 50:
-                                            speed = dist * 0.45
-                                            speed = min(28.0, speed)
-                                        else:
-                                            speed = min(20.0, speed)
+                                    speed = dist * 0.35
+                                    if det_h > 80:
+                                        speed = min(35.0, dist * 0.55)
+                                    elif det_h > 50:
+                                        speed = min(28.0, dist * 0.45)
+                                    else:
+                                        speed = min(20.0, speed)
 
-                                        # Nah am Ziel: Sanft bremsen (nicht stoppen)
-                                        if dist < 8:
-                                            speed *= 0.3
-                                        elif dist < 15:
-                                            speed *= 0.55
+                                    if dist < 8:
+                                        speed *= 0.3
+                                    elif dist < 15:
+                                        speed *= 0.55
 
-                                        # Head boost
-                                        t_cls = tdet.get("class_name", "") if tdet else ""
-                                        if t_cls == "head":
-                                            speed *= 1.3
+                                    t_cls = tdet.get("class_name", "") if tdet else ""
+                                    if t_cls == "head":
+                                        speed *= 1.3
 
-                                        mx = dir_x * speed
-                                        my = dir_y * speed
+                                    ix = int(round(dir_x * speed))
+                                    iy = int(round(dir_y * speed))
 
-                                        # Anti-Pendel
-                                        osc = tracker.check_oscillation(dx, dy)
-                                        mx *= osc
-                                        my *= osc
-
-                                        # Output smooth
-                                        ix = int(round(mx))
-                                        iy = int(round(my))
-                                        ix, iy = tracker.smooth_output(ix, iy)
-
-                                        if (ix != 0 or iy != 0) and osc > 0.1:
-                                            try:
-                                                kmbox_net.move(ix, iy)
-                                                if fc % 30 == 0:
-                                                    print(f"  MOVE: ({ix},{iy}) dist={dist:.0f} spd={speed:.1f} h={det_h}")
-                                            except Exception as e:
-                                                print(f"  ERR: {e}")
+                                    if ix != 0 or iy != 0:
+                                        try:
+                                            kmbox_net.move(ix, iy)
+                                        except Exception:
+                                            pass
 
             else:
                 tracker.mark_lost()
