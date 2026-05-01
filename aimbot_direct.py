@@ -817,6 +817,9 @@ def main():
                         dy = pos[1] - scr_cy
                         dist = math.sqrt(dx * dx + dy * dy)
 
+                        if fc % 60 == 0:
+                            print(f"  TARGET: dist={dist:.0f} dz={cfg['deadzone']} h={det_h} mode={input_mode} kmbox={KMBOX_AVAILABLE}")
+
                         if dist > cfg["deadzone"] and cooldown <= 0:
                             if input_mode == "titan" and titan:
                                 # ═══ TITAN TWO — DIREKTE STICK-KONTROLLE ═══
